@@ -32,6 +32,7 @@ __global__ void matrixMultiply(const float* A, const float* B, float* C, int n) 
 }
 
 int main() {
+    const int runs = 100;
     int matrix_size = N * N;
 
     float h_A[matrix_size];
@@ -40,27 +41,29 @@ int main() {
 
     generate(h_A, h_B);
 
-    
-    float *d_A, *d_B, *d_C;
-    cudaMalloc((void**)&d_A, matrix_size * sizeof(float));
-    cudaMalloc((void**)&d_B, matrix_size * sizeof(float));
-    cudaMalloc((void**)&d_C, matrix_size * sizeof(float));
+    //for (int iterations = 0; iterations < runs; iterations++) {
+        float *d_A, *d_B, *d_C;
+        cudaMalloc((void**)&d_A, matrix_size * sizeof(float));
+        cudaMalloc((void**)&d_B, matrix_size * sizeof(float));
+        cudaMalloc((void**)&d_C, matrix_size * sizeof(float));
 
-    cudaMemcpy(d_A, h_A, matrix_size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, h_B, matrix_size * sizeof(float), cudaMemcpyHostToDevice);
-    
-    dim3 blockSize(16, 16);
-    dim3 gridSize((N + blockSize.x - 1) / blockSize.x, (N + blockSize.y - 1) / blockSize.y);
+        cudaMemcpy(d_A, h_A, matrix_size * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_B, h_B, matrix_size * sizeof(float), cudaMemcpyHostToDevice);
+        
+        dim3 blockSize(16, 16);
+        dim3 gridSize((N + blockSize.x - 1) / blockSize.x, (N + blockSize.y - 1) / blockSize.y);
 
-    matrixMultiply<<<gridSize, blockSize>>>(d_A, d_B, d_C, N);
+        //for (int iterations = 0; iterations < runs; iterations++) {
+            matrixMultiply<<<gridSize, blockSize>>>(d_A, d_B, d_C, N);
+        //}
+        
+        cudaDeviceSynchronize();
 
-    cudaDeviceSynchronize();
+        cudaMemcpy(result, d_C, matrix_size * sizeof(float), cudaMemcpyDeviceToHost);
 
-    cudaMemcpy(result, d_C, matrix_size * sizeof(float), cudaMemcpyDeviceToHost);
-
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
-
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+    //}
     return 0;
 }
