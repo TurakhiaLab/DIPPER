@@ -1,7 +1,8 @@
-#include <cuda_runtime_api.h> // cudaMalloc, cudaMemcpy, etc.
+#include <cuda_runtime_api.h>
 #include <cusparseLt.h>       // cusparseLt header
-#include <cstdio>             // printf
+#include <cstdio>             
 #include <iostream>
+#include <cmath>
 #include "generateMatrix.hpp"  
 
 int main(void) {
@@ -12,8 +13,10 @@ int main(void) {
     generate(hA, hB);
     float alpha = 1.0f;
     float beta  = 0.0f;
+    const int runs = 100;
     //--------------------------------------------------------------------------
     // Device memory management
+    //for (int iterations = 0; iterations < runs; iterations++) {
     __half *dA, *dB, *dC, *dD, *dA_compressed;
     int    *d_valid;
     cudaMalloc((void**) &dA, N*N*sizeof(__half));                           // allocate memory on the GPU (device) for the matrices
@@ -95,12 +98,14 @@ int main(void) {
                                 &workspace_size);
     void* d_workspace;
     cudaMalloc((void**) &d_workspace, workspace_size);
-    // Perform the matrix multiplication
-    cusparseLtMatmul(
-                                &handle, &plan, &alpha, 
-                                dA_compressed, dB,    // do the actual multiplication operation finally, in the allocated workspace
-                                &beta, dC, dD, d_workspace, streams,
-                                num_streams);
+    //for (int iterations = 0; iterations < runs; iterations++) {
+        // Perform the matrix multiplication
+        cusparseLtMatmul(
+                                    &handle, &plan, &alpha, 
+                                    dA_compressed, dB,    // do the actual multiplication operation finally, in the allocated workspace
+                                    &beta, dC, dD, d_workspace, streams,
+                                    num_streams);
+    //}
     //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     // destroy plan and handle                                          
     cusparseLtMatDescriptorDestroy(&matA);                 // deallocate no longer necessary handles
@@ -108,11 +113,48 @@ int main(void) {
     cusparseLtMatDescriptorDestroy(&matC);
     cusparseLtMatmulPlanDestroy(&plan);
     cusparseLtDestroy(&handle);
-    //--------------------------------------------------------------------------
-    // device result check
-    // matrix A has been pruned
-    cudaMemcpy(hA, dA, N*N*sizeof(__half), cudaMemcpyDeviceToHost);            // check that computation worked.
-    cudaMemcpy(hC, dC, N*N*sizeof(__half), cudaMemcpyDeviceToHost);
+    
+    // //--------------------------------------------------------------------------
+    // // device result check
+    // // matrix A has been pruned
+    // cudaMemcpy(hA, dA, N*N*sizeof(__half), cudaMemcpyDeviceToHost);            // check that computation worked.
+    // cudaMemcpy(hC, dC, N*N*sizeof(__half), cudaMemcpyDeviceToHost);
+
+    // // host computation
+    // float hC_result[N * N];
+    // for (int i = 0; i < N; i++) {
+    //     for (int j = 0; j < N; j++) {
+    //         float sum  = 0.0f;
+    //         for (int k1 = 0; k1 < N; k1++) {
+    //             auto posA = i * N + k1;
+    //             auto posB = k1 * N + j;
+    //             sum      += static_cast<float>(hA[posA]) *  // [i][k]
+    //                         static_cast<float>(hB[posB]);   // [k][j]
+    //         }
+    //         auto posC       = i * N + j;
+    //         hC_result[posC] = sum;  // [i][j]
+    //     }
+    // }
+    // // host-device comparison
+    // int correct = 1;
+    // for (int i = 0; i < N; i++) {
+    //     for (int j = 0; j < N; j++) {
+    //         auto pos          = i * N + j;
+    //         auto device_value = static_cast<float>(hC[pos]);
+    //         auto host_value   = hC_result[pos];
+    //         if (std::abs(device_value - host_value) > 2) {
+    //             // direct floating point comparison is not reliable
+    //             std::printf("(%d, %d):\t%f vs. %f\n",
+    //                         i, j, host_value, device_value);
+    //             correct = 0;
+    //             break;
+    //         }
+    //     }
+    // }
+    // if (correct)
+    //     std::printf("matmul_example test PASSED\n");
+    // else
+    //     std::printf("matmul_example test FAILED: wrong result\n");
 
     // device memory deallocation
     cudaFree(dA_compressed);
@@ -122,5 +164,6 @@ int main(void) {
     cudaFree(d_valid);
     cudaFree(d_workspace);
     cudaFree(dA_compressedBuffer);
+    //}
     return EXIT_SUCCESS;
 }
