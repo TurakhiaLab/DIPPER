@@ -16,7 +16,7 @@ int main(void) {
     const int runs = 100;
     //--------------------------------------------------------------------------
     // Device memory management
-    //for (int iterations = 0; iterations < runs; iterations++) {
+    for (int iterations = 0; iterations < runs; iterations++) {
     __half *dA, *dB, *dC, *dD, *dA_compressed;
     int    *d_valid;
     cudaMalloc((void**) &dA, N*N*sizeof(__half));                           // allocate memory on the GPU (device) for the matrices
@@ -164,6 +164,6 @@ int main(void) {
     cudaFree(d_valid);
     cudaFree(d_workspace);
     cudaFree(dA_compressedBuffer);
-    //}
+    }
     return EXIT_SUCCESS;
 }

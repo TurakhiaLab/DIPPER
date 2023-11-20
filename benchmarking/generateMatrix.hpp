@@ -1,7 +1,7 @@
 #include <cstdlib>            // std::rand
 #include <cuda_fp16.h>
 
-const int N = 320; // dimension of square matrix
+const int N = 32000; // dimension of square matrix
 void generate(__half *hA, __half *hB) {
     srand(55);
     // generate matrix with forced 2:4 sparsity
