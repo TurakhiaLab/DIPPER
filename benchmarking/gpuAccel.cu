@@ -2,7 +2,7 @@
 #include <cstdlib>
 #include <iostream>
 
-const int N = 320; // dimension of square matrix
+const int N = 32000; // dimension of square matrix
 void generate(float *hA, float *hB) {
     srand(55);
     for (int i = 0; i < N * N; i++)                                            // generate matrix with forced 2:4 sparsity
@@ -41,7 +41,7 @@ int main() {
 
     generate(h_A, h_B);
 
-    //for (int iterations = 0; iterations < runs; iterations++) {
+    for (int iterations = 0; iterations < runs; iterations++) {
         float *d_A, *d_B, *d_C;
         cudaMalloc((void**)&d_A, matrix_size * sizeof(float));
         cudaMalloc((void**)&d_B, matrix_size * sizeof(float));
@@ -64,6 +64,6 @@ int main() {
         cudaFree(d_A);
         cudaFree(d_B);
         cudaFree(d_C);
-    //}
+    }
     return 0;
 }
