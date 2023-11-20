@@ -2,7 +2,7 @@
 #include <cstdlib>
 #include <iostream>
 
-const int N = 32000; // dimension of square matrix
+const int N = 320; // dimension of square matrix
 void generate(float *hA, float *hB) {
     srand(55);
     for (int i = 0; i < N * N; i++)                                            // generate matrix with forced 2:4 sparsity
