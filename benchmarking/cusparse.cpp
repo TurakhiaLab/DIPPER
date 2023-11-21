@@ -7,27 +7,13 @@
 
 int main(void) {
     // generate matrices for computation
-    __half hA[N * N];                                                          
-    __half hB[N * N];                                                          
-    __half hC[N * N] = {};
+    __half *hA = new __half[N*N];                                                          
+    __half *hB = new __half[N*N];                                                         
+    __half *hC = new __half[N*N];
     generate(hA, hB);
     float alpha = 1.0f;
     float beta  = 0.0f;
-    const int runs = 100;
-    //--------------------------------------------------------------------------
-    // Device memory management
-    for (int iterations = 0; iterations < runs; iterations++) {
-    __half *dA, *dB, *dC, *dD, *dA_compressed;
-    int    *d_valid;
-    cudaMalloc((void**) &dA, N*N*sizeof(__half));                           // allocate memory on the GPU (device) for the matrices
-    cudaMalloc((void**) &dB, N*N*sizeof(__half));
-    cudaMalloc((void**) &dC, N*N*sizeof(__half));
-    cudaMalloc((void**) &d_valid, sizeof(int));
-    dD = dC;
-
-    cudaMemcpy(dA, hA, N*N*sizeof(__half), cudaMemcpyHostToDevice);           // copy host generated matrix to GPU (avoid page faulting)
-    cudaMemcpy(dB, hB, N*N*sizeof(__half), cudaMemcpyHostToDevice);
-    cudaMemcpy(dC, hC, N*N*sizeof(__half), cudaMemcpyHostToDevice);
+    
     //--------------------------------------------------------------------------
     cusparseLtHandle_t             handle;                             // create handle and descriptors for the operation
     cusparseLtMatDescriptor_t      matA, matB, matC;
@@ -61,6 +47,19 @@ int main(void) {
     cusparseLtMatmulPlanInit(   
                                 &handle, &plan, &matmul, &alg_sel);
 
+    // Device memory management
+    for (int iterations = 0; iterations < runs; iterations++) {
+    __half *dA, *dB, *dC, *dD, *dA_compressed;
+    int    *d_valid;
+    cudaMalloc((void**) &dA, N*N*sizeof(__half));                           // allocate memory on the GPU (device) for the matrices
+    cudaMalloc((void**) &dB, N*N*sizeof(__half));
+    cudaMalloc((void**) &dC, N*N*sizeof(__half));
+    cudaMalloc((void**) &d_valid, sizeof(int));
+    dD = dC;
+
+    cudaMemcpy(dA, hA, N*N*sizeof(__half), cudaMemcpyHostToDevice);           // copy host generated matrix to GPU (avoid page faulting)
+    cudaMemcpy(dB, hB, N*N*sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(dC, hC, N*N*sizeof(__half), cudaMemcpyHostToDevice);
 
     // Compress the A matrix
     size_t compressed_size, compressed_buffer_size;                            
@@ -75,8 +74,8 @@ int main(void) {
     cusparseLtSpMMACompress(&handle, &plan, dA, dA_compressed, dA_compressedBuffer,stream);
 
     // see structure of compressed matrix
-    __half hA_compressed[compressed_size];
-    __half hA_compressed_buffer[compressed_buffer_size];
+    __half *hA_compressed = new __half[compressed_size];
+    __half *hA_compressed_buffer = new __half[compressed_buffer_size];
     cudaMemcpy(hA_compressed, dA_compressed, compressed_size, cudaMemcpyDeviceToHost);
     cudaMemcpy(hA_compressed_buffer, dA_compressedBuffer, compressed_buffer_size, cudaMemcpyDeviceToHost);
 
@@ -106,14 +105,7 @@ int main(void) {
                                     &beta, dC, dD, d_workspace, streams,
                                     num_streams);
     //}
-    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    // destroy plan and handle                                          
-    cusparseLtMatDescriptorDestroy(&matA);                 // deallocate no longer necessary handles
-    cusparseLtMatDescriptorDestroy(&matB);
-    cusparseLtMatDescriptorDestroy(&matC);
-    cusparseLtMatmulPlanDestroy(&plan);
-    cusparseLtDestroy(&handle);
-    
+
     // //--------------------------------------------------------------------------
     // // device result check
     // // matrix A has been pruned
@@ -164,6 +156,16 @@ int main(void) {
     cudaFree(d_valid);
     cudaFree(d_workspace);
     cudaFree(dA_compressedBuffer);
+
     }
+
+    //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    // destroy plan and handle                                          
+    cusparseLtMatDescriptorDestroy(&matA);                 // deallocate no longer necessary handles
+    cusparseLtMatDescriptorDestroy(&matB);
+    cusparseLtMatDescriptorDestroy(&matC);
+    cusparseLtMatmulPlanDestroy(&plan);
+    cusparseLtDestroy(&handle);
+
     return EXIT_SUCCESS;
 }

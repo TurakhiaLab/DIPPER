@@ -1,21 +1,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include "generateMatrix.hpp"
 
-const int N = 320; // dimension of square matrix
-void generate(float *hA, float *hB) {
-    srand(55);
-    for (int i = 0; i < N * N; i++)                                            // generate matrix with forced 2:4 sparsity
-        if (i%2) {
-            hA[i] = static_cast<float>(std::rand() % 10);
-        } else {
-            hA[i] = 0;
-        }
-    for (int i = 0; i < N * N; i++)                                            // generate dense matrix
-        hB[i] = static_cast<float>(std::rand() % 10);
-}
-
- 
 __global__ void matrixMultiply(const float* A, const float* B, float* C, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -32,12 +19,11 @@ __global__ void matrixMultiply(const float* A, const float* B, float* C, int n) 
 }
 
 int main() {
-    const int runs = 100;
     int matrix_size = N * N;
 
-    float h_A[matrix_size];
-    float h_B[matrix_size]; 
-    float result[matrix_size];
+    float *h_A = new float[matrix_size];
+    float *h_B = new float[matrix_size]; 
+    float *result = new float[matrix_size];
 
     generate(h_A, h_B);
 
