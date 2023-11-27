@@ -11,5 +11,5 @@ To generate benchmark reports:
 ```
 nsys profile <application>
 ```
-This creates a .nsys-rep file that can be opened with [NSight Systems][https://developer.nvidia.com/nsight-systems].
+This creates a .nsys-rep file that can be opened with [NSight Systems](https://developer.nvidia.com/nsight-systems).
 
