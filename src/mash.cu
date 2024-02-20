@@ -167,7 +167,7 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
 //     uint32_t * hashList = d_hashList;
 //     uint32_t * compressedSeqs = d_compressedSeqs;
 
-//     printf("hashList pointer in device%p\n", d_hashList);
+//     //printf("hashList pointer in device%p\n", d_hashList);
 
 //     if (tx==0 && bx==0)
 //     {
@@ -175,7 +175,7 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
 //         {
 //             uint32_t seqLength = d_seqLengths[i];
             
-//             if (i==9)printf("%ld:\t", i);
+//             //if (i==9)printf("%ld:\t", i);
 
 //             for (size_t j=0; j<=seqLength-kmerSize; j++)
 //             {
@@ -194,13 +194,13 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
 //                 hashList[j] = hash;
 //                 //if (i==9) printf("(%u, %u)\t",kmer, hash);
 //             }
-//             if (i==9) printf("\n");
+//             //if (i==9) printf("\n");
 //             hashList += seqLength-kmerSize+1;
 //             compressedSeqs += (seqLength+15)/16;
 
 //         }
 //     }
-//     printf("hashList pointer in device%p\n", d_hashList);
+//     //printf("hashList pointer in device%p\n", d_hashList);
 
 // }
 
@@ -220,7 +220,6 @@ __global__ void sketchConstruction
     size_t bx = blockIdx.x;
     size_t threads_per_block = blockDim.x;
     size_t blocks_per_grid = gridDim.x;
-
 
     uint32_t kmer = 0;
     uint32_t mask = (1<<2*kmerSize) - 1;
@@ -253,6 +252,7 @@ __global__ void sketchConstruction
             //if (j==0) printf("(%u, %u)\n",kmer, hash);
             hashList[i] = hash;
         }
+
     }
 }
 
@@ -310,9 +310,13 @@ void GpuSketch::sketchConstructionOnGpu
         }
     );
 
-    thrust::exclusive_scan(dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixHash);
-    thrust::exclusive_scan(dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp);
+    thrust::exclusive_scan(dev_prefixHash, dev_prefixHash + d_numSequences, dev_prefixHash);
+    thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
 
+    // Serial kernel call
+    //sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
+
+    // New kernel call
     sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
 
     cudaDeviceSynchronize();
