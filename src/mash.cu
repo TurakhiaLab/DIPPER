@@ -9,6 +9,8 @@
 #include <thrust/binary_search.h>
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
+#include <chrono>
+#include <iostream>
 
 /* Note: d_aggseqLengths is the aggregated compressed length of original string (h_seqLengths)
 Ex: ["dog", "mouse", "cat"] 
@@ -148,61 +150,61 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
     return h1;
 } 
 
-// __global__ void sketchConstruction
-// (
-//     uint32_t * d_compressedSeqs,
-//     uint32_t * d_aggseqLengths,
-//     uint32_t * d_seqLengths,
-//     size_t d_numSequences,
-//     uint32_t * d_hashList,
-//     uint32_t kmerSize
-// ){
-//     int tx = threadIdx.x;
-//     int bx = blockIdx.x;
+__global__ void sketchConstructionSerial
+(
+    uint32_t * d_compressedSeqs,
+    uint32_t * d_aggseqLengths,
+    uint32_t * d_seqLengths,
+    size_t d_numSequences,
+    uint32_t * d_hashList,
+    uint32_t kmerSize
+){
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
 
 
-//     uint32_t kmer = 0;
-//     uint32_t mask = (1<<2*kmerSize) - 1;
+    uint32_t kmer = 0;
+    uint32_t mask = (1<<2*kmerSize) - 1;
 
-//     uint32_t * hashList = d_hashList;
-//     uint32_t * compressedSeqs = d_compressedSeqs;
+    uint32_t * hashList = d_hashList;
+    uint32_t * compressedSeqs = d_compressedSeqs;
 
-//     //printf("hashList pointer in device%p\n", d_hashList);
+    //printf("hashList pointer in device%p\n", d_hashList);
 
-//     if (tx==0 && bx==0)
-//     {
-//         for (size_t i=0; i<d_numSequences; i++)
-//         {
-//             uint32_t seqLength = d_seqLengths[i];
+    if (tx==0 && bx==0)
+    {
+        for (size_t i=0; i<d_numSequences; i++)
+        {
+            uint32_t seqLength = d_seqLengths[i];
             
-//             //if (i==9)printf("%ld:\t", i);
+            //if (i==9)printf("%ld:\t", i);
 
-//             for (size_t j=0; j<=seqLength-kmerSize; j++)
-//             {
-//                 uint32_t index = j/16;
-//                 uint32_t shift1 = 2*(j%16);
-//                 if (shift1>0)
-//                 {
-//                     uint32_t shift2 = 32-shift1;
-//                     kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
-//                 }
-//                 else
-//                 {   
-//                     kmer = compressedSeqs[index] & mask;
-//                 }
-//                 uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
-//                 hashList[j] = hash;
-//                 //if (i==9) printf("(%u, %u)\t",kmer, hash);
-//             }
-//             //if (i==9) printf("\n");
-//             hashList += seqLength-kmerSize+1;
-//             compressedSeqs += (seqLength+15)/16;
+            for (size_t j=0; j<=seqLength-kmerSize; j++)
+            {
+                uint32_t index = j/16;
+                uint32_t shift1 = 2*(j%16);
+                if (shift1>0)
+                {
+                    uint32_t shift2 = 32-shift1;
+                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
+                }
+                else
+                {   
+                    kmer = compressedSeqs[index] & mask;
+                }
+                uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
+                hashList[j] = hash;
+                //if (i==9) printf("(%u, %u)\t",kmer, hash);
+            }
+            //if (i==9) printf("\n");
+            hashList += seqLength-kmerSize+1;
+            compressedSeqs += (seqLength+15)/16;
 
-//         }
-//     }
-//     //printf("hashList pointer in device%p\n", d_hashList);
+        }
+    }
+    //printf("hashList pointer in device%p\n", d_hashList);
 
-// }
+}
 
 
 __global__ void sketchConstruction
@@ -256,6 +258,25 @@ __global__ void sketchConstruction
     }
 }
 
+// __global__ void nthSmallestElements
+// (
+//     uint32_t * d_seqLengths,
+//     size_t d_numSequences,
+//     uint32_t * d_prefixHashlist,
+//     uint32_t * d_hashList,
+//     uint32_t kmerSize
+// ){
+//     size_t tx = blockIdx.x * blockDim.x + threadIdx.x; // global index
+//     size_t totalThreads = gridDim.x * blockDim.x;
+
+//     for (size_t i = tx; i < d_numSequences; i += totalThreads) {
+//         uint32_t numKmers = d_seqLengths[i] - kmerSize + 1;
+//         thrust::device_ptr<uint32_t> hashPtr(d_hashList + d_prefixHashlist[i]);
+//         thrust::sort(hashPtr, hashPtr + numKmers);
+//     }
+
+// }
+
 void GpuSketch::sketchConstructionOnGpu
 (
     uint32_t * d_compressedSeqs,
@@ -266,6 +287,7 @@ void GpuSketch::sketchConstructionOnGpu
     uint32_t * h_seqLengths,
     Param& params
 ){
+    auto timerStart = std::chrono::high_resolution_clock::now();
 
     cudaError_t err;
 
@@ -312,17 +334,29 @@ void GpuSketch::sketchConstructionOnGpu
 
     thrust::exclusive_scan(dev_prefixHash, dev_prefixHash + d_numSequences, dev_prefixHash);
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
+    auto timerEnd = std::chrono::high_resolution_clock::now();
 
+    std::chrono::nanoseconds time = timerEnd - timerStart;
+    std::cout << "Time to create prefix array: " << time.count() << "ns\n";
+
+    
+
+    timerStart = std::chrono::high_resolution_clock::now();
     // Serial kernel call
-    //sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
+    //sketchConstructionSerial<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
 
     // New kernel call
     sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
-
+    
     cudaDeviceSynchronize();
-    cudaFree(d_prefixHashlist);
+
+    timerEnd = std::chrono::high_resolution_clock::now();
+    time = timerEnd - timerStart;
+    std::cout << "Time to generate hashes: " << time.count() << "ns\n";
+
     cudaFree(d_prefixCompressed);
 
+    timerStart = std::chrono::high_resolution_clock::now();
     uint32_t * hashList = d_hashList;
     for (size_t i = 0; i < d_numSequences; i++)
     {
@@ -331,6 +365,14 @@ void GpuSketch::sketchConstructionOnGpu
         thrust::sort(hashPtr, hashPtr + numKmers);
         hashList += numKmers;
     }
+    
+    //nthSmallestElements<<<params.numBlocks, params.blockSize>>>(d_seqLengths, d_numSequences, d_prefixHashlist, d_hashList, kmerSize);
+    cudaDeviceSynchronize();
+    cudaFree(d_prefixHashlist);
+
+    timerEnd = std::chrono::high_resolution_clock::now();
+    time = timerEnd - timerStart;
+    std::cout << "Time to sort: " << time.count() << "ns\n";
 
 }
 
