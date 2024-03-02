@@ -1,0 +1,5 @@
+.vscode
+build
+*.out
+src/*.txt
+src/*.out
