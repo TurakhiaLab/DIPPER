@@ -58,8 +58,7 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint32_t ** h_compressedSeqs,
     }
 
     h_flattenCompressSeqs -= flatStringLength;
-
-
+    //printf("%d", flatStringLength);
 
     err = cudaMalloc(&d_hashList, hashListLength*sizeof(uint32_t));
     if (err != cudaSuccess)
@@ -149,60 +148,112 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
     return h1;
 } 
 
+// __global__ void sketchConstruction
+// (
+//     uint32_t * d_compressedSeqs,
+//     uint32_t * d_aggseqLengths,
+//     uint32_t * d_seqLengths,
+//     size_t d_numSequences,
+//     uint32_t * d_hashList,
+//     uint32_t kmerSize
+// ){
+//     int tx = threadIdx.x;
+//     int bx = blockIdx.x;
+
+
+//     uint32_t kmer = 0;
+//     uint32_t mask = (1<<2*kmerSize) - 1;
+
+//     uint32_t * hashList = d_hashList;
+//     uint32_t * compressedSeqs = d_compressedSeqs;
+
+//     //printf("hashList pointer in device%p\n", d_hashList);
+
+//     if (tx==0 && bx==0)
+//     {
+//         for (size_t i=0; i<d_numSequences; i++)
+//         {
+//             uint32_t seqLength = d_seqLengths[i];
+            
+//             //if (i==9)printf("%ld:\t", i);
+
+//             for (size_t j=0; j<=seqLength-kmerSize; j++)
+//             {
+//                 uint32_t index = j/16;
+//                 uint32_t shift1 = 2*(j%16);
+//                 if (shift1>0)
+//                 {
+//                     uint32_t shift2 = 32-shift1;
+//                     kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
+//                 }
+//                 else
+//                 {   
+//                     kmer = compressedSeqs[index] & mask;
+//                 }
+//                 uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
+//                 hashList[j] = hash;
+//                 //if (i==9) printf("(%u, %u)\t",kmer, hash);
+//             }
+//             //if (i==9) printf("\n");
+//             hashList += seqLength-kmerSize+1;
+//             compressedSeqs += (seqLength+15)/16;
+
+//         }
+//     }
+//     //printf("hashList pointer in device%p\n", d_hashList);
+
+// }
+
+
 __global__ void sketchConstruction
 (
     uint32_t * d_compressedSeqs,
     uint32_t * d_aggseqLengths,
     uint32_t * d_seqLengths,
+    uint32_t * d_prefixHashlist,
+    uint32_t * d_prefixCompressed,
     size_t d_numSequences,
     uint32_t * d_hashList,
     uint32_t kmerSize
 ){
-    int tx = threadIdx.x;
-    int bx = blockIdx.x;
-
+    size_t tx = threadIdx.x;
+    size_t bx = blockIdx.x;
+    size_t threads_per_block = blockDim.x;
+    size_t blocks_per_grid = gridDim.x;
 
     uint32_t kmer = 0;
     uint32_t mask = (1<<2*kmerSize) - 1;
 
-    uint32_t * hashList = d_hashList;
-    uint32_t * compressedSeqs = d_compressedSeqs;
+    //printf("hashList pointer in device%p\n", d_hashList);
 
-    // printf("hashList pointer in device%p\n", d_hashList);
+    if (bx >= d_numSequences) return;
 
-    if (tx==0 && bx==0)
+    for (size_t j = bx; j < d_numSequences; j+=blocks_per_grid) 
     {
-        for (size_t i=0; i<d_numSequences; i++)
+        uint32_t seqLength = d_seqLengths[j];
+        uint32_t * hashList = d_hashList + d_prefixHashlist[j];
+        uint32_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[j];
+        
+        for (size_t i = tx; i <= seqLength - kmerSize; i += threads_per_block) 
         {
-            uint32_t seqLength = d_seqLengths[i];
             
-            // if (i==9)printf("%ld:\t", i);
-
-            for (size_t j=0; j<=seqLength-kmerSize; j++)
+            uint32_t index = i/16;
+            uint32_t shift1 = 2*(i%16);
+            if (shift1>0)
             {
-                uint32_t index = j/16;
-                uint32_t shift1 = 2*(j%16);
-                if (shift1>0)
-                {
-                    uint32_t shift2 = 32-shift1;
-                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
-                }
-                else
-                {   
-                    kmer = compressedSeqs[index] & mask;
-                }
-                uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
-                hashList[j] = hash;
-                // if (i==9) printf("(%u, %u)\t",kmer, hash);
+                uint32_t shift2 = 32-shift1;
+                kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
             }
-            // if (i==9) printf("\n");
-            hashList += seqLength-kmerSize+1;
-            compressedSeqs += (seqLength+15)/16;
-
+            else
+            {   
+                kmer = compressedSeqs[index] & mask;
+            }
+            uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
+            //if (j==0) printf("(%u, %u)\n",kmer, hash);
+            hashList[i] = hash;
         }
-    }
-    // printf("hashList pointer in device%p\n", d_hashList);
 
+    }
 }
 
 void GpuSketch::sketchConstructionOnGpu
@@ -216,18 +267,71 @@ void GpuSketch::sketchConstructionOnGpu
     Param& params
 ){
 
-    sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, params.kmerSize);
+    cudaError_t err;
+
+    // prefix-sum of d_seqLengths using thrust
+    uint32_t * d_prefixHashlist;
+    uint32_t * d_prefixCompressed;
+
+    int bytes = d_numSequences * sizeof(uint32_t);
+
+    err = cudaMalloc(&d_prefixHashlist, bytes);
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    err = cudaMalloc(&d_prefixCompressed, bytes);
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    thrust::device_ptr<uint32_t> dev_seqLengths(d_seqLengths);
+    thrust::device_ptr<uint32_t> dev_prefixHash(d_prefixHashlist);
+    thrust::device_ptr<uint32_t> dev_prefixComp(d_prefixCompressed);
+
+    thrust::transform(thrust::device,
+        dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp, 
+        [] __device__ (const uint32_t& x) -> uint32_t { 
+            return (x + 15) / 16;
+        }
+    );
+
+    const uint32_t kmerSize = params.kmerSize; // Extract kmerSize
+
+    thrust::transform(
+        thrust::device,
+        dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixHash,
+        [kmerSize] __device__ (const uint32_t& x) -> uint32_t {
+            return x - kmerSize + 1;
+        }
+    );
+
+    thrust::exclusive_scan(dev_prefixHash, dev_prefixHash + d_numSequences, dev_prefixHash);
+    thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
+
+    // Serial kernel call
+    //sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
+
+    // New kernel call
+    sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
+
+    cudaDeviceSynchronize();
+    cudaFree(d_prefixHashlist);
+    cudaFree(d_prefixCompressed);
 
     uint32_t * hashList = d_hashList;
     for (size_t i = 0; i < d_numSequences; i++)
     {
         thrust::device_ptr<uint32_t> hashPtr(hashList);
-        uint32_t numKmers = (h_seqLengths[i] - 15 + 1);   
+        uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
         thrust::sort(hashPtr, hashPtr + numKmers);
         hashList += numKmers;
     }
 
-    cudaDeviceSynchronize();
 }
 
 __device__ float mashDistance //local to each thread
