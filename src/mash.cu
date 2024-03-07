@@ -258,24 +258,71 @@ __global__ void sketchConstruction
     }
 }
 
-// __global__ void nthSmallestElements
-// (
-//     uint32_t * d_seqLengths,
-//     size_t d_numSequences,
-//     uint32_t * d_prefixHashlist,
-//     uint32_t * d_hashList,
-//     uint32_t kmerSize
-// ){
-//     size_t tx = blockIdx.x * blockDim.x + threadIdx.x; // global index
-//     size_t totalThreads = gridDim.x * blockDim.x;
+__device__ void swap(uint32_t &a, uint32_t &b) {
+    uint32_t temp = a;
+    a = b;
+    b = temp;
+}
 
-//     for (size_t i = tx; i < d_numSequences; i += totalThreads) {
-//         uint32_t numKmers = d_seqLengths[i] - kmerSize + 1;
-//         thrust::device_ptr<uint32_t> hashPtr(d_hashList + d_prefixHashlist[i]);
-//         thrust::sort(hashPtr, hashPtr + numKmers);
+__device__ int partition(uint32_t *arr, int left, int right, uint32_t pivot) {
+    int pivotIndex = left;
+    // Find the pivot and swap it with the right element
+    for (int i = left; i <= right; i++) {
+        if (arr[i] == pivot) {
+            swap(arr[i], arr[right]);
+            break;
+        }
+    }
+    for (int i = left; i < right; i++) {
+        if (arr[i] <= pivot) {
+            swap(arr[i], arr[pivotIndex]);
+            pivotIndex++;
+        }
+    }
+    swap(arr[pivotIndex], arr[right]); // Move pivot to its final place
+    return pivotIndex;
+}
+
+// __global__ void selectNthSmallest(uint32_t *d_hashList, uint32_t numKmers, int n) {
+//     int left = 0;
+//     int right = numKmers - 1;
+//     while (left < right) {
+//         uint32_t pivot = medianOfMedians(d_hashList, left, right);
+//         int pivotIndex = partition(d_hashList, left, right, pivot);
+//         if (pivotIndex == n - 1) {
+//             return; // Found the nth smallest
+//         } else if (pivotIndex < n - 1) {
+//             left = pivotIndex + 1;
+//         } else {
+//             right = pivotIndex - 1;
+//         }
 //     }
-
 // }
+
+void GpuSketch::selectNthSmallestOnGpu
+(
+    uint32_t* d_hashList, 
+    uint32_t * h_seqLengths, 
+    size_t d_numSequences, 
+    Param& params
+) {
+    std::vector<cudaStream_t> streams(d_numSequences); // tune the number of streams needed, can reuse
+
+    uint32_t * hashList = d_hashList;
+    for (size_t i = 0; i < d_numSequences; i++)
+    {
+        cudaStreamCreate(&streams[i]);
+        uint32_t numKmers = (h_seqLengths[i] - params.kmerSize + 1);   
+        selectNthSmallest<<<params.numBlocks, params.blockSize, 0, streams[i]>>>(hashList, numKmers, 1000);
+        hashList += numKmers;
+    }
+
+    // Wait for all streams to complete
+    for (int i = 0; i < d_numSequences; ++i) {
+        cudaStreamSynchronize(streams[i]);
+        cudaStreamDestroy(streams[i]);
+    }
+}
 
 void GpuSketch::sketchConstructionOnGpu
 (
@@ -355,8 +402,11 @@ void GpuSketch::sketchConstructionOnGpu
     std::cout << "Time to generate hashes: " << time.count() << "ns\n";
 
     cudaFree(d_prefixCompressed);
+    cudaFree(d_prefixHashlist);
 
     timerStart = std::chrono::high_resolution_clock::now();
+
+    // Old implementation -- for correctness
     uint32_t * hashList = d_hashList;
     for (size_t i = 0; i < d_numSequences; i++)
     {
@@ -365,10 +415,10 @@ void GpuSketch::sketchConstructionOnGpu
         thrust::sort(hashPtr, hashPtr + numKmers);
         hashList += numKmers;
     }
+
+    //selectNthSmallestOnGpu(d_hashList, h_seqLengths, d_numSequences, params);
+
     
-    //nthSmallestElements<<<params.numBlocks, params.blockSize>>>(d_seqLengths, d_numSequences, d_prefixHashlist, d_hashList, kmerSize);
-    cudaDeviceSynchronize();
-    cudaFree(d_prefixHashlist);
 
     timerEnd = std::chrono::high_resolution_clock::now();
     time = timerEnd - timerStart;
