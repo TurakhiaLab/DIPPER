@@ -58,6 +58,7 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs)
 {
     auto seqReadStart = std::chrono::high_resolution_clock::now();
     std::string seqFileName = vm["sequences"].as<std::string>();
+    std::cout << "Sequence file name " <<  seqFileName << "\n";
 
     gzFile f_rd = gzopen(seqFileName.c_str(), "r");
     if (!f_rd) {
@@ -130,12 +131,12 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     // Number of cuda Blocks
-    int numBlocks = 1;
+    int numBlocks = 32;
     try {numBlocks= std::stoi(vm["numBlocks"].as<std::string>());}
     catch(std::exception &e){}
 
     // Number of threads per cuda block
-    int blockSize = 1;
+    int blockSize = 128;
     try {blockSize= std::stoi(vm["blockSize"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -215,8 +216,8 @@ int main(int argc, char** argv) {
     );
     auto createDistMatEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createDistMatTime = createDistMatEnd - createDistMatStart; 
-
-    // GpuSketch::deviceArrays.printMashDist(numSequences);
+    std::cout << "Distance Matrix Created in: " <<  createDistMatTime.count() << " ns\n";
+    //GpuSketch::deviceArrays.printMashDist(numSequences);
 
     /*Allocate NJ device arrays before deallocating GpuSketch device arrays*/
     

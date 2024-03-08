@@ -468,14 +468,14 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
 
     uint32_t * hashList = d_hashList;
     uint32_t mashDistCount=0;
-    uint32_t totalElements = d_numSequences * (d_numSequences - 1)/2;
-    //printf("number of sequences is %d\n",d_numSequences);
+    uint32_t totalElements = (d_numSequences * (d_numSequences - 1))/2;
     uint32_t* firstSeq = d_hashList;
     uint32_t* secondSeq = d_hashList; 
     int* dim2info = new int[2];
-    
+    uint32_t totalElementsFullMatrix = d_numSequences*d_numSequences;
+
         //full distance matrix
-        /*for(int i = tid; i < totalElements; i += threads){
+        /*for(int i = tid; i < totalElementsFullMatrix; i += threads){
             int row_index = i/d_numSequences;
             int col_index = i%d_numSequences;
             firstSeq = d_hashList + sketchSize*row_index;
@@ -500,11 +500,8 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
             secondSeq = d_hashList + sketchSize*col_index;
             // if (threadIdx.x == 1 && blockIdx.x == 0)
             //     printf("totalElements: %d, iteration: %d, first sequence: %u and second sequence is %u, threadIdx is %d, blockIdx is %d, global thread ID is %d\n", totalElements, i, *firstSeq, *secondSeq, tx, bx, tid);
-            //if (col_index >= row_index){
             float mashDist = mashDistance(firstSeq, secondSeq ,kmerSize, sketchSize, seqA, seqB); //2D
-            //printf("distance for iteration i=%d is %f\n",i,mashDist);
             d_mashDist[i] = mashDist; //1D
-            //}
         }
 }
 
