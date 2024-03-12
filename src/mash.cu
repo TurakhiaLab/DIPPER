@@ -218,8 +218,6 @@ __global__ void sketchConstruction
 ){
     size_t tx = threadIdx.x;
     size_t bx = blockIdx.x;
-    size_t threads_per_block = blockDim.x;
-    size_t blocks_per_grid = gridDim.x;
 
     uint32_t kmer = 0;
     uint32_t mask = (1<<2*kmerSize) - 1;
@@ -228,13 +226,13 @@ __global__ void sketchConstruction
 
     if (bx >= d_numSequences) return;
 
-    for (size_t j = bx; j < d_numSequences; j+=blocks_per_grid) 
+    for (size_t j = bx; j < d_numSequences; j += gridDim.x) 
     {
         uint32_t seqLength = d_seqLengths[j];
         uint32_t * hashList = d_hashList + d_prefixHashlist[j];
         uint32_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[j];
         
-        for (size_t i = tx; i <= seqLength - kmerSize; i += threads_per_block) 
+        for (size_t i = tx; i <= seqLength - kmerSize; i += blockDim.x) 
         {
             
             uint32_t index = i/16;
@@ -254,6 +252,43 @@ __global__ void sketchConstruction
         }
 
     }
+    
+
+}
+
+__global__ void pruneHashList
+(
+    uint32_t * d_hashList,
+    uint32_t * d_seqLengths,
+    size_t d_numSequences,
+    uint32_t kmerSize,
+    uint32_t sketchSize
+){
+    uint32_t * hashList = d_hashList;
+    uint32_t hashListIdx1 = 0;
+
+    uint32_t * hashListPruned = d_hashList;
+    //uint32_t * hashListPruned = new uint32_t[sketchSize*d_numSequences*sizeof(uint32_t)];
+
+    //uint32_t hashListIdx2 = hashList + d_seqLengths[i] - kmerSize + 1;
+    uint32_t hashListIdx2 = 0;
+    for(uint32_t i=0;i<d_numSequences;i++)
+    {
+        if(d_seqLengths[i] < sketchSize){
+            printf("Error: Not enough hashes to build %u size union sketch\n", sketchSize);
+        }
+        for(uint32_t j=0;j<sketchSize;j++) //would work if sketchSize is less than seqLength
+        {
+            hashListPruned[i*sketchSize+j] = hashList[hashListIdx1];
+            //hashList[i*params.sketchSize+j] = hashList[hashListIdx1];
+            hashListIdx1++;
+        }
+
+        hashListIdx2 += d_seqLengths[i] - kmerSize + 1;
+        hashListIdx1 = hashListIdx2;
+
+    }
+
 }
 
 void GpuSketch::sketchConstructionOnGpu
@@ -332,6 +367,9 @@ void GpuSketch::sketchConstructionOnGpu
         hashList += numKmers;
     }
 
+    pruneHashList<<<1,1>>>(d_hashList, d_seqLengths, d_numSequences, params.kmerSize, params.sketchSize);
+
+
 }
 
 __device__ float mashDistance //local to each thread
@@ -400,7 +438,7 @@ __device__ float mashDistance //local to each thread
   
     //printf("intersection value is %f, union value is %f\n",inter, uni);
     float jaccardEstimate = (inter/uni);
-    float mashDist = (-1)*(log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize;
+    float mashDist = abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize);
     return mashDist;
 
 }
@@ -472,21 +510,6 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
     uint32_t* firstSeq = d_hashList;
     uint32_t* secondSeq = d_hashList; 
     int* dim2info = new int[2];
-    uint32_t totalElementsFullMatrix = d_numSequences*d_numSequences;
-
-        //full distance matrix
-        /*for(int i = tid; i < totalElementsFullMatrix; i += threads){
-            int row_index = i/d_numSequences;
-            int col_index = i%d_numSequences;
-            firstSeq = d_hashList + sketchSize*row_index;
-            secondSeq = d_hashList + sketchSize*col_index;
-            // if (threadIdx.x == 1 && blockIdx.x == 0)
-            //     printf("totalElements: %d, iteration: %d, first sequence: %u and second sequence is %u, threadIdx is %d, blockIdx is %d, global thread ID is %d\n", totalElements, i, *firstSeq, *secondSeq, tx, bx, tid);
-            //if (col_index >= row_index){
-                float mashDist = mashDistance(firstSeq, secondSeq ,kmerSize, sketchSize, seqA, seqB); //2D
-                d_mashDist[i] = mashDist; //1D
-            //}
-        }*/
 
         //upper triangle 
         for(int i = tid; i < totalElements; i += threads){
@@ -505,41 +528,6 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
         }
 }
 
-
-__global__ void pruneHashList
-(
-    uint32_t * d_hashList,
-    uint32_t * d_seqLengths,
-    size_t d_numSequences,
-    float * d_mashDist,
-    uint32_t kmerSize,
-    uint32_t sketchSize
-){
-    uint32_t * hashList = d_hashList;
-    uint32_t hashListIdx1 = 0;
-
-    uint32_t * hashListPruned = d_hashList;
-    //uint32_t * hashListPruned = new uint32_t[sketchSize*d_numSequences*sizeof(uint32_t)];
-
-    //uint32_t hashListIdx2 = hashList + d_seqLengths[i] - kmerSize + 1;
-    uint32_t hashListIdx2 = 0;
-    for(uint32_t i=0;i<d_numSequences;i++)
-    {
-        for(uint32_t j=0;j<sketchSize;j++) //would work if sketchSize is less than seqLength
-        {
-            hashListPruned[i*sketchSize+j] = hashList[hashListIdx1];
-            //hashList[i*params.sketchSize+j] = hashList[hashListIdx1];
-            hashListIdx1++;
-        }
-
-        hashListIdx2 += d_seqLengths[i] - kmerSize + 1;
-        hashListIdx1 = hashListIdx2;
-
-    }
-
-}
-
-
 void GpuSketch::mashDistConstructionOnGpu
 (   
     uint32_t * d_hashList,
@@ -550,7 +538,6 @@ void GpuSketch::mashDistConstructionOnGpu
     Param& params
 ){
 
-    pruneHashList<<<1, 1>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
     //mashDistConstruction<<<params.numBlocks, params.blockSize>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
     mashDistConstruction<<<params.numBlocks, params.blockSize, 2*32*params.blockSize*sizeof(uint32_t)>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
 

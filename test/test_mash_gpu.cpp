@@ -131,12 +131,12 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     // Number of cuda Blocks
-    int numBlocks = 32;
+    int numBlocks = 128;
     try {numBlocks= std::stoi(vm["numBlocks"].as<std::string>());}
     catch(std::exception &e){}
 
     // Number of threads per cuda block
-    int blockSize = 128;
+    int blockSize = 192;
     try {blockSize= std::stoi(vm["blockSize"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -217,7 +217,7 @@ int main(int argc, char** argv) {
     auto createDistMatEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createDistMatTime = createDistMatEnd - createDistMatStart; 
     std::cout << "Distance Matrix Created in: " <<  createDistMatTime.count() << " ns\n";
-    //GpuSketch::deviceArrays.printMashDist(numSequences);
+    GpuSketch::deviceArrays.printMashDist(numSequences);
 
     /*Allocate NJ device arrays before deallocating GpuSketch device arrays*/
     
