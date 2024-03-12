@@ -16,6 +16,14 @@ h_seqLengths -> [3, 5, 3]
 d_aggseqLengths -> [1, 2, 3] */
 void GpuSketch::DeviceArrays::allocateDeviceArrays(uint32_t ** h_compressedSeqs, uint32_t * h_seqLengths, size_t numSequences, Param& params)
 {
+
+    int device;
+    cudaGetDevice(&device);
+
+    struct cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, device);
+    printf("Shared memory per block (Kbytes) %.1f\n",(float)(props.sharedMemPerBlock)/1024.0);
+
     cudaError_t err;
 
     d_numSequences = numSequences;
@@ -219,15 +227,10 @@ __global__ void pruneHashList
 
     size_t tx = threadIdx.x;
     size_t bx = blockIdx.x;
-    size_t tid = blockDim.x*bx + tx;
-    int threads = blockDim.x*gridDim.x;
 
     uint32_t * hashList = d_hashList;
 
-    //uint32_t * hashListPruned = d_hashList;
-    //uint32_t * hashListPruned = new uint32_t[sketchSize*d_numSequences*sizeof(uint32_t)];
 
-    //uint32_t hashListIdx2 = hashList + d_seqLengths[i] - kmerSize + 1;
     for(uint32_t i=bx;i<d_numSequences;i+=gridDim.x)
     {
         hashList = d_hashList + d_prefixHashlist[i];
@@ -238,8 +241,6 @@ __global__ void pruneHashList
         for(uint32_t j=tx;j<sketchSize;j+=blockDim.x) //would work if sketchSize is less than seqLength
         {
             d_hashListPruned[i*sketchSize+j] = hashList[j];
-            //printf("value is %u\n",d_hashListPruned[i*sketchSize+j]);
-            //__syncthreads();
         }
 
 
@@ -302,18 +303,18 @@ void GpuSketch::sketchConstructionOnGpu
         }
     );
 
+    //Find out start index of sequences
     thrust::exclusive_scan(dev_prefixHash, dev_prefixHash + d_numSequences, dev_prefixHash);
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
 
-    // Serial kernel call
-    //sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
-
-    // New kernel call
+    //Constructing Kmer and Hashes for each sequence
     sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
     cudaDeviceSynchronize();
 
     uint32_t * hashList = d_hashList;
-    for (size_t i = 0; i < d_numSequences; i++)
+
+    //Sorting the hashList in lexicographical manner
+    for (size_t i = 0; i < d_numSequences; i++) 
     {
         thrust::device_ptr<uint32_t> hashPtr(hashList);
         uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
@@ -321,13 +322,12 @@ void GpuSketch::sketchConstructionOnGpu
         hashList += numKmers;
     }
 
+    //Prune the hashList to create sketch of sketchSize
     pruneHashList<<<params.numBlocks, params.blockSize>>>(d_hashList, d_hashListPruned, d_prefixHashlist, d_seqLengths, d_numSequences, params.kmerSize, params.sketchSize);
     cudaDeviceSynchronize();
-    //d_hashList = d_hashListPruned;
-    //printf("d_hashList is %u", d_hashList[0]);
+
     cudaFree(d_prefixHashlist);
     cudaFree(d_prefixCompressed);
-    //cudaFree(d_hashListPruned);
 
 }
 
@@ -341,39 +341,32 @@ __device__ float mashDistance //local to each thread
     uint32_t * seqB
 ){
 
-    //outer loop 
-    //union, 0, <sketchSize, +=32, outer loop needs to keep updating the arrays
-    //inner loop
-    //subUnion, 0, condition min(32,sketchSize-union), ++
 
+
+    //Shared array used by each thread in a block is 33 elements wide to reduce bank conflicts
     uint32_t offset = 33*blockDim.x, APtrLocal = 33*threadIdx.x, BPtrLocal = offset + 33*threadIdx.x;
     uint32_t APtrGlobal = 0, BPtrGlobal = 0;
     float inter=0, uni=0;
-    // for(uint32_t i = 0; i < sketchSize; i++){
-    //     if (threadIdx.x == 1 && blockIdx.x == 0) printf("tx: %d, bx: %d, A[%d] is %u, B[%d] is %u\n",threadIdx.x, blockIdx.x, i, A[i], i, B[i]);
-    // }
-    //printf("tx: %d, bx: %d, A[0] is %u, B[0] is %u\n",threadIdx.x, blockIdx.x, *A, *B);
+   
 
     //printf("start intersection value is %f, union value is %f, sketchSize %u\n",inter, uni, sketchSize);
-    for(uint32_t u = 0; u < sketchSize; u += 32){ //union always increments by 32 in inner loop
+
+    //outer loop on union
+    for(uint32_t u = 0; u < sketchSize; u += 32){ //union always increments by 32 for every 32 elements
         
         //fetch next 32 OR leftover elements from global memory
         for(uint32_t i = 0; i < min(32, sketchSize - u); i++){
             seqA[APtrLocal + i] = A[APtrGlobal + i];
             seqB[BPtrLocal + i] = B[BPtrGlobal + i];
-            //if (threadIdx.x == 1 && blockIdx.x == 0)
-            //    printf("union: %d, in mashDistance shared mem init: seqA[%d] is %u, seqB[%d] is %u, A[%d] is %u, B[%d] is %u\n", u, APtrLocal+i, seqA[APtrLocal + i], BPtrLocal+i, seqB[BPtrLocal + i], APtrGlobal+i, A[APtrGlobal+i], BPtrGlobal+i, B[BPtrGlobal+i]);
         }
 
-
+        //inner loop
         for(uint32_t su = 0; su < min(32,sketchSize - u); su++){ // subUnion (union of 32 hashes in seq A and B)
 
             //printf("sequence A: %u and sequence B: %u\n", seqA[APtrLocal], seqB[BPtrGlobal]);
             if (seqA[APtrLocal] == seqB[BPtrLocal]) 
             {   
                 inter++; uni++;
-                // if ((threadIdx.x == 1 && blockIdx.x == 0) && (APtrLocal == 1 && BPtrLocal == 1))
-                //     printf("tx %d bx %d, sequence A: %u and sequence B: %u, inter: %f\n", threadIdx.x, blockIdx.x, seqA[APtrLocal], seqB[BPtrLocal], inter);
                 APtrLocal++; BPtrLocal++;
                 APtrGlobal++; BPtrGlobal++;
             } 
@@ -395,8 +388,8 @@ __device__ float mashDistance //local to each thread
 
     }
   
-    //printf("intersection value is %f, union value is %f\n",inter, uni);
     float jaccardEstimate = (inter/uni);
+
     float mashDist = abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize);
     return mashDist;
 
@@ -460,29 +453,23 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
     int tid = bs*bx + tx; //global thread ID
     int threads = bs*gs;
 
-    extern __shared__ uint32_t seqA[];
-    extern __shared__ uint32_t seqB[];
+    extern __shared__ uint32_t seqA[]; //shared memory for storing first sequence for each thread
+    extern __shared__ uint32_t seqB[]; //shared memory for storing second sequence for each thread
 
-    uint32_t mashDistCount=0;
-    uint32_t totalElements = (d_numSequences * (d_numSequences - 1))/2;
+    uint32_t totalElements = (d_numSequences * (d_numSequences - 1))/2; //total elements in the distance matrix are NC2
     uint32_t* firstSeq = d_hashList;
     uint32_t* secondSeq = d_hashList; 
     int* dim2info = new int[2];
 
-        //upper triangle 
+        //computing elements in the upper triangle
         for(int i = tid; i < totalElements; i += threads){
-            //printf("going to compute matrix row and column for i=%d\n",i);
-            dim2info = matrixRowComputation(dim2info, i, d_numSequences);
-            //printf("computed matrix row and column for i=%d\n",i);
+            dim2info = matrixRowComputation(dim2info, i, d_numSequences); //compute the row and column index in the 2D matrix for the sequences for which we need to calculate the distance as per their placement in the flattened distance matrix
             int row_index = dim2info[0];
             int col_index = dim2info[1];
-            //printf("i is %d, row index is %d, col index is %d\n", i, row_index, col_index);
-            firstSeq = d_hashList + sketchSize*row_index;
-            secondSeq = d_hashList + sketchSize*col_index;
-            // if (threadIdx.x == 1 && blockIdx.x == 0)
-            //     printf("totalElements: %d, iteration: %d, first sequence: %u and second sequence is %u, threadIdx is %d, blockIdx is %d, global thread ID is %d\n", totalElements, i, *firstSeq, *secondSeq, tx, bx, tid);
-            float mashDist = mashDistance(firstSeq, secondSeq ,kmerSize, sketchSize, seqA, seqB); //2D
-            d_mashDist[i] = mashDist; //1D
+            firstSeq = d_hashList + sketchSize*row_index; //index of first sequence in the hashList
+            secondSeq = d_hashList + sketchSize*col_index; //index of second sequence in the hashList
+            float mashDist = mashDistance(firstSeq, secondSeq ,kmerSize, sketchSize, seqA, seqB); //Calculating mash distance for the pair of sequences
+            d_mashDist[i] = mashDist; //Filling the 1D distance matrix
         }
 }
 
@@ -496,14 +483,13 @@ void GpuSketch::mashDistConstructionOnGpu
     Param& params
 ){
 
-    //mashDistConstruction<<<params.numBlocks, params.blockSize>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
     mashDistConstruction<<<params.numBlocks, params.blockSize, 2*33*params.blockSize*sizeof(uint32_t)>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
 
     cudaDeviceSynchronize();
 
 }
 
-void GpuSketch::DeviceArrays::printSketchValues(int numValues, uint32_t * h_seqLengths) 
+void GpuSketch::DeviceArrays::printSketchValues(int numValues, uint32_t * h_seqLengths, Param& params) 
 {
     uint32_t * h_hashList = new uint32_t[numValues];
 
@@ -524,7 +510,7 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues, uint32_t * h_seqL
         for (int i=0; i<numValues; i++) {
             printf("%i\t%u\n", i, h_hashList[i]);
         }
-        hashList += h_seqLengths[j] - 15 + 1;
+        hashList += h_seqLengths[j] - params.kmerSize + 1;
        
     }
 

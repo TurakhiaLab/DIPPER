@@ -49,8 +49,14 @@ add_executable (test-mash-gpu
                 src/twoBitCompressor.cpp
                 test/test_mash_gpu.cpp)
 
+add_executable (test-mash-gpu-serial
+                src/mash_serial.cu
+                src/twoBitCompressor.cpp
+                test/test_mash_gpu_serial.cpp)
+
 target_link_libraries(msa PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
 target_link_libraries(test-align PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
 target_link_libraries(test-msa PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
 target_link_libraries(test-mash PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 target_link_libraries(test-mash-gpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(test-mash-gpu-serial PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})

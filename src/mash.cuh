@@ -35,7 +35,7 @@ namespace GpuSketch
         float * d_mashDist;
 
         void allocateDeviceArrays (uint32_t ** h_compressedSeqs, uint32_t * h_seqLengths, size_t numSequences, Param& params);
-        void printSketchValues(int numValues, uint32_t * h_seqLengths);
+        void printSketchValues(int numValues, uint32_t * h_seqLengths, Param& params);
         void printMashDist(uint32_t h_numSequences);
         void deallocateDeviceArrays ();
     };

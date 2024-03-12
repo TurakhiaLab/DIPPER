@@ -45,10 +45,10 @@ void parseArguments(int argc, char** argv)
         // ("tree,t", po::value<std::string>()->required(), "Initial Tree - Newick format (required)")
         ("sequences,f", po::value<std::string>()->required(), "Tip sequences - Fasta format (required)")
         ("kmer-size,k", po::value<std::string>(), "Kmer-size (Valid: 2-15, Default = 15)")
-        ("sketch-size,s", po::value<std::string>(), "Sketch-size (Default = 10000)")
+        ("sketch-size,s", po::value<std::string>(), "Sketch-size (Default = 1000)")
         ("threshold,r", po::value<std::string>(), "Erroneous k-mer threshold (Default = 1)")
-        ("numBlocks,b", po::value<std::string>(), "Number of cuda blocks (Default = 1)")
-        ("blockSize,b", po::value<std::string>(), "Number of cuda threads per block (Default = 1)")
+        ("numBlocks,b", po::value<std::string>(), "Number of cuda blocks (Default = 128)")
+        ("blockSize,bs", po::value<std::string>(), "Number of cuda threads per block (Default = 160)")
         ("help,h", "Print help messages");
 
 }
@@ -199,10 +199,10 @@ int main(int argc, char** argv) {
     );
     auto createSketchEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
-    std::cout << "Sketch Created in: " <<  createSketchTime.count() << " ns\n";
+    //std::cout << "Sketch Created in: " <<  createSketchTime.count() << " ns\n";
 
     // Print first 10 hash values corresponding to each sequence
-    // GpuSketch::deviceArrays.printSketchValues(10, seqLengths);
+    //GpuSketch::deviceArrays.printSketchValues(10, seqLengths, params);
 
     // Build distance matrix
     auto createDistMatStart = std::chrono::high_resolution_clock::now();
