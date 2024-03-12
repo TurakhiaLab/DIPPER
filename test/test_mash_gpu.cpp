@@ -193,6 +193,7 @@ int main(int argc, char** argv) {
         GpuSketch::deviceArrays.d_seqLengths,
         GpuSketch::deviceArrays.d_numSequences,
         GpuSketch::deviceArrays.d_hashList,
+        GpuSketch::deviceArrays.d_hashListPruned,
         seqLengths,
         params
     );
@@ -207,7 +208,7 @@ int main(int argc, char** argv) {
     auto createDistMatStart = std::chrono::high_resolution_clock::now();
     GpuSketch::mashDistConstructionOnGpu
     (
-        GpuSketch::deviceArrays.d_hashList,
+        GpuSketch::deviceArrays.d_hashListPruned,
         GpuSketch::deviceArrays.d_seqLengths,
         GpuSketch::deviceArrays.d_numSequences,
         GpuSketch::deviceArrays.d_mashDist,

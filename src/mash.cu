@@ -67,6 +67,12 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint32_t ** h_compressedSeqs,
         exit(1);
     }
 
+    err = cudaMalloc(&d_hashListPruned, hashListLength*sizeof(uint32_t));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
 
     err = cudaMalloc(&d_compressedSeqs, flatStringLength*sizeof(uint32_t));
     if (err != cudaSuccess)
@@ -112,6 +118,7 @@ void GpuSketch::DeviceArrays::deallocateDeviceArrays(){
     cudaFree(d_aggseqLengths);
     cudaFree(d_seqLengths);
     cudaFree(d_hashList);
+    cudaFree(d_hashListPruned);
     // cudaFree(d_mashDist);
 }
 
@@ -147,63 +154,6 @@ __device__ uint32_t MurmurHash3_x86_32 ( uint32_t key, int len, uint32_t seed)
 
     return h1;
 } 
-
-// __global__ void sketchConstruction
-// (
-//     uint32_t * d_compressedSeqs,
-//     uint32_t * d_aggseqLengths,
-//     uint32_t * d_seqLengths,
-//     size_t d_numSequences,
-//     uint32_t * d_hashList,
-//     uint32_t kmerSize
-// ){
-//     int tx = threadIdx.x;
-//     int bx = blockIdx.x;
-
-
-//     uint32_t kmer = 0;
-//     uint32_t mask = (1<<2*kmerSize) - 1;
-
-//     uint32_t * hashList = d_hashList;
-//     uint32_t * compressedSeqs = d_compressedSeqs;
-
-//     //printf("hashList pointer in device%p\n", d_hashList);
-
-//     if (tx==0 && bx==0)
-//     {
-//         for (size_t i=0; i<d_numSequences; i++)
-//         {
-//             uint32_t seqLength = d_seqLengths[i];
-            
-//             //if (i==9)printf("%ld:\t", i);
-
-//             for (size_t j=0; j<=seqLength-kmerSize; j++)
-//             {
-//                 uint32_t index = j/16;
-//                 uint32_t shift1 = 2*(j%16);
-//                 if (shift1>0)
-//                 {
-//                     uint32_t shift2 = 32-shift1;
-//                     kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
-//                 }
-//                 else
-//                 {   
-//                     kmer = compressedSeqs[index] & mask;
-//                 }
-//                 uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
-//                 hashList[j] = hash;
-//                 //if (i==9) printf("(%u, %u)\t",kmer, hash);
-//             }
-//             //if (i==9) printf("\n");
-//             hashList += seqLength-kmerSize+1;
-//             compressedSeqs += (seqLength+15)/16;
-
-//         }
-//     }
-//     //printf("hashList pointer in device%p\n", d_hashList);
-
-// }
-
 
 __global__ void sketchConstruction
 (
@@ -259,33 +209,39 @@ __global__ void sketchConstruction
 __global__ void pruneHashList
 (
     uint32_t * d_hashList,
+    uint32_t * d_hashListPruned,
+    uint32_t * d_prefixHashlist,
     uint32_t * d_seqLengths,
     size_t d_numSequences,
     uint32_t kmerSize,
     uint32_t sketchSize
 ){
-    uint32_t * hashList = d_hashList;
-    uint32_t hashListIdx1 = 0;
 
-    uint32_t * hashListPruned = d_hashList;
+    size_t tx = threadIdx.x;
+    size_t bx = blockIdx.x;
+    size_t tid = blockDim.x*bx + tx;
+    int threads = blockDim.x*gridDim.x;
+
+    uint32_t * hashList = d_hashList;
+
+    //uint32_t * hashListPruned = d_hashList;
     //uint32_t * hashListPruned = new uint32_t[sketchSize*d_numSequences*sizeof(uint32_t)];
 
     //uint32_t hashListIdx2 = hashList + d_seqLengths[i] - kmerSize + 1;
-    uint32_t hashListIdx2 = 0;
-    for(uint32_t i=0;i<d_numSequences;i++)
+    for(uint32_t i=bx;i<d_numSequences;i+=gridDim.x)
     {
+        hashList = d_hashList + d_prefixHashlist[i];
+        //__syncthreads();
         if(d_seqLengths[i] < sketchSize){
             printf("Error: Not enough hashes to build %u size union sketch\n", sketchSize);
         }
-        for(uint32_t j=0;j<sketchSize;j++) //would work if sketchSize is less than seqLength
+        for(uint32_t j=tx;j<sketchSize;j+=blockDim.x) //would work if sketchSize is less than seqLength
         {
-            hashListPruned[i*sketchSize+j] = hashList[hashListIdx1];
-            //hashList[i*params.sketchSize+j] = hashList[hashListIdx1];
-            hashListIdx1++;
+            d_hashListPruned[i*sketchSize+j] = hashList[j];
+            //printf("value is %u\n",d_hashListPruned[i*sketchSize+j]);
+            //__syncthreads();
         }
 
-        hashListIdx2 += d_seqLengths[i] - kmerSize + 1;
-        hashListIdx1 = hashListIdx2;
 
     }
 
@@ -298,6 +254,7 @@ void GpuSketch::sketchConstructionOnGpu
     uint32_t * d_seqLengths,
     size_t d_numSequences,
     uint32_t * d_hashList,
+    uint32_t * d_hashListPruned,
     uint32_t * h_seqLengths,
     Param& params
 ){
@@ -353,10 +310,7 @@ void GpuSketch::sketchConstructionOnGpu
 
     // New kernel call
     sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
-
     cudaDeviceSynchronize();
-    cudaFree(d_prefixHashlist);
-    cudaFree(d_prefixCompressed);
 
     uint32_t * hashList = d_hashList;
     for (size_t i = 0; i < d_numSequences; i++)
@@ -367,8 +321,13 @@ void GpuSketch::sketchConstructionOnGpu
         hashList += numKmers;
     }
 
-    pruneHashList<<<1,1>>>(d_hashList, d_seqLengths, d_numSequences, params.kmerSize, params.sketchSize);
-
+    pruneHashList<<<params.numBlocks, params.blockSize>>>(d_hashList, d_hashListPruned, d_prefixHashlist, d_seqLengths, d_numSequences, params.kmerSize, params.sketchSize);
+    cudaDeviceSynchronize();
+    //d_hashList = d_hashListPruned;
+    //printf("d_hashList is %u", d_hashList[0]);
+    cudaFree(d_prefixHashlist);
+    cudaFree(d_prefixCompressed);
+    //cudaFree(d_hashListPruned);
 
 }
 
@@ -504,7 +463,6 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
     extern __shared__ uint32_t seqA[];
     extern __shared__ uint32_t seqB[];
 
-    uint32_t * hashList = d_hashList;
     uint32_t mashDistCount=0;
     uint32_t totalElements = (d_numSequences * (d_numSequences - 1))/2;
     uint32_t* firstSeq = d_hashList;

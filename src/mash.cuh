@@ -31,6 +31,7 @@ namespace GpuSketch
         uint32_t * d_seqLengths;
         size_t d_numSequences;
         uint32_t * d_hashList;
+        uint32_t * d_hashListPruned;
         float * d_mashDist;
 
         void allocateDeviceArrays (uint32_t ** h_compressedSeqs, uint32_t * h_seqLengths, size_t numSequences, Param& params);
@@ -50,6 +51,7 @@ namespace GpuSketch
         uint32_t * d_seqLengths,
         size_t d_numSequences,
         uint32_t * d_hashList,
+        uint32_t * d_hashListPruned,
         uint32_t * h_seqLengths,
         Param& params
     );
