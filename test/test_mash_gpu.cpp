@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     // Number of threads per cuda block
-    int blockSize = 192;
+    int blockSize = 160;
     try {blockSize= std::stoi(vm["blockSize"].as<std::string>());}
     catch(std::exception &e){}
 

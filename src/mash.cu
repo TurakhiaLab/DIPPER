@@ -387,7 +387,7 @@ __device__ float mashDistance //local to each thread
     //inner loop
     //subUnion, 0, condition min(32,sketchSize-union), ++
 
-    uint32_t offset = 32*blockDim.x, APtrLocal = 32*threadIdx.x, BPtrLocal = offset + 32*threadIdx.x;
+    uint32_t offset = 33*blockDim.x, APtrLocal = 33*threadIdx.x, BPtrLocal = offset + 33*threadIdx.x;
     uint32_t APtrGlobal = 0, BPtrGlobal = 0;
     float inter=0, uni=0;
     // for(uint32_t i = 0; i < sketchSize; i++){
@@ -432,7 +432,7 @@ __device__ float mashDistance //local to each thread
             }
         }
 
-        APtrLocal = 32*threadIdx.x, BPtrLocal = offset + 32*threadIdx.x; //reset APtrLocal and BPtrLocal
+        APtrLocal = 33*threadIdx.x, BPtrLocal = offset + 33*threadIdx.x; //reset APtrLocal and BPtrLocal
 
     }
   
