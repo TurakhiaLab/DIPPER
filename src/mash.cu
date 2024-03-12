@@ -539,7 +539,7 @@ void GpuSketch::mashDistConstructionOnGpu
 ){
 
     //mashDistConstruction<<<params.numBlocks, params.blockSize>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
-    mashDistConstruction<<<params.numBlocks, params.blockSize, 2*32*params.blockSize*sizeof(uint32_t)>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
+    mashDistConstruction<<<params.numBlocks, params.blockSize, 2*33*params.blockSize*sizeof(uint32_t)>>>(d_hashList, d_seqLengths, d_numSequences, d_mashDist, params.kmerSize, params.sketchSize);
 
     cudaDeviceSynchronize();
 
