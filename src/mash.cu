@@ -258,46 +258,100 @@ __global__ void sketchConstruction
     }
 }
 
+
 __device__ void swap(uint32_t &a, uint32_t &b) {
     uint32_t temp = a;
     a = b;
     b = temp;
 }
 
-__device__ int partition(uint32_t *arr, int left, int right, uint32_t pivot) {
-    int pivotIndex = left;
-    // Find the pivot and swap it with the right element
-    for (int i = left; i <= right; i++) {
-        if (arr[i] == pivot) {
-            swap(arr[i], arr[right]);
-            break;
+
+__device__ int partition(uint32_t *arr, int low, int high) {
+    uint32_t pivot = arr[high];
+    int i = (low - 1);
+    
+    for (int j = low; j <= high- 1; j++) {
+        if (arr[j] < pivot) {
+            i++;
+            swap(arr[i], arr[j]);
         }
     }
-    for (int i = left; i < right; i++) {
-        if (arr[i] <= pivot) {
-            swap(arr[i], arr[pivotIndex]);
-            pivotIndex++;
-        }
-    }
-    swap(arr[pivotIndex], arr[right]); // Move pivot to its final place
-    return pivotIndex;
+    swap(arr[i + 1], arr[high]);
+    return (i + 1);
 }
 
-// __global__ void selectNthSmallest(uint32_t *d_hashList, uint32_t numKmers, int n) {
-//     int left = 0;
-//     int right = numKmers - 1;
-//     while (left < right) {
-//         uint32_t pivot = medianOfMedians(d_hashList, left, right);
-//         int pivotIndex = partition(d_hashList, left, right, pivot);
-//         if (pivotIndex == n - 1) {
-//             return; // Found the nth smallest
-//         } else if (pivotIndex < n - 1) {
-//             left = pivotIndex + 1;
-//         } else {
-//             right = pivotIndex - 1;
-//         }
-//     }
-// }
+
+
+// Device function for insertion sort
+__device__ void insertionSort(uint32_t *arr, int left, int right) {
+    for (int i = left + 1; i <= right; i++) {
+        int key = arr[i];
+        int j = i - 1;
+        
+        while (j >= left && arr[j] > key) {
+            arr[j + 1] = arr[j];
+            j = j - 1;
+        }
+        arr[j + 1] = key;
+    }
+}
+
+
+
+__device__ int findMedian(uint32_t *arr, int n) {
+    insertionSort(arr, 0, n - 1);
+    return arr[n / 2];
+}
+
+
+
+__device__ int quickSelect(uint32_t *arr, int left, int right, size_t k) {
+    if (left == right) return arr[left];
+    
+    int pi = partition(arr, left, right);
+
+    int kth = pi - left + 1;
+    if (k == kth) return arr[pi];
+    else if (k < kth) return quickSelect(arr, left, pi - 1, k);
+    else return quickSelect(arr, pi + 1, right, k - kth);
+}
+
+
+
+__global__ void introSelectKernel(uint32_t *arr, int n, int k) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        *arr = quickSelect(arr, 0, n - 1, k);
+    }
+}
+
+
+__global__ void pruneHashes
+(
+    uint32_t * d_prefixHashlist,
+    size_t d_numSequences,
+    uint32_t * d_hashList,
+    uint32_t * d_hashListPruned
+){
+    size_t tx = threadIdx.x;
+    size_t bx = blockIdx.x;
+    size_t threads_per_block = blockDim.x;
+    size_t blocks_per_grid = gridDim.x;
+
+    if (bx >= d_numSequences) return;
+
+    for (size_t j = bx; j < d_numSequences; j+=blocks_per_grid) 
+    {
+        uint32_t * hashList = d_hashList + d_prefixHashlist[j];
+        
+        for (size_t i = tx; i < 1000; i += threads_per_block) 
+        {
+            d_hashListPruned[j * 1000 + i] = hashList[i];
+        }
+
+    }
+}
+
+
 
 void GpuSketch::selectNthSmallestOnGpu
 (
@@ -312,17 +366,20 @@ void GpuSketch::selectNthSmallestOnGpu
     for (size_t i = 0; i < d_numSequences; i++)
     {
         cudaStreamCreate(&streams[i]);
-        uint32_t numKmers = (h_seqLengths[i] - params.kmerSize + 1);   
-        selectNthSmallest<<<params.numBlocks, params.blockSize, 0, streams[i]>>>(hashList, numKmers, 1000);
+        uint32_t numKmers = (h_seqLengths[i] - params.kmerSize + 1);
+        introSelectKernel<<<params.numBlocks, params.blockSize, 0, streams[i]>>>(hashList, numKmers, 1000);
         hashList += numKmers;
     }
 
     // Wait for all streams to complete
-    for (int i = 0; i < d_numSequences; ++i) {
+    for (size_t i = 0; i < d_numSequences; ++i) {
         cudaStreamSynchronize(streams[i]);
         cudaStreamDestroy(streams[i]);
     }
 }
+
+
+
 
 void GpuSketch::sketchConstructionOnGpu
 (
@@ -344,19 +401,9 @@ void GpuSketch::sketchConstructionOnGpu
 
     int bytes = d_numSequences * sizeof(uint32_t);
 
-    err = cudaMalloc(&d_prefixHashlist, bytes);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    err = cudaMalloc(&d_prefixCompressed, bytes);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    cudaMalloc(&d_prefixHashlist, bytes);
+    cudaMalloc(&d_prefixCompressed, bytes);
+    
 
     thrust::device_ptr<uint32_t> dev_seqLengths(d_seqLengths);
     thrust::device_ptr<uint32_t> dev_prefixHash(d_prefixHashlist);
@@ -402,27 +449,49 @@ void GpuSketch::sketchConstructionOnGpu
     std::cout << "Time to generate hashes: " << time.count() << "ns\n";
 
     cudaFree(d_prefixCompressed);
-    cudaFree(d_prefixHashlist);
+    
 
     timerStart = std::chrono::high_resolution_clock::now();
 
-    // Old implementation -- for correctness
-    uint32_t * hashList = d_hashList;
-    for (size_t i = 0; i < d_numSequences; i++)
-    {
-        thrust::device_ptr<uint32_t> hashPtr(hashList);
-        uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
-        thrust::sort(hashPtr, hashPtr + numKmers);
-        hashList += numKmers;
-    }
+    // // Old implementation -- for correctness
+    // uint32_t * hashList = d_hashList;
+    // for (size_t i = 0; i < d_numSequences; i++)
+    // {
+    //     thrust::device_ptr<uint32_t> hashPtr(hashList);
+    //     uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
+    //     thrust::sort(hashPtr, hashPtr + numKmers);
+    //     hashList += numKmers;
+    // }
 
-    //selectNthSmallestOnGpu(d_hashList, h_seqLengths, d_numSequences, params);
-
-    
+    selectNthSmallestOnGpu(d_hashList, h_seqLengths, d_numSequences, params);
 
     timerEnd = std::chrono::high_resolution_clock::now();
     time = timerEnd - timerStart;
     std::cout << "Time to sort: " << time.count() << "ns\n";
+
+    uint32_t * d_hashListPruned;
+    bytes = d_numSequences * 1000 * sizeof(uint32_t);
+    cudaMalloc(&d_hashListPruned, bytes);
+    uint32_t * h_pruned = (uint32_t*)malloc(bytes);
+    pruneHashes<<<params.numBlocks, params.blockSize>>>(d_prefixHashlist, d_numSequences, d_hashList, d_hashListPruned);
+
+    cudaMemcpy(h_pruned, d_hashListPruned, bytes, cudaMemcpyDeviceToHost);
+    for (int i = 0; i < d_numSequences; i++) {
+        printf("i       hashList[i] (%d)\n", i);
+        for (int j = 0; j < 1000; j++) {
+            printf("%d       %d\n", j, h_pruned[i * 1000 + j]);
+
+        }
+    }
+
+    // prevent mem leak for now
+    cudaFree(d_hashListPruned);
+    free(h_pruned);
+
+    cudaFree(d_prefixHashlist);
+    
+
+    
 
 }
 
