@@ -20,6 +20,8 @@ include(${TBB_DIR}/cmake/TBBBuild.cmake)
 tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
 find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
 
+
+add_executable(generateDis test/generateDistanceMatrix.cpp)
 add_executable (msa
                 src/msa.cpp
                 src/tree.cpp
@@ -62,3 +64,4 @@ target_link_libraries(test-msa PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
 target_link_libraries(test-mash PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 target_link_libraries(test-mash-gpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 target_link_libraries(test-nj PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(generateDis PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
