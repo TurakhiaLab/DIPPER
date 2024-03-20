@@ -17,15 +17,12 @@
 
 
 void neighbourJoining::DeviceArrays::allocateDeviceArrays(uint32_t numSequences, double *mashDist){
+    //Allocate memories on GPU 
+    //mashDist should be memory on GPU, should contain upper triangle distance matrix, row by row
+    //distances on diagonal (i=j) should not be contained in mashDist
     d_oriMashDist = mashDist;
     d_numSequences = numSequences;
     cudaError_t err;
-    err = cudaMalloc(&d_flag, numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!111\n");
-        exit(1);
-    }
     err = cudaMalloc(&d_U, numSequences*sizeof(double));
     if (err != cudaSuccess)
     {
@@ -36,109 +33,85 @@ void neighbourJoining::DeviceArrays::allocateDeviceArrays(uint32_t numSequences,
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!333\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_rowID, numSequences*numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!333\n");
-        exit(1);
-    }
-    //d_tree.resize(d_numSequences*2);
-    cudaDeviceSynchronize();
-    err = cudaMemset(d_flag, 0, numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!222\n");
         exit(1);
     }
     cudaDeviceSynchronize();
 }
 
 void neighbourJoining::DeviceArrays::inputDismatrix(uint32_t numSequences, double *mashDist){
+    //Allocate memories on GPU and copy data to GPU
+    //mashDist should be memory on CPU, should contain upper triangle distance matrix, row by row
+    //distances on diagonal (i=j) should not be contained in mashDist
+    d_numSequences = numSequences;
     auto err = cudaMalloc(&d_oriMashDist, numSequences*(numSequences-1)/2*sizeof(double));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!111\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
+    cudaDeviceSynchronize();
     err = cudaMemcpy(d_oriMashDist, mashDist, numSequences*(numSequences-1)/2*sizeof(double),cudaMemcpyHostToDevice);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
         exit(1);
     }
-    d_numSequences = numSequences;
-    err = cudaMalloc(&d_flag, numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!111\n");
-        exit(1);
-    }
     err = cudaMalloc(&d_U, numSequences*sizeof(double));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!333\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
     err = cudaMalloc(&d_mashDist, numSequences*numSequences*sizeof(double));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!333\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_rowID, numSequences*numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!333\n");
-        exit(1);
-    }
-    //d_tree.resize(d_numSequences*2);
-    err = cudaMemset(d_flag, 0, numSequences*sizeof(uint32_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!222\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
     cudaDeviceSynchronize();
 }
 
 void neighbourJoining::DeviceArrays::deallocateDeviceArrays(){
+    //Free space on GPU at the end
     cudaFree(d_mashDist);
-    cudaFree(d_flag);
+    cudaFree(d_oriMashDist);
     cudaFree(d_U);
     cudaDeviceSynchronize();
 }
 
-__global__ void updateUMatrix(uint32_t d_numSequences, double *d_mashDist, double *d_U, uint32_t *d_flag){
+__global__ void calculateU(uint32_t d_numSequences, double *d_mashDist, double *d_U){
+    //Only executes once, calculate the sum of distances in each row
     uint32_t numSequences=d_numSequences;
-    __shared__ double temp_U[128];
+    __shared__ double temp_U[128]; // Make sure to set this value larger than numSequences/gridSize
     for(auto i=0;i<128;i++)
         if(threadIdx.x==0)
             temp_U[i]=0;
+    __syncthreads();
     for(auto i=blockIdx.x;i<numSequences;i+=gridDim.x){
-        if(d_flag[i]) continue;
         double temp=0;
         for(auto j=threadIdx.x;j<numSequences;j+=blockDim.x)
-            if(d_flag[j]==0&&i!=j) temp += d_mashDist[i*numSequences+j];
+            if(i!=j) temp += d_mashDist[i*numSequences+j];
         atomicAdd(&temp_U[i/gridDim.x],temp);
+        // For each block, calculate the sum of distances in some rows
+        // For each thread, use atomicAdd to update the sum to shared memory
     }
     __syncthreads();
     if(threadIdx.x==0){
         for(auto i=blockIdx.x;i<numSequences;i+=gridDim.x) d_U[i]=temp_U[i/gridDim.x];
+        // For each block, update the sum to global memory
     }
 }
 
-__global__ void buildDist(uint32_t d_numSequences, double *d_mashDist, double *d_oriMashDist, uint32_t * d_rowID){
+__global__ void buildDist(uint32_t d_numSequences, double *d_mashDist, double *d_oriMashDist){
+    // Transform the upper triangle matrix to full matrix
     int tx=threadIdx.x, bx=blockIdx.x;
     int bs=blockDim.x, gs=gridDim.x;
     int st=bx, step=gs;
     uint32_t numSequences=d_numSequences,pos=(numSequences*2-1-st)*st/2;
-    for(auto i=st;i<numSequences;pos+=(numSequences*2-i*2-1-step)*step/2,i+=step){
-        for(auto j=tx;j<numSequences;j+=bs){
-            d_rowID[i*numSequences+j]=i;
-            if(i==j) d_mashDist[i*numSequences+j]=0;
-            if(i>=j) continue;
+    for(uint32_t i=st;i<numSequences;pos+=(numSequences*2-i*2-1-step)*step/2,i+=step){
+        for(uint32_t j=tx;j<numSequences;j+=bs){
+            if(i==j) d_mashDist[i*numSequences+j]=0; // Distances on diagnal is set to 0
+            if(i>=j) continue; // Only do the following process when we are in upper triangle
             double val=d_oriMashDist[pos+j-i-1];
             d_mashDist[i*numSequences+j]=val;
             d_mashDist[j*numSequences+i]=val;
@@ -147,7 +120,9 @@ __global__ void buildDist(uint32_t d_numSequences, double *d_mashDist, double *d
 }
 
 __global__ void findMinDist(uint32_t d_numSequences, double *d_mashDist, double *d_U, thrust::tuple<uint32_t,uint32_t,double> *minPos, uint32_t len){
-    __shared__ double U[128];//length=d_numSequences/gridDim.x+1;
+    __shared__ double U[128];
+    //Required length of each block equal to d_numSequences/gridDim.x+1;
+    //Make sure to set the size of shared memory large enough
     int tx=threadIdx.x, bx=blockIdx.x;
     int bs=blockDim.x, gs=gridDim.x;
     uint32_t numSequences=d_numSequences;
@@ -155,23 +130,26 @@ __global__ void findMinDist(uint32_t d_numSequences, double *d_mashDist, double 
     if(numSequences%gs>bx) sz++;
     st+=min(bx,numSequences%gs);
     uint32_t ed=st+sz;
+    // Calculate the start and end row for the block
     for(auto i=st+tx;i<ed;i+=bs)
         U[i-st]=d_U[i]/(numSequences-2);
+    // Store the U value corresponding to the block in shared memory
     __syncthreads();
     double colU;
     double minD=10000;
     uint32_t x=0,y=0;
     for(auto j=tx;j<numSequences;j+=bs){
-        colU=d_U[j]/(numSequences-2);
+        colU=d_U[j]/(numSequences-2); // Store the U value corresponding to j-th column in register
         for(auto i=st;i<ed;i++){
             double temp=d_mashDist[i*len+j]-U[i-st]-colU;
             if(i!=j&&temp<minD)
-                minD=temp,x=i,y=j;
+                minD=temp,x=i,y=j; // Update if we find a smaller new value
         }
     }
 
     thrust::tuple <uint32_t,uint32_t,double> minTuple(x,y,minD);
     minPos[bx*bs+tx]=minTuple;
+    //Store the minimum value found by this thread to global memory for further processing
 }
 
 struct compare_tuple
@@ -180,27 +158,36 @@ struct compare_tuple
   bool operator()(thrust::tuple<uint32_t,uint32_t,double> lhs, thrust::tuple<uint32_t,uint32_t,double> rhs)
   {
     return thrust::get<2>(lhs) < thrust::get<2>(rhs);
+    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
 
 
 __global__ void updateDisMatrix(uint32_t d_numSequences, double *d_mashDist, double disxy, uint32_t x,uint32_t y, double* d_U, uint32_t total){
+    // Erase node x and y from the matrix (x<y)
+    // Insert the distances to the new node into the matrix, 
+    // at the original column/row of x for coalasced memory access.
+    // Always move the last row/column (distances related to last node) to row/column of y to avoid gap in matrix
     int tx=threadIdx.x, bx=blockIdx.x;
     int bs=blockDim.x, gs=gridDim.x;
     int start=bx*bs+tx,step=bs*gs,numSequences=total;
-    if(tx==0&&bx==0) d_U[x]=0;
     for(int i=start;i<d_numSequences-1;i+=step)
         if(i!=x&&i!=y){
             double val=(d_mashDist[x*numSequences+i]+d_mashDist[y*numSequences+i]-disxy)*0.5;
+            // Calculate distance from i to the new node
             double fardis=d_mashDist[(d_numSequences-1)*numSequences+i];
+            // Calcualte distance from i to the last node
             d_U[i]+=-d_mashDist[x*numSequences+i]-d_mashDist[y*numSequences+i]+val;
             atomicAdd(&d_U[x],val);
+            // Update U values (sum of distances in each row)
             d_mashDist[x*numSequences+i]=val;
             d_mashDist[i*numSequences+x]=val;
             d_mashDist[y*numSequences+i]=fardis;
             d_mashDist[i*numSequences+y]=fardis;
+            // Update distance matrix
         }
     if(tx==0&&bx==0){
+        // Deal with the influence of distance between new node and last node
         d_U[y]=d_U[d_numSequences-1];
         uint32_t i=d_numSequences-1;
         double val=(d_mashDist[x*numSequences+i]+d_mashDist[y*numSequences+i]-disxy)*0.5;
@@ -212,56 +199,33 @@ __global__ void updateDisMatrix(uint32_t d_numSequences, double *d_mashDist, dou
 }
 
 
-void neighbourJoining::findNeighbourJoiningTree(uint32_t d_numSequences, double *d_mashDist, double *d_U, uint32_t *d_flag, double *d_oriMashDist, uint32_t * d_rowID){
+void neighbourJoining::findNeighbourJoiningTree(uint32_t d_numSequences, double *d_mashDist, double *d_U, double *d_oriMashDist, std::vector <std::string> &name){
+    //"name" should be a vector contain the name of each sample/sequence
+    //see test_nj.cpp for more information
     std::vector <std::vector<std::pair<uint32_t,double>>> tree(d_numSequences*2);
-
-   
-    int cntThread=256,cntBlock=256;
-    int realID[d_numSequences];
+    // Store the tree in a vector of vectors, while each small vector consists of several pairs
+    // First element in the pair is the index of its child
+    // Second element in the pair is the distance to its child
+    int cntThread=256,cntBlock=256; // Could be adjusted based on experiment
+    int realID[d_numSequences]; // Actual sequence id corresponding to i-th row/column in the matrix
     for(int i=0;i<d_numSequences;i++) realID[i]=i;
-    buildDist <<<cntBlock,cntThread>>> (d_numSequences, d_mashDist, d_oriMashDist, d_rowID);
-    // cudaDeviceSynchronize();
-    // double * h_mashDist = new double[d_numSequences*d_numSequences];
-    // auto err = cudaMemcpy(h_mashDist, d_mashDist, (d_numSequences*d_numSequences)*sizeof(double), cudaMemcpyDeviceToHost);
-    // if (err != cudaSuccess) {
-    //     fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
-    //     exit(1);
-    // }
-    // for(int i=0;i<d_numSequences*d_numSequences;i++) printf("%f ",h_mashDist[i]);
-    // printf("\n");
+    buildDist <<<cntBlock,cntThread>>> (d_numSequences, d_mashDist, d_oriMashDist);
+    // Build the full distance matrix
     thrust::device_vector <thrust::tuple<uint32_t,uint32_t,double>> minPos(cntThread*cntBlock);
-    updateUMatrix <<<cntBlock,cntThread>>> (d_numSequences, d_mashDist, d_U, d_flag);
-    //thrust::tuple<uint32_t,uint32_t,double> minPos[cntThread*cntBlock];
+    // Device_vector that stores minimum value found by each thread
+    calculateU <<<cntBlock,cntThread>>> (d_numSequences, d_mashDist, d_U);
+    // Calculate initial sum of distances in each row
     int ID=d_numSequences;
     for(int i=0;i<d_numSequences-2;i++){
-        //thrust::reduce_by_key(thrust::device, d_rowID, d_rowID+d_numSequences*d_numSequences,d_mashDist, tempMemory, d_U);
-        // cudaDeviceSynchronize();
-        // double * h_U = new double[d_numSequences];
-        // auto err = cudaMemcpy(h_U, d_U, (d_numSequences)*sizeof(double), cudaMemcpyDeviceToHost);
-        // if (err != cudaSuccess) {
-        //     fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
-        //     exit(1);
-        // }
-        // for(int j=0;j<d_numSequences;j++) printf("%f ",h_U[j]);
-        // printf("\n");
-        
         findMinDist <<<cntBlock,cntThread>>> (d_numSequences-i,d_mashDist,d_U,thrust::raw_pointer_cast(minPos.data()),d_numSequences);
-        // cudaDeviceSynchronize();
-        // printf("%d----------\n",i);
-        // auto iter=minPos.begin();
-        // while(iter!=minPos.end()){
-        //     thrust::tuple<uint32_t,uint32_t,double> smallest=*iter;
-        //     uint32_t x=thrust::get<0>(smallest),y=thrust::get<1>(smallest);
-        //     double d=thrust::get<2>(smallest);
-        //     printf("%u %u %f\n", x,y,d);
-        //     iter++;
-        // }
-
+        cudaDeviceSynchronize();
         auto iter=thrust::min_element(minPos.begin(),minPos.end(),compare_tuple());
+        // Find the global minimum
         thrust::tuple<uint32_t,uint32_t,double> smallest=*iter;
         uint32_t x=thrust::get<0>(smallest),y=thrust::get<1>(smallest);
         double modified_dis=thrust::get<2>(smallest);
-        
+        if(x>y) std::swap(x,y);
+        // Ensure x is smaller than y
         double* dis=new double;
         double *ux=new double;
         double *uy=new double;
@@ -270,39 +234,41 @@ void neighbourJoining::findNeighbourJoiningTree(uint32_t d_numSequences, double 
         cudaMemcpy(uy,d_U+y,sizeof(double),cudaMemcpyDeviceToHost);
         double blX = (*dis+(*ux)/(d_numSequences-i-2)-(*uy)/(d_numSequences-i-2))*0.5;
         double blY = *dis - blX;
+        // Calculate branch lengths
         if(blX<0) blY+=blX, blX=0;
         if(blY<0) blX+=blY, blY=0;
-        //std::cout << blX <<" "<<blY<<'\n';
+        // Avoid negative branches
         tree[ID].push_back({realID[x],blX});
         tree[ID].push_back({realID[y],blY});
-        //std::cout<<ID<<" "<<realID[x]<<" "<<realID[y]<<"\n";
-        realID[x]=ID++, realID[y]=realID[d_numSequences-i-1];
-        
+        // Insert the two edges into the tree
+        double temp=0;
+        realID[x]=ID++, realID[y]=realID[d_numSequences-i-1]; 
+        // Update the actual sequence indices corresponding to rows/columns in distance matrix
+        cudaMemcpy(d_U+x,&temp,sizeof(double),cudaMemcpyHostToDevice);
         updateDisMatrix <<<cntBlock,cntThread>>> (d_numSequences-i,d_mashDist,*dis,x,y,d_U, d_numSequences);
+        // Update the distance matrix and U array
         cudaDeviceSynchronize();
-        
-        //printf("%d %u %u %f\n", i, x,y,modified_dis);
-
     }
+    // If only two nodes are left, their distance is fixed
     uint32_t x=0,y=1;
     double dis=0;
     cudaMemcpy(&dis,d_mashDist+x*d_numSequences+y,sizeof(double),cudaMemcpyDeviceToHost);
     tree[d_numSequences*2-2].push_back({realID[x],dis*0.5});
     tree[d_numSequences*2-2].push_back({realID[y],dis*0.5});
     cudaDeviceSynchronize();
+    // Output the tree recursively
     std::function<void(int)>  print=[&](int node){
         if(tree[node].size()){
             printf("(");
             for(size_t i=0;i<tree[node].size();i++){
                 print(tree[node][i].first);
                 printf(":");
-                printf("%.5f%c",tree[node][i].second,i+1==tree[node].size()?')':',');
+                printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
             }
         }
-        else printf("Node_%d",node);
+        else std::cout<<"\'"<<name[node]<<"\':";
     };
+    // Root of the tree has an index of d_numSequneces*2-2
     print(d_numSequences*2-2);
-    std::cout<<"\n\n";
+    std::cout<<";\n\n";
 }
-
-

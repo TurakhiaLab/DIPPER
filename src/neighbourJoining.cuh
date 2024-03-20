@@ -4,11 +4,7 @@
 #include <stdint.h>
 #include <iostream>
 #include <vector>
-
-
-#ifndef MASH_CUH
-#include "../src/mash.cuh"
-#endif
+#include <string>
 
 // typedef uint32_t hash_t;
 
@@ -21,16 +17,14 @@ namespace neighbourJoining
         uint32_t d_numSequences;
         double * d_mashDist;
         double * d_U;
-        uint32_t * d_flag;
         double * d_oriMashDist;
-        uint32_t * d_rowID;
-        void allocateDeviceArrays (uint32_t numSequences, double *mashDist);
         void deallocateDeviceArrays ();
-        void inputDismatrix(uint32_t numSequences, double *mashDist);
+        void inputDismatrix(uint32_t numSequences, double *mashDist);// mashDist on CPU
+        void allocateDeviceArrays(uint32_t numSequences, double *mashDist);// mashDist on GPU
     };
 
     static DeviceArrays deviceArrays;
-    void findNeighbourJoiningTree(uint32_t d_numSequences, double *d_mashDist, double *d_U, uint32_t *d_flag, double *d_oriMashDist, uint32_t *d_rowID);
+    void findNeighbourJoiningTree(uint32_t d_numSequences, double *d_mashDist, double *d_U, double *d_oriMashDist, std::vector <std::string> &name);
 };
 
 #endif
