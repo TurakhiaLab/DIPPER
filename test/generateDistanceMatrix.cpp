@@ -12,6 +12,7 @@ int main(){
     for(int i=0;i<n;i++)
         for(int j=i+1;j<n;j++)
             dis[i][j]=dis[j][i]=double(myrnd()%100000)/100000;
+    cout<<n<<"\n";
     for(int i=0;i<n;i++){
         printf("Node_%d\t",i);
         for(int j=0;j<n;j++){
