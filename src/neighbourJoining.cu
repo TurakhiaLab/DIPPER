@@ -266,7 +266,7 @@ void neighbourJoining::findNeighbourJoiningTree(uint32_t d_numSequences, double 
                 printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
             }
         }
-        else std::cout<<"\'"<<name[node]<<"\'";
+        else std::cout<<name[node];
     };
     // Root of the tree has an index of d_numSequneces*2-2
     print(d_numSequences*2-2);
