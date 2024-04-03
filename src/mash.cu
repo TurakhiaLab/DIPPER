@@ -89,7 +89,9 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint32_t ** h_compressedSeqs,
         exit(1);
     }
 
-    err = cudaMalloc(&d_mashDist, (numSequences*(numSequences -1)/2)*sizeof(float));
+    //err = cudaMalloc(&d_mashDist, (numSequences*(numSequences -1)/2)*sizeof(float));
+    err = cudaMalloc(&d_mashDist, (numSequences*numSequences)*sizeof(float));
+
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
@@ -469,7 +471,8 @@ __global__ void mashDistConstruction //shared memory allocated here is common to
             firstSeq = d_hashList + sketchSize*row_index; //index of first sequence in the hashList
             secondSeq = d_hashList + sketchSize*col_index; //index of second sequence in the hashList
             float mashDist = mashDistance(firstSeq, secondSeq ,kmerSize, sketchSize, seqA, seqB); //Calculating mash distance for the pair of sequences
-            d_mashDist[i] = mashDist; //Filling the 1D distance matrix
+            d_mashDist[row_index*d_numSequences + col_index] = mashDist; //Filling the 1D distance matrix
+            d_mashDist[col_index*d_numSequences + row_index] = mashDist;
         }
 }
 
@@ -519,14 +522,14 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues, uint32_t * h_seqL
 void GpuSketch::DeviceArrays::printMashDist(uint32_t h_numSequences) 
 {
     
-    float * h_mashDist = new float[h_numSequences*(h_numSequences - 1)/2]; //NC2
+    float * h_mashDist = new float[h_numSequences*h_numSequences]; //NC2
 
     float * mashDist = d_mashDist;
 
     cudaError_t err;
 
 
-    err = cudaMemcpy(h_mashDist, mashDist, (h_numSequences*(h_numSequences - 1)/2)*sizeof(uint32_t), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(h_mashDist, mashDist, (h_numSequences*h_numSequences)*sizeof(uint32_t), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
@@ -534,8 +537,8 @@ void GpuSketch::DeviceArrays::printMashDist(uint32_t h_numSequences)
 
     for (int i=0; i<h_numSequences; i++) 
     {
-        printf("1.0\t");
-        for (int j=i+1; j<h_numSequences; j++) 
+        //printf("1.0\t");
+        for (int j=0; j<h_numSequences; j++) 
         {
             printf("%f\t", *h_mashDist);
             h_mashDist++;
