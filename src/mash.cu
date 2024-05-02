@@ -11,6 +11,7 @@
 #include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
+#include <cub/cub.cuh>
 
 /* Note: d_aggseqLengths is the aggregated compressed length of original string (h_seqLengths)
 Ex: ["dog", "mouse", "cat"] 
@@ -207,178 +208,80 @@ __global__ void sketchConstructionSerial
 }
 
 
-__global__ void sketchConstruction
-(
+
+__global__ void sketchConstruction(
     uint32_t * d_compressedSeqs,
-    uint32_t * d_aggseqLengths,
     uint32_t * d_seqLengths,
-    uint32_t * d_prefixHashlist,
     uint32_t * d_prefixCompressed,
     size_t d_numSequences,
     uint32_t * d_hashList,
     uint32_t kmerSize
-){
-    size_t tx = threadIdx.x;
-    size_t bx = blockIdx.x;
-    size_t threads_per_block = blockDim.x;
-    size_t blocks_per_grid = gridDim.x;
+) {
+    extern __shared__ uint32_t stored[];
 
-    uint32_t kmer = 0;
-    uint32_t mask = (1<<2*kmerSize) - 1;
+    typedef cub::BlockRadixSort<uint32_t, 512, 3> BlockRadixSort;
 
-    //printf("hashList pointer in device%p\n", d_hashList);
+    __shared__ typename BlockRadixSort::TempStorage temp_storage;
 
-    if (bx >= d_numSequences) return;
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
 
-    for (size_t j = bx; j < d_numSequences; j+=blocks_per_grid) 
-    {
-        uint32_t seqLength = d_seqLengths[j];
-        uint32_t * hashList = d_hashList + d_prefixHashlist[j];
-        uint32_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[j];
-        
-        for (size_t i = tx; i <= seqLength - kmerSize; i += threads_per_block) 
-        {
-            
-            uint32_t index = i/16;
-            uint32_t shift1 = 2*(i%16);
-            if (shift1>0)
-            {
+    for (size_t i = bx; i < d_numSequences; i += gridDim.x) {
+        stored[tx] = 1 << 25;
+        stored[tx + 500] = 1 << 25;
+
+        uint32_t seqLength = d_seqLengths[i];
+        uint32_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[i];
+
+        uint32_t kmer = 0;
+        uint32_t mask = (1 << (2 * kmerSize)) - 1;
+
+        for (size_t j = tx; j <= seqLength - kmerSize; j += blockDim.x) {
+            uint32_t index = j/16;
+            uint32_t shift1 = 2*(j%16);
+            if (shift1>0) {
                 uint32_t shift2 = 32-shift1;
                 kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
             }
-            else
-            {   
+            else {   
                 kmer = compressedSeqs[index] & mask;
             }
             uint32_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
-            //if (j==0) printf("(%u, %u)\n",kmer, hash);
-            hashList[i] = hash;
-        }
+            // Combine stored and computed to sort and rank
+            uint32_t keys[3];
 
-    }
-}
-
-
-__device__ void swap(uint32_t &a, uint32_t &b) {
-    uint32_t temp = a;
-    a = b;
-    b = temp;
-}
-
-
-__device__ int partition(uint32_t *arr, int low, int high) {
-    uint32_t pivot = arr[high];
-    int i = (low - 1);
-    
-    for (int j = low; j <= high- 1; j++) {
-        if (arr[j] < pivot) {
-            i++;
-            swap(arr[i], arr[j]);
-        }
-    }
-    swap(arr[i + 1], arr[high]);
-    return (i + 1);
-}
-
-
-
-// Device function for insertion sort
-__device__ void insertionSort(uint32_t *arr, int left, int right) {
-    for (int i = left + 1; i <= right; i++) {
-        int key = arr[i];
-        int j = i - 1;
+            keys[0] = (tx < 500) ? stored[tx] : 1 << 25;
+            keys[1] = (tx < 500) ? stored[tx + 500] : 1 << 25;
+            keys[2] = hash;
         
-        while (j >= left && arr[j] > key) {
-            arr[j + 1] = arr[j];
-            j = j - 1;
+            BlockRadixSort(temp_storage).Sort(keys);
+
+            if (i < 3) {  // Just as an example, adjust based on your dataset
+                if (tx == 0) {
+                    printf("Sequence %lu, Length: %u, First K-mer: %u, First Hash: %u\n", i, seqLength, kmer, keys[2]);
+                }
+            }
+
+            // Move top 1000 hashes back to stored
+            if (tx < 333) {
+                stored[3*tx] = keys[0];
+                stored[3*tx + 1] = keys[1];
+                stored[3*tx + 2] = keys[2];
+            } else if (tx == 333) {
+                stored[999] = keys[0];
+            }
+
+
         }
-        arr[j + 1] = key;
-    }
-}
 
-
-
-__device__ int findMedian(uint32_t *arr, int n) {
-    insertionSort(arr, 0, n - 1);
-    return arr[n / 2];
-}
-
-
-
-__device__ int quickSelect(uint32_t *arr, int left, int right, size_t k) {
-    if (left == right) return arr[left];
-    
-    int pi = partition(arr, left, right);
-
-    int kth = pi - left + 1;
-    if (k == kth) return arr[pi];
-    else if (k < kth) return quickSelect(arr, left, pi - 1, k);
-    else return quickSelect(arr, pi + 1, right, k - kth);
-}
-
-
-
-__global__ void introSelectKernel(uint32_t *arr, int n, int k) {
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-        *arr = quickSelect(arr, 0, n - 1, k);
-    }
-}
-
-
-__global__ void pruneHashes
-(
-    uint32_t * d_prefixHashlist,
-    size_t d_numSequences,
-    uint32_t * d_hashList,
-    uint32_t * d_hashListPruned
-){
-    size_t tx = threadIdx.x;
-    size_t bx = blockIdx.x;
-    size_t threads_per_block = blockDim.x;
-    size_t blocks_per_grid = gridDim.x;
-
-    if (bx >= d_numSequences) return;
-
-    for (size_t j = bx; j < d_numSequences; j+=blocks_per_grid) 
-    {
-        uint32_t * hashList = d_hashList + d_prefixHashlist[j];
-        
-        for (size_t i = tx; i < 1000; i += threads_per_block) 
-        {
-            d_hashListPruned[j * 1000 + i] = hashList[i];
+        // Result writing back to global memory.
+        if (tx < 500) {
+            d_hashList[i*1000 + tx] = stored[tx];
+            d_hashList[i*1000 + tx + 500] = stored[tx + 500];
         }
 
     }
 }
-
-
-
-void GpuSketch::selectNthSmallestOnGpu
-(
-    uint32_t* d_hashList, 
-    uint32_t * h_seqLengths, 
-    size_t d_numSequences, 
-    Param& params
-) {
-    std::vector<cudaStream_t> streams(d_numSequences); // tune the number of streams needed, can reuse
-
-    uint32_t * hashList = d_hashList;
-    for (size_t i = 0; i < d_numSequences; i++)
-    {
-        cudaStreamCreate(&streams[i]);
-        uint32_t numKmers = (h_seqLengths[i] - params.kmerSize + 1);
-        introSelectKernel<<<params.numBlocks, params.blockSize, 0, streams[i]>>>(hashList, numKmers, 1000);
-        hashList += numKmers;
-    }
-
-    // Wait for all streams to complete
-    for (size_t i = 0; i < d_numSequences; ++i) {
-        cudaStreamSynchronize(streams[i]);
-        cudaStreamDestroy(streams[i]);
-    }
-}
-
-
 
 
 void GpuSketch::sketchConstructionOnGpu
@@ -391,23 +294,17 @@ void GpuSketch::sketchConstructionOnGpu
     uint32_t * h_seqLengths,
     Param& params
 ){
-    auto timerStart = std::chrono::high_resolution_clock::now();
-
-    cudaError_t err;
 
     // prefix-sum of d_seqLengths using thrust
-    uint32_t * d_prefixHashlist;
     uint32_t * d_prefixCompressed;
 
     int bytes = d_numSequences * sizeof(uint32_t);
-
-    cudaMalloc(&d_prefixHashlist, bytes);
     cudaMalloc(&d_prefixCompressed, bytes);
     
-
     thrust::device_ptr<uint32_t> dev_seqLengths(d_seqLengths);
-    thrust::device_ptr<uint32_t> dev_prefixHash(d_prefixHashlist);
     thrust::device_ptr<uint32_t> dev_prefixComp(d_prefixCompressed);
+
+    auto timerStart = std::chrono::high_resolution_clock::now();
 
     thrust::transform(thrust::device,
         dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp, 
@@ -417,31 +314,27 @@ void GpuSketch::sketchConstructionOnGpu
     );
 
     const uint32_t kmerSize = params.kmerSize; // Extract kmerSize
-
-    thrust::transform(
-        thrust::device,
-        dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixHash,
-        [kmerSize] __device__ (const uint32_t& x) -> uint32_t {
-            return x - kmerSize + 1;
-        }
-    );
-
-    thrust::exclusive_scan(dev_prefixHash, dev_prefixHash + d_numSequences, dev_prefixHash);
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
     auto timerEnd = std::chrono::high_resolution_clock::now();
 
     std::chrono::nanoseconds time = timerEnd - timerStart;
     std::cout << "Time to create prefix array: " << time.count() << "ns\n";
 
-    
-
     timerStart = std::chrono::high_resolution_clock::now();
     // Serial kernel call
-    //sketchConstructionSerial<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_numSequences, d_hashList, kmerSize);
+    sketchConstructionSerial<<<params.numBlocks, params.blockSize>>>(
+        d_compressedSeqs,
+        d_aggseqLengths,
+        d_seqLengths,
+        d_numSequences,
+        d_hashList,
+        kmerSize
+    );
 
     // New kernel call
-    sketchConstruction<<<params.numBlocks, params.blockSize>>>(d_compressedSeqs, d_aggseqLengths, d_seqLengths, d_prefixHashlist, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
-    
+    int memSize = 24000;
+    int threads = 512; // hard code 500 for structure
+    //sketchConstruction<<<params.numBlocks, threads, memSize>>>(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
     cudaDeviceSynchronize();
 
     timerEnd = std::chrono::high_resolution_clock::now();
@@ -451,48 +344,53 @@ void GpuSketch::sketchConstructionOnGpu
     cudaFree(d_prefixCompressed);
     
 
+    // // // Old implementation -- for correctness
     timerStart = std::chrono::high_resolution_clock::now();
-
-    // // Old implementation -- for correctness
-    // uint32_t * hashList = d_hashList;
-    // for (size_t i = 0; i < d_numSequences; i++)
-    // {
-    //     thrust::device_ptr<uint32_t> hashPtr(hashList);
-    //     uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
-    //     thrust::sort(hashPtr, hashPtr + numKmers);
-    //     hashList += numKmers;
-    // }
-
-    selectNthSmallestOnGpu(d_hashList, h_seqLengths, d_numSequences, params);
+    uint32_t * hashList = d_hashList;
+    for (size_t i = 0; i < d_numSequences; i++)
+    {
+        thrust::device_ptr<uint32_t> hashPtr(hashList);
+        uint32_t numKmers = (h_seqLengths[i] - kmerSize + 1);   
+        thrust::sort(hashPtr, hashPtr + numKmers);
+        hashList += numKmers;
+    }
 
     timerEnd = std::chrono::high_resolution_clock::now();
     time = timerEnd - timerStart;
     std::cout << "Time to sort: " << time.count() << "ns\n";
 
-    uint32_t * d_hashListPruned;
-    bytes = d_numSequences * 1000 * sizeof(uint32_t);
-    cudaMalloc(&d_hashListPruned, bytes);
-    uint32_t * h_pruned = (uint32_t*)malloc(bytes);
-    pruneHashes<<<params.numBlocks, params.blockSize>>>(d_prefixHashlist, d_numSequences, d_hashList, d_hashListPruned);
 
-    cudaMemcpy(h_pruned, d_hashListPruned, bytes, cudaMemcpyDeviceToHost);
-    for (int i = 0; i < d_numSequences; i++) {
-        printf("i       hashList[i] (%d)\n", i);
-        for (int j = 0; j < 1000; j++) {
-            printf("%d       %d\n", j, h_pruned[i * 1000 + j]);
+    bytes = d_numSequences * 1000 * sizeof(uint32_t);
+    uint32_t * h_pruned = (uint32_t*)malloc(bytes);
+
+
+    cudaMemcpy(h_pruned, d_hashList, bytes, cudaMemcpyDeviceToHost);
+    // for (int i = 0; i < d_numSequences; i++) {
+    //     printf("i       hashList[i] (%d)\n", i);
+    //     for (int j = 0; j < 10; j++) {
+    //         printf("%ld       %ld\n", j, h_pruned[i * 1000 + j]);
+
+    //     }
+    // }
+    int c= 0;
+      for (int j = 0; j < 1000; j++) {
+        if (j>0)
+        {
+            if (h_pruned[j]==h_pruned[j-1])
+            {
+                c++;
+                printf("%ld       %ld\n", j, h_pruned[j]);
+            }
+        }
+
+        printf("%d\n", c);
 
         }
-    }
 
     // prevent mem leak for now
-    cudaFree(d_hashListPruned);
     free(h_pruned);
 
-    cudaFree(d_prefixHashlist);
     
-
-    
-
 }
 
 __device__ float mashDistance
