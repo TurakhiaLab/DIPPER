@@ -2,7 +2,7 @@
 #include "twoBitCompressor.hpp"
 #endif
 
-void twoBitCompressor(std::string seq, size_t seqLen, uint32_t* compressedSeq) {
+void twoBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq) {
     size_t compressedSeqLen = (seqLen+15)/16;
 
     for (size_t i=0; i < compressedSeqLen; i++) {
@@ -11,8 +11,8 @@ void twoBitCompressor(std::string seq, size_t seqLen, uint32_t* compressedSeq) {
         size_t start = 16*i;
         size_t end = std::min(seqLen, start+16);
 
-        uint32_t twoBitVal = 0;
-        uint32_t shift = 0;
+        uint64_t twoBitVal = 0;
+        uint64_t shift = 0;
         for (auto j=start; j<end; j++) {
             switch(seq[j]) {
             case 'A':
