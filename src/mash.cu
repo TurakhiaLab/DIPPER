@@ -178,7 +178,7 @@ __device__ uint64_t MurmurHash3_x64_128_updated(const uint64_t key, const int le
     // ((uint64_t*)out)[1] = h2;
 
     // pick one of the 64-bit hashes
-    return h2; // which one is picked shouldnt affect in theory
+    return h1; // which one is picked shouldnt affect in theory
 }
 
 /*
@@ -251,52 +251,56 @@ __global__ void sketchConstruction(
 ) {
     extern __shared__ uint64_t stored[];
 
-    typedef cub::BlockRadixSort<uint64_t, 500, 3> BlockRadixSort;
+    typedef cub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
 
     __shared__ typename BlockRadixSort::TempStorage temp_storage;
 
     int tx = threadIdx.x;
     int bx = blockIdx.x;
+    int stride = gridDim.x;
 
-    for (size_t i = bx; i < d_numSequences; i += gridDim.x) {
-        stored[tx] = 0xFFFFFFFFFFFFFFFF;
+    uint64_t kmer = 0;
+    uint64_t mask = (1 << (2 * kmerSize)) - 1;
+
+    for (size_t i = bx; i < d_numSequences; i += stride) {
+        //if (tx == 0) printf("Started block %d\n", i);
+        stored[tx] = 0xFFFFFFFFFFFFFFFF; // reset block's stored values
         stored[tx + 500] = 0xFFFFFFFFFFFFFFFF;
+
+        uint64_t  * hashList = d_hashList + 1000*i;
 
         uint64_t seqLength = d_seqLengths[i];
         uint64_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[i];
 
-        uint64_t kmer = 0;
-        uint64_t mask = (1 << (2 * kmerSize)) - 1;
-
-        for (size_t j = tx; j <= seqLength - kmerSize; j += blockDim.x) {
-            uint64_t index = j/16;
-            uint64_t shift1 = 2*(j%16);
-            if (shift1>0) {
-                uint64_t shift2 = 32-shift1;
-                kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
-            }
-            else {   
-                kmer = compressedSeqs[index] & mask;
-            }
-            uint64_t hash = MurmurHash3_x64_128_updated(kmer, 30, 53);
-            // Combine stored and computed to sort and rank
+        size_t j = tx;
+        size_t iteration = 0;
+        while (iteration <= seqLength - kmerSize) {
             uint64_t keys[3];
+            if (j <= seqLength - kmerSize) {
+                uint64_t index = j/16;
+                uint64_t shift1 = 2*(j%16);
+                if (shift1>0) {
+                    uint64_t shift2 = 32-shift1;
+                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
+                }
+                else {   
+                    kmer = compressedSeqs[index] & mask;
+                }
+                uint64_t hash = MurmurHash3_x64_128_updated(kmer, 30, 53);
 
-            keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
-            keys[1] = (tx < 500) ? stored[tx + 500] : 0xFFFFFFFFFFFFFFFF;
-            keys[2] = hash;
+                // Combine stored and computed to sort and rank
+                keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
+                keys[1] = (tx < 500) ? stored[tx + 500] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = hash;
+            } else {
+                keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
+                keys[1] = (tx < 500) ? stored[tx + 500] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = 0xFFFFFFFFFFFFFFFF;
+            }
 
-            __syncthreads();
             BlockRadixSort(temp_storage).Sort(keys);
 
-            // if (i < 3) { 
-            //     if (tx == 0) {
-            //         printf("Sequence %lu, Length: %lu, First K-mer: %lu, First Hash: %lu\n", i, seqLength, kmer, keys[2]);
-            //     }
-            // }
-
-            // Move top 1000 hashes back to stored
-            __syncthreads();
+            // // Move top 1000 hashes back to stored
             if (tx < 333) {
                 stored[3*tx] = keys[0];
                 stored[3*tx + 1] = keys[1];
@@ -304,12 +308,9 @@ __global__ void sketchConstruction(
             } else if (tx == 333) {
                 stored[999] = keys[0];
             }
-            // if (i == 1) {
-            //     if (tx < 10) {
-            //         printf("Thread %lu, Value %lu\n", tx, stored[tx]);
-            //     }
-            // }
-            __syncthreads();
+
+            iteration += blockDim.x;
+            j += blockDim.x;
 
         }
 
@@ -319,20 +320,26 @@ __global__ void sketchConstruction(
         //         printf("%lu       %lu\n", j, stored[j]);
         //     }
         // }
-
+    
         // Result writing back to global memory.
         if (tx < 500) {
-            d_hashList[i*1000 + tx] = stored[tx];
-            d_hashList[i*1000 + tx + 500] = stored[tx + 500];
+            // d_hashList[i*1000 + tx] = stored[tx];
+            // d_hashList[i*1000 + tx + 500] = stored[tx + 500];
+            hashList[tx] = stored[tx];
+            hashList[tx + 500] = stored[tx + 500];
         }
 
-         
-        if (tx == 0) {
-            printf("i       hashList[i] (%d), %ld\n", i, d_numSequences);
-            for (int j = 0; j < 20; j++) {
-                printf("%lu       %lu\n", j, d_hashList[i * 1000 + j]);
-            }
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Error: %s\n", cudaGetErrorString(err));
         }
+
+        // if (tx == 0) {
+        //     printf("i       hashList[i] (%d), %ld, %p\n", i, d_numSequences, hashList);
+        //     for (int j = 0; j < 20; j++) {
+        //         printf("%lu       %lu\n", j, d_hashList[i * 1000 + j]);
+        //     }
+        // }
        
     }
 
@@ -378,9 +385,17 @@ void GpuSketch::sketchConstructionOnGpu
     timerStart = std::chrono::high_resolution_clock::now();
 
     // New kernel call
-    int memSize = 25000;
-    int threads = 500; // hard code 500 for structure
-    sketchConstruction<<<1 /*params.numBlocks*/, threads, memSize>>>(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_numSequences, d_hashList, kmerSize);
+    int threadsPerBlock = 512;
+    int blocksPerGrid = (d_numSequences + threadsPerBlock - 1) / threadsPerBlock;
+    size_t sharedMemorySize = sizeof(uint64_t) * (2000);
+    sketchConstruction<<<1, threadsPerBlock, sharedMemorySize>>>(
+        d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_numSequences, d_hashList, kmerSize
+    );
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    }
     cudaDeviceSynchronize();
 
     timerEnd = std::chrono::high_resolution_clock::now();
@@ -515,7 +530,7 @@ void GpuSketch::mashDistConstructionOnGpu
 
 void GpuSketch::DeviceArrays::printSketchValues(int numValues) 
 {
-    uint64_t * h_hashList = new uint64_t[1000*30];
+    uint64_t * h_hashList = new uint64_t[1000*d_numSequences];
 
     printf("%p", d_hashList);
 
@@ -526,7 +541,7 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues)
 
     printf("%d", d_numSequences*1000);
 
-    err = cudaMemcpy(h_hashList, hashList, 30*100*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(h_hashList, hashList, d_numSequences*1000*sizeof(uint64_t), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
