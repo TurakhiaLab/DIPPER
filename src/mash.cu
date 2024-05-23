@@ -43,12 +43,12 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs,
     /* Flatten data */
     uint64_t * h_aggseqLengths = new uint64_t[numSequences];
     uint64_t flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+15)/16;
+    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+31)/32;
     uint64_t * h_flattenCompressSeqs = new uint64_t[flatStringLength];
     flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) 
     {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i]+15)/16;
+        uint64_t flatStringLengthLocal = (h_seqLengths[i]+31)/32;
         hashListLength += h_seqLengths[i] - kmerSize + 1;
         flatStringLength+=flatStringLengthLocal;
         for (size_t j=0; j<flatStringLengthLocal;j++)  
@@ -277,16 +277,16 @@ __global__ void sketchConstruction(
         while (iteration <= seqLength - kmerSize) {
             uint64_t keys[3];
             if (j <= seqLength - kmerSize) {
-                uint64_t index = j/16;
-                uint64_t shift1 = 2*(j%16);
+                uint64_t index = j/32;
+                uint64_t shift1 = 2*(j%32);
                 if (shift1>0) {
-                    uint64_t shift2 = 32-shift1;
+                    uint64_t shift2 = 64-shift1;
                     kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
                 }
                 else {   
                     kmer = compressedSeqs[index] & mask;
                 }
-                uint64_t hash = MurmurHash3_x64_128_updated(kmer, 30, 53);
+                uint64_t hash = MurmurHash3_x64_128_updated(kmer, kmerSize, 42);
 
                 // Combine stored and computed to sort and rank
                 keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
@@ -308,6 +308,8 @@ __global__ void sketchConstruction(
             } else if (tx == 333) {
                 stored[999] = keys[0];
             }
+
+            __syncthreads();
 
             iteration += blockDim.x;
             j += blockDim.x;
@@ -371,7 +373,7 @@ void GpuSketch::sketchConstructionOnGpu
     thrust::transform(thrust::device,
         dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp, 
         [] __device__ (const uint64_t& x) -> uint64_t { 
-            return (x + 15) / 16;
+            return (x + 31) / 32;
         }
     );
 
