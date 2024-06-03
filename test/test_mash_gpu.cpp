@@ -115,18 +115,18 @@ int main(int argc, char** argv) {
     }
 
     // Kmer Size
-    uint32_t k = 15;
-    try {k= (uint32_t)std::stoi(vm["kmer-size"].as<std::string>());}
+    uint64_t k = 15;
+    try {k= (uint64_t)std::stoi(vm["kmer-size"].as<std::string>());}
     catch(std::exception &e){}
 
     // Sketch Size
-    uint32_t sketchSize = 1000;
-    try {sketchSize= (uint32_t)std::stoi(vm["sketch-size"].as<std::string>());}
+    uint64_t sketchSize = 1000;
+    try {sketchSize= (uint64_t)std::stoi(vm["sketch-size"].as<std::string>());}
     catch(std::exception &e){}
 
     // Erroneous k-mer thresold
-    uint32_t threshold = 1;
-    try {threshold= (uint32_t)std::stoi(vm["threshold"].as<std::string>());}
+    uint64_t threshold = 1;
+    try {threshold= (uint64_t)std::stoi(vm["threshold"].as<std::string>());}
     catch(std::exception &e){}
 
     // Number of cuda Blocks
@@ -158,12 +158,12 @@ int main(int argc, char** argv) {
     // Compress Sequences (2-bit compressor)
     auto compressStart = std::chrono::high_resolution_clock::now();
     fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
-    uint32_t ** twoBitCompressedSeqs = new uint32_t*[numSequences];
-    uint32_t * seqLengths = new uint32_t[numSequences];
+    uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
+    uint64_t * seqLengths = new uint64_t[numSequences];
     for (size_t i=0; i<numSequences; i++)
     {   
-        uint32_t twoBitCompressedSize = (seqs[i].size()+15)/16;
-        uint32_t * twoBitCompressed = new uint32_t[twoBitCompressedSize];
+        uint64_t twoBitCompressedSize = (seqs[i].size()+15)/16;
+        uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
         twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
 
         seqLengths[i] = seqs[i].size();
@@ -188,6 +188,7 @@ int main(int argc, char** argv) {
     GpuSketch::sketchConstructionOnGpu
     (
         GpuSketch::deviceArrays.d_compressedSeqs,
+        GpuSketch::deviceArrays.d_prefixCompressed,
         GpuSketch::deviceArrays.d_aggseqLengths,
         GpuSketch::deviceArrays.d_seqLengths,
         GpuSketch::deviceArrays.d_numSequences,
@@ -200,7 +201,7 @@ int main(int argc, char** argv) {
     std::cout << "Sketch Created in: " <<  createSketchTime.count() << " ns\n";
 
     // Print first 10 hash values corresponding to each sequence
-    // GpuSketch::deviceArrays.printSketchValues(10, seqLengths);
+    GpuSketch::deviceArrays.printSketchValues(10);
 
     // Build distance matrix
     auto createDistMatStart = std::chrono::high_resolution_clock::now();

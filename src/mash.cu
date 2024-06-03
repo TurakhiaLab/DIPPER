@@ -81,6 +81,13 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs,
         exit(1);
     }
 
+    err = cudaMalloc(&d_prefixCompressed, d_numSequences*sizeof(uint64_t));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
     err = cudaMalloc(&d_mashDist, (numSequences*(numSequences -1)/2)*sizeof(float));
     if (err != cudaSuccess)
     {
@@ -110,6 +117,19 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs,
         exit(1);
     }
 
+    // generate prefix array    
+    thrust::device_ptr<uint64_t> dev_seqLengths(d_seqLengths);
+    thrust::device_ptr<uint64_t> dev_prefixComp(d_prefixCompressed);
+
+    thrust::transform(thrust::device,
+        dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp, 
+        [] __device__ (const uint64_t& x) -> uint64_t { 
+            return (x + 31) / 32;
+        }
+    );
+
+    thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
+
     cudaDeviceSynchronize();
 }
 
@@ -118,10 +138,11 @@ void GpuSketch::DeviceArrays::deallocateDeviceArrays(){
     cudaFree(d_aggseqLengths);
     cudaFree(d_seqLengths);
     cudaFree(d_hashList);
+    cudaFree(d_prefixCompressed);
     // cudaFree(d_mashDist);
 }
 
-__device__ uint64_t MurmurHash3_x64_128_updated(const uint64_t key, const int len, const uint64_t seed /* , void* out */) {
+__device__ uint64_t MurmurHash3_x64_128(const uint64_t key, const int len, const uint64_t seed /* , void* out */) {
     uint64_t h1 = seed;
     uint64_t h2 = seed;
 
@@ -286,7 +307,7 @@ __global__ void sketchConstruction(
                 else {   
                     kmer = compressedSeqs[index] & mask;
                 }
-                uint64_t hash = MurmurHash3_x64_128_updated(kmer, kmerSize, 42);
+                uint64_t hash = MurmurHash3_x64_128(kmer, kmerSize, 42);
 
                 // Combine stored and computed to sort and rank
                 keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
@@ -351,6 +372,7 @@ __global__ void sketchConstruction(
 void GpuSketch::sketchConstructionOnGpu
 (
     uint64_t * d_compressedSeqs,
+    uint64_t * d_prefixCompressed,
     uint64_t * d_aggseqLengths,
     uint64_t * d_seqLengths,
     size_t d_numSequences,
@@ -359,34 +381,10 @@ void GpuSketch::sketchConstructionOnGpu
     Param& params
 ){
 
-    // prefix-sum of d_seqLengths using thrust
-    uint64_t * d_prefixCompressed;
-
-    int bytes = d_numSequences * sizeof(uint64_t);
-    cudaMalloc(&d_prefixCompressed, bytes);
-    
-    thrust::device_ptr<uint64_t> dev_seqLengths(d_seqLengths);
-    thrust::device_ptr<uint64_t> dev_prefixComp(d_prefixCompressed);
+    const uint64_t kmerSize = params.kmerSize; // Extract kmerSize
 
     auto timerStart = std::chrono::high_resolution_clock::now();
 
-    thrust::transform(thrust::device,
-        dev_seqLengths, dev_seqLengths + d_numSequences, dev_prefixComp, 
-        [] __device__ (const uint64_t& x) -> uint64_t { 
-            return (x + 31) / 32;
-        }
-    );
-
-    const uint64_t kmerSize = params.kmerSize; // Extract kmerSize
-    thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + d_numSequences, dev_prefixComp);
-    auto timerEnd = std::chrono::high_resolution_clock::now();
-
-    std::chrono::nanoseconds time = timerEnd - timerStart;
-    std::cout << "Time to create prefix array: " << time.count() << "ns\n";
-
-    timerStart = std::chrono::high_resolution_clock::now();
-
-    // New kernel call
     int threadsPerBlock = 512;
     int blocksPerGrid = (d_numSequences + threadsPerBlock - 1) / threadsPerBlock;
     size_t sharedMemorySize = sizeof(uint64_t) * (2000);
@@ -400,36 +398,10 @@ void GpuSketch::sketchConstructionOnGpu
     }
     cudaDeviceSynchronize();
 
-    timerEnd = std::chrono::high_resolution_clock::now();
-    time = timerEnd - timerStart;
+    auto timerEnd = std::chrono::high_resolution_clock::now();
+    auto time = timerEnd - timerStart;
     std::cout << "Time to generate hashes: " << time.count() << "ns\n";
 
-    // cudaFree(d_prefixCompressed);
-
-    // bytes = d_numSequences * 1000 * sizeof(uint64_t);
-    // // uint64_t * h_pruned = (uint64_t*)malloc(bytes);
-    // uint64_t* h_pruned = new uint64_t[d_numSequences * 1000];
-    // uint64_t * hashlist= d_hashList;
-
-
-    // cudaError_t err = cudaMemcpy(h_pruned, hashlist, d_numSequences * 1000 * sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    // if(err!= cudaSuccess)
-    // {
-    //     std::cout<<"Error; " << err << std::endl;
-    // }
-    // for (int i = 0; i < d_numSequences; i++) {
-    //     printf("i       hashList[i] (%d)\n", i);
-    //     for (int j = 0; j < 10; j++) {
-    //         printf("%lu       %lu\n", j, h_pruned[i * 1000 + j]);
-
-    //     }
-    // }
-   
-
-    // prevent mem leak for now
-    // free(h_pruned);
-
-    
 }
 
 __device__ float mashDistance
@@ -534,14 +506,12 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues)
 {
     uint64_t * h_hashList = new uint64_t[1000*d_numSequences];
 
-    printf("%p", d_hashList);
-
 
     uint64_t * hashList = d_hashList;
 
     cudaError_t err;
 
-    printf("%d", d_numSequences*1000);
+    //printf("Total Hashes: %d", d_numSequences*1000);
 
     err = cudaMemcpy(h_hashList, hashList, d_numSequences*1000*sizeof(uint64_t), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
@@ -550,9 +520,13 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues)
     }
 
     // printf("i\thashList[i] (%zu)\n");
-    for (int i=0; i<numValues; i++) {
-        printf("%i\t%ld\n", i, h_hashList[i]);
+    for (int j = 0; j < d_numSequences; j++) {
+        printf("Sequence (%d)\n", j);
+        for (int i=0; i<numValues; i++) {
+            printf("%i\t%lu\n", i, h_hashList[j*1000 + i]);
+        }
     }
+    
 
 }
 

@@ -27,6 +27,7 @@ namespace GpuSketch
     struct DeviceArrays
     {
         uint64_t * d_compressedSeqs;
+        uint64_t * d_prefixCompressed;
         uint64_t * d_aggseqLengths;
         uint64_t * d_seqLengths;
         size_t d_numSequences;
@@ -46,6 +47,7 @@ namespace GpuSketch
     void sketchConstructionOnGpu
     (
         uint64_t * d_compressedSeqs,
+        uint64_t * d_prefixCompressed,
         uint64_t * d_aggseqLengths,
         uint64_t * d_seqLengths,
         size_t d_numSequences,
