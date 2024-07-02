@@ -248,71 +248,25 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
 }
 
 
-/*
-Original serial reference
-__global__ void sketchConstructionSerial
-(
-    uint64_t * d_compressedSeqs,
-    uint64_t * d_aggseqLengths,
-    uint64_t * d_seqLengths,
-    size_t d_numSequences,
-    uint64_t * d_hashList,
-    uint64_t kmerSize
-){
-    int tx = threadIdx.x;
-    int bx = blockIdx.x;
+__device__ void decompress(uint64_t compressedSeq, uint64_t kmerSize, char * decompressedSeq_fwd, char * decompressedSeq_rev) {
+    static const char lookupTable[4] = {'A', 'C', 'G', 'T'};
+    for (int i = kmerSize - 1; i >= 0; i--) {
+        uint64_t twoBitVal = (compressedSeq >> (2 * i)) & 0x3;
+        decompressedSeq_fwd[i] = lookupTable[twoBitVal];
+        decompressedSeq_rev[kmerSize - 1 - i] = lookupTable[3 - twoBitVal];
+    }
+}
 
-
-    uint64_t kmer = 0;
-    uint64_t mask = (1<<2*kmerSize) - 1;
-
-    uint64_t * hashList = d_hashList;
-    uint64_t * compressedSeqs = d_compressedSeqs;
-
-    //printf("hashList pointer in device%p\n", d_hashList);
-
-    if (tx==0 && bx==0)
-    {
-        for (size_t i=0; i<d_numSequences; i++)
-        {
-            uint64_t seqLength = d_seqLengths[i];
-            
-            //if (i==9)printf("%ld:\t", i);
-
-            for (size_t j=0; j<=seqLength-kmerSize; j++)
-            {
-                uint64_t index = j/16;
-                uint64_t shift1 = 2*(j%16);
-                if (shift1>0)
-                {
-                    uint64_t shift2 = 32-shift1;
-                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)) & mask;
-                }
-                else
-                {   
-                    kmer = compressedSeqs[index] & mask;
-                }
-                uint64_t hash = MurmurHash3_x86_32  (kmer, 30, 53);
-                hashList[j] = hash;
-                //if (i==9) printf("(%u, %u)\t",kmer, hash);
-            }
-            //if (i==9) printf("\n");
-            hashList += seqLength-kmerSize+1;
-            compressedSeqs += (seqLength+15)/16;
-
+__device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kmerSize) {
+    for (int i = 0; i < kmerSize; i++) {
+        if (kmer_fwd[i] < kmer_rev[i]) {
+            return -1;
+        }
+        if (kmer_fwd[i] > kmer_rev[i]) {
+            return 1;
         }
     }
-    //printf("hashList pointer in device%p\n", d_hashList);
-
-}
-*/
-
-__device__ void decompress(uint64_t compressedSeq, char * decompressedSeq) {
-    static const char lookupTable[4] = {'A', 'C', 'G', 'T'};
-    for (int i = 31; i >= 0; i--) {
-        uint64_t twoBitVal = (compressedSeq >> (2 * i)) & 0x3;
-        decompressedSeq[i] = lookupTable[twoBitVal];
-    }
+    return 0;
 }
 
 __global__ void sketchConstruction(
@@ -326,7 +280,6 @@ __global__ void sketchConstruction(
     extern __shared__ uint64_t stored[];
 
     typedef cub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
-
     __shared__ typename BlockRadixSort::TempStorage temp_storage;
 
     int tx = threadIdx.x;
@@ -334,10 +287,10 @@ __global__ void sketchConstruction(
     int stride = gridDim.x;
 
     uint64_t kmer = 0;
-    uint64_t mask = (1 << (2 * kmerSize)) - 1;
+    char kmer_fwd[32];
+    char kmer_rev[32];
     uint8_t out[16];
-    char decompressedSeq[32];
-
+    
     for (size_t i = bx; i < d_numSequences; i += stride) {
         //if (tx == 0) printf("Started block %d\n", i);
         stored[tx] = 0xFFFFFFFFFFFFFFFF; // reset block's stored values
@@ -351,10 +304,14 @@ __global__ void sketchConstruction(
         size_t j = tx;
         size_t iteration = 0;
         while (iteration <= seqLength - kmerSize) {
+
             uint64_t keys[3];
+
             if (j <= seqLength - kmerSize) {
+
                 uint64_t index = j/32;
                 uint64_t shift1 = 2*(j%32);
+
                 if (shift1>0) {
                     uint64_t shift2 = 64-shift1;
                     kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)); //& mask;
@@ -363,10 +320,18 @@ __global__ void sketchConstruction(
                     kmer = compressedSeqs[index];// & mask;
                 }
 
-                decompress(kmer, decompressedSeq);
+                decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
+
+                // if ((i == 0) && (tx == 0)) {
+                //     for (char c : kmer_fwd) printf("%c", c);   
+                
+                //     printf("\n");
+                // }
 
                 // convert to char representation and call w/ original
-                MurmurHash3_x64_128_MASH(decompressedSeq, kmerSize, 42, out);
+                MurmurHash3_x64_128_MASH( (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0) 
+                    ? kmer_fwd : kmer_rev, kmerSize, 42, out);
+                
                 uint64_t hash = *((uint64_t *)out);
 
                 // Combine stored and computed to sort and rank
@@ -380,7 +345,8 @@ __global__ void sketchConstruction(
             }
 
             BlockRadixSort(temp_storage).Sort(keys);
-
+  
+            __syncthreads();
             // // Move top 1000 hashes back to stored
             if (tx < 333) {
                 stored[3*tx] = keys[0];
@@ -396,13 +362,6 @@ __global__ void sketchConstruction(
             j += blockDim.x;
 
         }
-
-        // if (tx == 0) {
-        //     printf("i       hashList[i] (%d)\n", i);
-        //     for (int j = 0; j < 10; j++) {
-        //         printf("%lu       %lu\n", j, stored[j]);
-        //     }
-        // }
     
         // Result writing back to global memory.
         if (tx < 500) {
@@ -416,13 +375,6 @@ __global__ void sketchConstruction(
         if (err != cudaSuccess) {
             printf("CUDA Error: %s\n", cudaGetErrorString(err));
         }
-
-        // if (tx == 0) {
-        //     printf("i       hashList[i] (%d), %ld, %p\n", i, d_numSequences, hashList);
-        //     for (int j = 0; j < 20; j++) {
-        //         printf("%lu       %lu\n", j, d_hashList[i * 1000 + j]);
-        //     }
-        // }
        
     }
 
