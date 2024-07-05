@@ -53,7 +53,8 @@ pair <int,int> bestpos;
 pair <double,double> bl;
 double tar_bl;
 int under[5005];
-int flag[5005];
+int flag[5005],vis[5005],td[5005];
+double tdis[5005];
 void color(int x,int from){
     under[x]=1;
     for(auto t:v[x]) if(t.first!=from) color(t.first,x);
@@ -67,9 +68,8 @@ void dfs(int x,int from,int tot){
         color(t.first,x);
         double disunder=0,disup=0;
         queue <pair<int,double>> q;
-        int vis[505]={},td[505]={};
-        double tdis[505]={};
-        q.push({x,0}),td[x]=1,tdis[x]=0;
+        vector <int> vv;
+        q.push({x,0}),td[x]=1,tdis[x]=0,vv.push_back(x);
         vector <int> idup,idunder;
         int tc=0;
         while(!q.empty()&&tc<=5){
@@ -79,11 +79,11 @@ void dfs(int x,int from,int tot){
             vis[temp.first]=1;
             for(auto nxt:v[temp.first])
                 if(!vis[nxt.first]&&nxt.first!=t.first)
-                    q.push({nxt.first,temp.second+nxt.second}),td[nxt.first]=td[temp.first]+1,tdis[nxt.first]=temp.second+nxt.second;
+                    q.push({nxt.first,temp.second+nxt.second}),td[nxt.first]=td[temp.first]+1,tdis[nxt.first]=temp.second+nxt.second,vv.push_back(nxt.first);
         }
         while(!q.empty()) q.pop();
         tc=0;
-        q.push({t.first,0}),td[t.first]=1;
+        q.push({t.first,0}),td[t.first]=1,vv.push_back(t.first);
         while(!q.empty()&&tc<=5){
             auto temp=q.front();
             q.pop();
@@ -91,8 +91,9 @@ void dfs(int x,int from,int tot){
             vis[temp.first]=1;
             for(auto nxt:v[temp.first])
                 if(!vis[nxt.first]&&nxt.first!=x)
-                    q.push({nxt.first,temp.second+nxt.second}),td[nxt.first]=td[temp.first]+1,tdis[nxt.first]=temp.second+nxt.second;
+                    q.push({nxt.first,temp.second+nxt.second}),td[nxt.first]=td[temp.first]+1,tdis[nxt.first]=temp.second+nxt.second,vv.push_back(nxt.first);
         }
+        for(auto tt:vv) td[tt]=0,tdis[tt]=0,vis[tt]=0;
         double additional_dis=max(0.0,(disup+disunder-t.second)/2);
         disunder-=additional_dis,disup-=additional_dis;
         if(disunder<0) disunder=0;
@@ -231,7 +232,7 @@ void assign_weight(int x,int from){
 
 int main() {
     freopen("input.txt","r",stdin);
-    freopen("output.txt","w",stdout);
+//    freopen("output.txt","w",stdout);
     int bd,totT;
     cin>>n>>bd>>totT;
     for(int i=0;i<n;i++) {
@@ -317,10 +318,10 @@ int main() {
         }
         assign_weight(rt,-1);
         ttt="";
-        ttt+='\'';
+//        ttt+='\'';
 //        printf("\'");
         print(rt, -1);
-        ttt+=";\' ";
+        ttt+=";";
 //    for(int i=bd;i<n;i++){
 //        dfs(rt);
 //    }
@@ -333,12 +334,15 @@ int main() {
     sort(output.begin(),output.end());
 //    for(int i=0;i<10;i++) cout<<output[i].second;
     for(int i=0;i<totT;i++){
+        string filename = "Tree" + to_string(i) + ".newick";
+        ofstream outFile(filename);
         double mn=1e9;
         string ans;
         for(int j=i;j<i+1;j++) if(output[j].first<mn){
                 mn=output[j].first,ans=output[j].second;
             }
-        cout<<ans;
+        if(outFile.is_open())
+            outFile<<ans<<endl,outFile.close();
     }
     return 0;
 }
