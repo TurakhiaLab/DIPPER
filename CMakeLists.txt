@@ -1,14 +1,14 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.15)
 
 project(msa LANGUAGES CXX CUDA)
 
 # For CUDA
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
-find_package(CUDA 10.0 REQUIRED)
+find_package(CUDA 12.2 REQUIRED)
 
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O4 -std=c++17 -Wall -g")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_86")
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_86 --extended-lambda --generate-line-info")
 
 find_package(Boost COMPONENTS program_options REQUIRED)
 
@@ -16,9 +16,15 @@ find_package(ZLIB REQUIRED)
 find_path(ZLIB_INCLUDE_DIR zlib.h)
 include_directories(${ZLIB_INCLUDE_DIR})
 
+
 include(${TBB_DIR}/cmake/TBBBuild.cmake)
 tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
 find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
+
+add_executable (llk
+                # llk/core_likelihood_fp32.cpp
+                # llk/tree_fp32.cpp
+                llk/llk_fp32.cpp)
 
 add_executable (msa
                 src/msa.cpp
@@ -35,22 +41,42 @@ add_executable (test-msa
                 src/tree.cpp
                 src/align.cpp)
 
-add_executable (test-mash
+add_executable (test-mashTree
                 src/murmurHash3.cpp
                 src/createSketch.cpp
                 src/mashDistance.cpp
                 src/distanceMatrix.cpp
                 src/twoBitCompressor.cpp
                 src/tree.cpp
-                test/test_mash.cpp)
+                test/test_mashTree.cpp)
 
 add_executable (test-mash-gpu
                 src/mash.cu
                 src/twoBitCompressor.cpp
                 test/test_mash_gpu.cpp)
 
+add_executable (test-nj
+                src/neighbourJoining.cu
+                src/neighbourJoining.cuh
+                test/test_nj.cpp)
+
+
+add_executable (test-hash
+    test/hashFuncCheck.cpp)
+
+    
+
+add_executable (test-step1
+    src/mash_sumit.cu
+    test/test_step1.cpp)
+
+
 target_link_libraries(msa PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
+target_link_libraries(llk PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 target_link_libraries(test-align PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
 target_link_libraries(test-msa PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES})
-target_link_libraries(test-mash PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(test-mashTree PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 target_link_libraries(test-mash-gpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(test-nj PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(test-hash PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(test-step1 PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})

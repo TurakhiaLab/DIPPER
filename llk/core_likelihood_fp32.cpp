@@ -1,6 +1,6 @@
-// #ifndef CORE_LIKELIHOOD_FP64
-// #include "core_likelihood_fp64.hpp"
-// #endif
+#ifndef CORE_LIKELIHOOD_FP32
+#include "core_likelihood_fp32.hpp"
+#endif
 
 void utility::msa_seq(std::string input_file)
 {

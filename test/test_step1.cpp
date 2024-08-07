@@ -7,29 +7,13 @@
 #include "zlib.h"
 
 
-#ifndef MURMURHASH3_HPP
-#include "../src/murmurHash3.hpp"
-#endif
 
-#ifndef TWOBITCOMPRESSOR_HPP
-#include "../src/twoBitCompressor.hpp"
-#endif
+
 
 #ifndef MASH_CUH
-#include "../src/mash.cuh"
+#include "../src/mash_sumit.cuh"
 #endif
 
-#ifndef MASHDISTANCE_HPP
-#include "../src/mashDistance.hpp"
-#endif
-
-#ifndef DISTANCEMATRIX_HPP
-#include "../src/distanceMatrix.hpp"
-#endif
-
-#ifndef NJ_CUH
-#include "../src/neighbourJoining.cuh"
-#endif
 
 namespace po = boost::program_options;
 
@@ -55,8 +39,10 @@ void parseArguments(int argc, char** argv)
 }
 
 
-void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& seqName)
+void readSequences(po::variables_map& vm, char ** seqsIn, uint64_t ** seqsLenIn, std::vector<std::string>& seqName)
 {
+    std::vector<std::string> seqVector;
+
     auto seqReadStart = std::chrono::high_resolution_clock::now();
     std::string seqFileName = vm["sequences"].as<std::string>();
     // std::cout << "Sequence file name " <<  seqFileName << "\n";
@@ -69,15 +55,48 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
 
     kseq_t* kseq_rd = kseq_init(f_rd);
 
+    uint64_t totalLen = 0;
     while (kseq_read(kseq_rd) >= 0) {
         size_t seqLen = kseq_rd->seq.l;
-        seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
+        seqVector.push_back(std::string(kseq_rd->seq.s, seqLen));
         seqName.push_back(kseq_rd->name.s);
+        totalLen += seqLen;
     }
     
+    char * seqs = new char [totalLen];
+    uint64_t * seqsLen = new uint64_t [seqVector.size()];
+
+
+    uint64_t ptr = 0;
+    for (auto&s: seqVector)
+    {
+        std::strcpy(seqs, s.c_str());
+        seqsLen[ptr] = s.size();
+        seqs += s.size();
+        ptr++;
+    }
+
+    seqs -= totalLen;
+
     auto seqReadEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds seqReadTime = seqReadEnd - seqReadStart;
-    // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
+
+    *seqsIn = seqs;
+    *seqsLenIn = seqsLen;
+}
+
+void printSeqs(char ** seqsIn, uint64_t ** seqsLenIn, std::vector<std::string>& seqName)
+{
+    char * seqs = *seqsIn;
+    uint64_t * seqsLen = *seqsLenIn;
+
+    for (int i = 0; i<seqName.size(); i++)
+    {
+        std::cout << seqName[i]  << ":" <<  seqsLen[i] << std::endl;
+        std::string s (seqs, seqsLen[i]);
+        std::cout << s << std::endl;
+        seqs += seqsLen[i];
+    }
 }
 
 void checkAlignment(std::vector<std::string>& ref)
@@ -120,7 +139,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     // Sketch Size
-    uint32_t sketchSize = 1000;
+    uint64_t sketchSize = 1280;
     try {sketchSize= (uint64_t)std::stoi(vm["sketch-size"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -135,55 +154,39 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     // Number of cuda Blocks
-    int numBlocks = 128;
+    int numBlocks = 64;
     try {numBlocks= std::stoi(vm["numBlocks"].as<std::string>());}
     catch(std::exception &e){}
 
     // Number of threads per cuda block
-    int blockSize = 160;
+    int blockSize = 128;
     try {blockSize= std::stoi(vm["blockSize"].as<std::string>());}
     catch(std::exception &e){}
 
-    // std::cout << "kmer-size: " << k << 
-    // "\nSketch-size: " << sketchSize << 
-    // "\nErroneous k-mer threshold: " << threshold << 
-    // "\nNo. of cuda blocks: " << numBlocks <<
-    // "\nNo. of thread per cuda block: " << blockSize << 
-    // "\n";
+    std::cout << "kmer-size: " << k << 
+    "\nSketch-size: " << sketchSize << 
+    "\nErroneous k-mer threshold: " << threshold << 
+    "\nNo. of cuda blocks: " << numBlocks <<
+    "\nNo. of thread per cuda block: " << blockSize << 
+    "\n";
+
+    assert((sketchSize%blockSize==0));
 
     GpuSketch::Param params(k, sketchSize, threshold, numBlocks, blockSize);
 
-    std::vector<std::string> seqs;
+    char * seqs;
+    uint64_t * seqsLen;
     std::vector<std::string> seqName;
 
-    // Read Input Sequences (Fasta format)
-    readSequences(vm, seqs, seqName);
+    readSequences(vm, &seqs, &seqsLen, seqName);     // Read Input Sequences (Fasta format)
+    uint64_t numSequences = seqName.size();
 
-    size_t numSequences = seqs.size();
-
-    // Compress Sequences (2-bit compressor)
-    auto compressStart = std::chrono::high_resolution_clock::now();
-    // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
-    uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
-    uint64_t * seqLengths = new uint64_t[numSequences];
-    for (size_t i=0; i<numSequences; i++)
-    {   
-        uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
-        uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-        twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
-
-        seqLengths[i] = seqs[i].size();
-        twoBitCompressedSeqs[i] = twoBitCompressed;
-
-    }
-    auto compressEnd = std::chrono::high_resolution_clock::now();
-    std::chrono::nanoseconds compressTime = compressEnd - compressStart;
-    // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
+    // printSeqs(&seqs, &seqsLen, seqName);
 
     // Create arrays
     auto createArrayStart = std::chrono::high_resolution_clock::now();
     fprintf(stdout, "\nAllocating Gpu device arrays.\n");
-    GpuSketch::deviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+    GpuSketch::deviceArrays.allocateDeviceArrays(&seqs, &seqsLen, numSequences, params);
     auto createArrayEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
     std::cout << "Allocated in: " <<  createArrayTime.count() << " ns\n";
@@ -192,44 +195,18 @@ int main(int argc, char** argv) {
     auto createSketchStart = std::chrono::high_resolution_clock::now();
     GpuSketch::sketchConstructionOnGpu
     (
-        GpuSketch::deviceArrays.d_compressedSeqs,
-        GpuSketch::deviceArrays.d_aggseqLengths,
-        GpuSketch::deviceArrays.d_seqLengths,
+        GpuSketch::deviceArrays.d_seqs,
+        GpuSketch::deviceArrays.d_aggrSeqsLen,
+        GpuSketch::deviceArrays.d_seqsLen,
         GpuSketch::deviceArrays.d_numSequences,
         GpuSketch::deviceArrays.d_hashList,
         GpuSketch::deviceArrays.d_hashListPruned,
-        seqLengths,
         params,
         seed
     );
     auto createSketchEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
     std::cout << "Sketch Created in: " <<  createSketchTime.count() << " ns\n";
-
-    // Print first 10 hash values corresponding to each sequence
-    GpuSketch::deviceArrays.printSketchValues(sketchSize);
-
-    // Build distance matrix
-    auto createDistMatStart = std::chrono::high_resolution_clock::now();
-    GpuSketch::mashDistConstructionOnGpu
-    (
-        GpuSketch::deviceArrays.d_hashListPruned,
-        GpuSketch::deviceArrays.d_seqLengths,
-        GpuSketch::deviceArrays.d_numSequences,
-        GpuSketch::deviceArrays.d_mashDist,
-        seqLengths,
-        params
-    );
-    auto createDistMatEnd = std::chrono::high_resolution_clock::now();
-    std::chrono::nanoseconds createDistMatTime = createDistMatEnd - createDistMatStart; 
-    std::cout << "Distance Matrix Created in: " <<  createDistMatTime.count() << " ns\n";
-    // GpuSketch::deviceArrays.printMashDist(numSequences,seqName);
-
-    /*Allocate NJ device arrays before deallocating GpuSketch device arrays*/
-    
-    // neighbourJoining::deviceArrays.allocateDeviceArrays(numSequences, GpuSketch::deviceArrays.d_mashDist);
-    
-    GpuSketch::deviceArrays.deallocateDeviceArrays();
 
     return 0;
 }

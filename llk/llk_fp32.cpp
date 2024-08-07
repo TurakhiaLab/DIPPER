@@ -1,4 +1,6 @@
+#ifndef CORE_LIKELIHOOD_FP32
 #include "core_likelihood_fp32.hpp"
+#endif
 #include "core_likelihood_fp32.cpp"
 #include "tree_fp32.cpp"
 
@@ -13,7 +15,7 @@ int main(int argc, char** argv)
     utility::rate_matrix_calc(); // Find the rate matrix
 
     
-    if (PRINT_RATE_MATRIX) // Print matrix_exp Matrix
+    if (1) // Print matrix_exp Matrix
     {
         for (size_t i = 0; i < utility::rate_matrix.size(); i++)
         {
