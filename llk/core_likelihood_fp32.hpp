@@ -38,7 +38,7 @@ namespace utility
     void matrix_exp(float bl, std::vector<std::vector<float>>& mat_out);
     
     enum SCALE_TYPE { MAX, SUM1, NONE};
-    static SCALE_TYPE SCALE_TYPE_ASSIGN = MAX;
+    static SCALE_TYPE SCALE_TYPE_ASSIGN = SUM1;
 
     class Node 
     {

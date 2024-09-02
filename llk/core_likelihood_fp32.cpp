@@ -1,6 +1,6 @@
-// #ifndef CORE_LIKELIHOOD_FP64
-// #include "core_likelihood_fp64.hpp"
-// #endif
+#ifndef CORE_LIKELIHOOD_FP32
+#include "core_likelihood_fp32.hpp"
+#endif
 
 void utility::msa_seq(std::string input_file)
 {
@@ -368,11 +368,11 @@ void utility::felsenstein_pruning(utility::Tree& tree)
         float lk_node = 0;
         for (size_t j = 0; j < STATES; j++)
         {
-            // std::cout << bottom[i][j] << "\t" << pi[j] << "\t";
+            // std::cout << bottom[i][j] << "\t";
             bottom[i][j] *= pi[j];
             lk_node += bottom[i][j];
         }
-        // std::cout << "\n";
+
 
         // if (lk_node < 0)
         // {
@@ -380,12 +380,18 @@ void utility::felsenstein_pruning(utility::Tree& tree)
         // }
         lk += (double)log(lk_node);
     }
-
+    printf("likelihood of Root CPU: %lf\n", lk);
     // Adding scaling factor
     lk += postorder_traversal_scaling(root);
 
 
-    printf("%lf\n", lk);
+    for (size_t j = 0; j < STATES; j++) {
+        printf("%f ", pi[j]);
+    }   
+    std::cout << "\n";
+    // printf("%lf\n", postorder_traversal_scaling(root));
+    printf("likelihood of CPU: %lf\n", lk);
+    // printf("%lf\n", lk);
 
 }
 
