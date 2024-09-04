@@ -64,7 +64,7 @@ void GpuSketch::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs,
     //printf("%d", flatStringLength);
 
     // err = cudaMalloc(&d_hashList, hashListLength*sizeof(uint64_t));
-    err = cudaMalloc(&d_hashList, 1000*numSequences*sizeof(uint64_t));
+    err = cudaMalloc(&d_hashList, 2000*numSequences*sizeof(uint64_t));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
@@ -269,6 +269,117 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     return 0;
 }
 
+__global__ void sketchConstruction_1000(
+    uint64_t * d_compressedSeqs,
+    uint64_t * d_seqLengths,
+    uint64_t * d_prefixCompressed,
+    size_t d_numSequences,
+    uint64_t * d_hashList,
+    uint64_t kmerSize
+) {
+    extern __shared__ uint64_t stored[];
+
+    typedef cub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
+    __shared__ typename BlockRadixSort::TempStorage temp_storage;
+
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
+    int stride = gridDim.x;
+
+    uint64_t kmer = 0;
+    char kmer_fwd[32];
+    char kmer_rev[32];
+    uint8_t out[16];
+    
+    for (size_t i = bx; i < d_numSequences; i += stride) {
+        //if (tx == 0) printf("Started block %d\n", i);
+        stored[tx] = 0xFFFFFFFFFFFFFFFF; // reset block's stored values
+        stored[tx + 500] = 0xFFFFFFFFFFFFFFFF;
+
+        uint64_t  * hashList = d_hashList + 1000*i;
+
+        uint64_t seqLength = d_seqLengths[i];
+        uint64_t * compressedSeqs = d_compressedSeqs + d_prefixCompressed[i];
+
+        size_t j = tx;
+        size_t iteration = 0;
+        while (iteration <= seqLength - kmerSize) {
+
+            uint64_t keys[3];
+
+            if (j <= seqLength - kmerSize) {
+
+                uint64_t index = j/32;
+                uint64_t shift1 = 2*(j%32);
+
+                if (shift1>0) {
+                    uint64_t shift2 = 64-shift1;
+                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)); //& mask;
+                }
+                else {   
+                    kmer = compressedSeqs[index];// & mask;
+                }
+
+                decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
+
+                // if ((i == 0) && (tx == 0)) {
+                //     for (char c : kmer_fwd) printf("%c", c);   
+                
+                //     printf("\n");
+                // }
+
+                // convert to char representation and call w/ original
+                MurmurHash3_x64_128_MASH( (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0) 
+                    ? kmer_fwd : kmer_rev, kmerSize, 42, out);
+                
+                uint64_t hash = *((uint64_t *)out);
+
+                // Combine stored and computed to sort and rank
+                keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
+                keys[1] = (tx < 500) ? stored[tx + 500] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = hash;
+            } else {
+                keys[0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
+                keys[1] = (tx < 500) ? stored[tx + 500] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = 0xFFFFFFFFFFFFFFFF;
+            }
+
+            BlockRadixSort(temp_storage).Sort(keys);
+  
+            __syncthreads();
+            // // Move top 1000 hashes back to stored
+            if (tx < 333) {
+                stored[3*tx] = keys[0];
+                stored[3*tx + 1] = keys[1];
+                stored[3*tx + 2] = keys[2];
+            } else if (tx == 333) {
+                stored[999] = keys[0];
+            }
+
+            __syncthreads();
+
+            iteration += blockDim.x;
+            j += blockDim.x;
+
+        }
+    
+        // Result writing back to global memory.
+        if (tx < 500) {
+            // d_hashList[i*1000 + tx] = stored[tx];
+            // d_hashList[i*1000 + tx + 500] = stored[tx + 500];
+            hashList[tx] = stored[tx];
+            hashList[tx + 500] = stored[tx + 500];
+        }
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Error: %s\n", cudaGetErrorString(err));
+        }
+       
+    }
+
+}
+
 __global__ void sketchConstruction(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,
@@ -380,6 +491,295 @@ __global__ void sketchConstruction(
 
 }
 
+__global__ void sketchConstruction_arbitrary(
+    uint64_t * d_compressedSeqs,
+    uint64_t * d_seqLengths,
+    uint64_t * d_prefixCompressed,
+    size_t d_numSequences,
+    uint64_t * d_hashList,
+    uint64_t kmerSize,
+    int targetHashes  
+) {
+    
+    extern __shared__ uint64_t stored[]; 
+
+    const int halfTargetHashes = targetHashes / 2;
+
+    typedef cub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
+    __shared__ typename BlockRadixSort::TempStorage temp_storage;
+
+    int tx = threadIdx.x;
+    int bx = blockIdx.x;
+    int stride = gridDim.x;
+
+    uint64_t kmer = 0;
+    char kmer_fwd[32];
+    char kmer_rev[32];
+    uint8_t out[16];
+    
+    for (size_t i = bx; i < d_numSequences; i += stride) {
+        // Initialize shared memory
+        for (int k = 0; k < halfTargetHashes; k++) {
+            if (tx + k * blockDim.x < targetHashes) {
+                stored[tx + k * blockDim.x] = 0xFFFFFFFFFFFFFFFF; // Reset values
+            }
+        }
+        __syncthreads();
+
+        uint64_t *hashList = d_hashList + targetHashes * i;
+        uint64_t seqLength = d_seqLengths[i];
+        uint64_t *compressedSeqs = d_compressedSeqs + d_prefixCompressed[i];
+
+        size_t j = tx;
+        size_t iteration = 0;
+        while (iteration <= seqLength - kmerSize) {
+
+            uint64_t keys[3];
+
+            if (j <= seqLength - kmerSize) {
+
+                uint64_t index = j / 32;
+                uint64_t shift1 = 2 * (j % 32);
+
+                if (shift1 > 0) {
+                    uint64_t shift2 = 64 - shift1;
+                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index + 1] << shift2));
+                } else {   
+                    kmer = compressedSeqs[index];
+                }
+
+                decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
+
+                MurmurHash3_x64_128_MASH(
+                    (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0) ? kmer_fwd : kmer_rev,
+                    kmerSize, 42, out
+                );
+
+                uint64_t hash = *((uint64_t *)out);
+
+                // Sort and rank values based on the number of targetHashes
+                keys[0] = stored[tx];  // Adjust to match current targetHashes
+                keys[1] = (tx < halfTargetHashes) ? stored[tx + halfTargetHashes] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = hash;
+            } else {
+                keys[0] = stored[tx];
+                keys[1] = (tx < halfTargetHashes) ? stored[tx + halfTargetHashes] : 0xFFFFFFFFFFFFFFFF;
+                keys[2] = 0xFFFFFFFFFFFFFFFF;
+            }
+
+            BlockRadixSort(temp_storage).Sort(keys);
+  
+            __syncthreads();
+
+            // Move sorted values back to shared memory
+            if (tx < targetHashes / 3) {
+                stored[3 * tx] = keys[0];
+                stored[3 * tx + 1] = keys[1];
+                stored[3 * tx + 2] = keys[2];
+            } else if (tx == (targetHashes / 3)) {
+                stored[targetHashes - 1] = keys[0];
+            }
+
+            __syncthreads();
+
+            iteration += blockDim.x;
+            j += blockDim.x;
+        }
+
+        // Result writing back to global memory
+        for (int k = 0; k < halfTargetHashes; k++) {
+            if (tx + k * blockDim.x < targetHashes) {
+                hashList[tx + k * blockDim.x] = stored[tx + k * blockDim.x];
+            }
+        }
+
+        cudaError_t err = cudaGetLastError();
+        if (err != cudaSuccess) {
+            printf("CUDA Error: %s\n", cudaGetErrorString(err));
+        }
+    }
+}
+
+
+#define MAX_SEQ_LENGTH 1000 
+#define KMER_LENGTH 21       
+#define BITS_PER_CHAR 2  
+
+__device__ void extractKmer(const uint64_t* compressedSeq, char* kmer, int startIdx, int kmerLength) {
+    static const char lookupTable[4] = {'A', 'C', 'G', 'T'};
+    int kmerPos = 0;
+
+    for (int i = 0; i < kmerLength; ++i) {
+        int bitPos = (startIdx + i) * BITS_PER_CHAR;
+        int wordIndex = bitPos / 64;
+        int bitIndex = bitPos % 64;
+
+        uint64_t twoBitValue = (compressedSeq[wordIndex] >> bitIndex) & 0x3;
+        kmer[kmerPos++] = lookupTable[twoBitValue];
+    }
+}
+
+// Compute the count of differences between two k-mers
+__device__ int countDifferences(const char* kmer1, const char* kmer2, int kmerLength) {
+    int diffCount = 0;
+    for (int i = 0; i < kmerLength; ++i) {
+        if (kmer1[i] != kmer2[i]) {
+            diffCount++;
+        }
+    }
+    return diffCount;
+}
+
+// Compute identity distance by comparing all k-mers of two sequences
+__device__ float computeIdentityDistance(const uint64_t* compressedSeq1, const uint64_t* compressedSeq2, int seqLength, int kmerLength) {
+    int identicalCount = 0;
+    int totalKmers = seqLength - kmerLength + 1;
+
+    for (int i = 0; i < totalKmers; ++i) {
+        char kmer1[KMER_LENGTH];
+        char kmer2[KMER_LENGTH];
+
+        extractKmer(compressedSeq1, kmer1, i, kmerLength);
+        extractKmer(compressedSeq2, kmer2, i, kmerLength);
+
+        // Compare k-mers for identity
+        if (countDifferences(kmer1, kmer2, kmerLength) == 0) {
+            identicalCount++;
+        }
+    }
+
+    return 1.0f - (float)identicalCount / totalKmers;
+}
+
+// Jukes-Cantor Distance
+__device__ float computeJukesCantorDistance(int differences, int totalSites) {
+    float p = (float)differences / totalSites;
+    if (p >= 0.75f) return 999.9f;  // Handle saturation case
+    return -0.75f * log(1.0f - (4.0f / 3.0f) * p);
+}
+
+// Kimura 2-Parameter Distance
+__device__ float computeKimura2PDistance(int transitions, int transversions, int totalSites) {
+    float p = (float)transitions / totalSites;
+    float q = (float)transversions / totalSites;
+    if (p + q >= 0.5f) return 999.9f;  // Handle saturation case
+    return -0.5f * log((1.0f - 2.0f * p - q) * sqrt(1.0f - 2.0f * q));
+}
+
+// LogDet Distance (simplified version)
+__device__ float computeLogDetDistance(int differences, int totalSites) {
+    float determinant = (float)differences / totalSites;
+    return log(determinant);
+}
+
+// Proportional Maximum Likelihood Distance (PML) 
+__device__ float computePMLDistance(int differences, int totalSites) {
+    return -log(1.0f - (float)differences / totalSites);
+}
+
+// Generalized Time Reversible (GTR) Distance (Simplified)
+__device__ float computeGTRDistance(int differences, int totalSites) {
+    return (float)differences / totalSites;  
+}
+
+   
+
+// distance metric constants
+#define DIST_IDENTITY    1
+#define DIST_PERCENT     2
+#define DIST_PDISTANCE   3
+#define DIST_JUKESCANTOR 4
+#define DIST_KIMURA2P    5
+#define DIST_LOGDET      6
+#define DIST_GAMMA       7
+#define DIST_PML         8
+#define DIST_GTR         9
+
+__global__ void computeDistanceMatrix(const uint64_t* compressedSeqs,
+                                      float* d_distanceMatrix,
+                                      int numSeqs,
+                                      int seqLength,
+                                      int kmerLength,
+                                      int distanceType) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idy = blockIdx.y * blockDim.y + threadIdx.y;
+    
+    if (idx < numSeqs && idy < numSeqs && idx < idy) {
+        int offset = idx * numSeqs + idy - (idx + 1) * (idx + 2) / 2;
+        
+        const uint64_t* compressedSeq1 = &compressedSeqs[idx * (seqLength * BITS_PER_CHAR / 64)];
+        const uint64_t* compressedSeq2 = &compressedSeqs[idy * (seqLength * BITS_PER_CHAR / 64)];
+        
+        int totalKmers = seqLength - kmerLength + 1;
+        int totalDifferences = 0;
+
+        // Count differences between the sequences
+        for (int i = 0; i < totalKmers; ++i) {
+            char kmer1[KMER_LENGTH];
+            char kmer2[KMER_LENGTH];
+            
+            extractKmer(compressedSeq1, kmer1, i, kmerLength);
+            extractKmer(compressedSeq2, kmer2, i, kmerLength);
+
+            totalDifferences += countDifferences(kmer1, kmer2, kmerLength);
+        }
+
+        float distance = 0.0f;
+        switch(distanceType) {
+            case DIST_IDENTITY:
+                distance = 1.0f - (float)(totalKmers - totalDifferences) / totalKmers;
+                break;
+            case DIST_PERCENT:
+                distance = 100.0f * (float)(totalKmers - totalDifferences) / totalKmers;
+                break;
+            case DIST_PDISTANCE:
+                distance = (float)totalDifferences / totalKmers;
+                break;
+            case DIST_JUKESCANTOR:
+                distance = computeJukesCantorDistance(totalDifferences, totalKmers);
+                break;
+            case DIST_KIMURA2P:
+                // For simplicity, assume all differences are transversions
+                distance = computeKimura2PDistance(0, totalDifferences, totalKmers);
+                break;
+            case DIST_LOGDET:
+                distance = computeLogDetDistance(totalDifferences, totalKmers);
+                break;
+            case DIST_PML:
+                distance = computePMLDistance(totalDifferences, totalKmers);
+                break;
+            case DIST_GTR:
+                distance = computeGTRDistance(totalDifferences, totalKmers);
+                break;
+            default:
+                distance = 0.0f;
+                break;
+        }
+
+        // Store distance in the distance matrix
+        d_distanceMatrix[offset] = distance;
+    }
+}
+ 
+// Host function
+void computeDistanceMatrixCUDA(const uint64_t* d_compressedSeqs,
+                               //float* h_distanceMatrix,
+                               int numSeqs,
+                               int seqLength,
+                               int kmerLength,
+                               int distanceType) {
+    float* d_distanceMatrix;
+
+    cudaMalloc((void**)&d_distanceMatrix, (numSeqs * (numSeqs - 1) / 2) * sizeof(float));
+    
+    dim3 blockSize(16, 16); 
+    dim3 gridSize((numSeqs + blockSize.x - 1) / blockSize.x, (numSeqs + blockSize.y - 1) / blockSize.y);
+    computeDistanceMatrix<<<gridSize, blockSize>>>(d_compressedSeqs, d_distanceMatrix, numSeqs, seqLength, kmerLength, distanceType);
+    
+    //cudaMemcpy(h_distanceMatrix, d_distanceMatrix, (numSeqs * (numSeqs - 1) / 2) * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(d_distanceMatrix);
+}
+
 
 void GpuSketch::sketchConstructionOnGpu
 (
@@ -393,28 +793,31 @@ void GpuSketch::sketchConstructionOnGpu
     Param& params
 ){
 
-    const uint64_t kmerSize = params.kmerSize; // Extract kmerSize
+    // const uint64_t kmerSize = params.kmerSize; // Extract kmerSize
 
     auto timerStart = std::chrono::high_resolution_clock::now();
 
-    int threadsPerBlock = 512;
-    int blocksPerGrid = (d_numSequences + threadsPerBlock - 1) / threadsPerBlock;
-    size_t sharedMemorySize = sizeof(uint64_t) * (2000);
-    sketchConstruction<<<1, threadsPerBlock, sharedMemorySize>>>(
-        d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_numSequences, d_hashList, kmerSize
-    );
+    // int threadsPerBlock = 512;
+    // int blocksPerGrid = (d_numSequences + threadsPerBlock - 1) / threadsPerBlock;
+    // size_t sharedMemorySize = sizeof(uint64_t) * (3000);
+    // int targetHashes = 2000;  
+    // sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
+    //     d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_numSequences, d_hashList, kmerSize
+    // );
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-    }
-    cudaDeviceSynchronize();
+    // cudaError_t err = cudaGetLastError();
+    // if (err != cudaSuccess) {
+    //     printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    // }
+    // cudaDeviceSynchronize();
+    computeDistanceMatrixCUDA(d_compressedSeqs, d_numSequences, h_seqLengths[0], params.kmerSize, 21);
 
     auto timerEnd = std::chrono::high_resolution_clock::now();
     auto time = timerEnd - timerStart;
     std::cout << "Time to generate hashes: " << time.count() << "ns\n";
 
 }
+
 
 __device__ float mashDistance
 (
@@ -514,18 +917,18 @@ void GpuSketch::mashDistConstructionOnGpu
 
 }
 
-void GpuSketch::DeviceArrays::printSketchValues(int numValues) 
+void GpuSketch::DeviceArrays::printSketchValues(int numValues, int sketchSize) 
 {
-    uint64_t * h_hashList = new uint64_t[1000*d_numSequences];
+    uint64_t * h_hashList = new uint64_t[sketchSize*d_numSequences];
 
 
     uint64_t * hashList = d_hashList;
 
     cudaError_t err;
 
-    //printf("Total Hashes: %d", d_numSequences*1000);
+    //printf("Total Hashes: %d", d_numSequences*sketchSize);
 
-    err = cudaMemcpy(h_hashList, hashList, d_numSequences*1000*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(h_hashList, hashList, d_numSequences*sketchSize*sizeof(uint64_t), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
@@ -535,7 +938,7 @@ void GpuSketch::DeviceArrays::printSketchValues(int numValues)
     for (int j = 0; j < d_numSequences; j++) {
         printf("Sequence (%d)\n", j);
         for (int i=0; i<numValues; i++) {
-            printf("%i\t%lu\n", i, h_hashList[j*1000 + i]);
+            printf("%i\t%lu\n", i, h_hashList[j*sketchSize + i]);
         }
     }
     
