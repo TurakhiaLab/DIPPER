@@ -26,8 +26,8 @@ do
     mkdir /data/zec022/placement/dataset_$n
     cd /data/zec022/placement/dataset_$n
     # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy -i d -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t 
-    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
+    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t 
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
     # rm /data/zec022/placement/dataset_$n/analysis_report*
     # timeout 3600 /usr/bin/time -v  nsys profile -o analysis_report --force-overwrite=true ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t > /data/zec022/placement/dataset_$n/tree.nwk
     # nsys stats analysis_report.nsys-rep

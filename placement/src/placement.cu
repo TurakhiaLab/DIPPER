@@ -11,6 +11,19 @@
 #include <iostream>
 #include <cub/cub.cuh>
 
+void checkCudaErrorsHere(const char* location) {
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error before %s: %s\n", location, cudaGetErrorString(err));
+        exit(-1);
+    }
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA error after sync at %s: %s\n", location, cudaGetErrorString(err));
+        exit(-1);
+    }
+}
+
 void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     cudaError_t err;
     numSequences = int(num);
@@ -69,13 +82,13 @@ void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_levelst, numSequences*sizeof(int));
+    err = cudaMalloc(&d_levelst, numSequences*sizeof(int)*2);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_leveled, numSequences*sizeof(int));
+    err = cudaMalloc(&d_leveled, numSequences*sizeof(int)*2);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
@@ -501,7 +514,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
     initialize <<<blockNum, threadNum>>> (
         numSequences*4-4,
-        numSequences*2,
+        numSequences*2-1,
         d_head,
         d_nxt,
         d_belong,
@@ -595,7 +608,6 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             );
         }
         // cudaDeviceSynchronize();
-
         // double * h_dis = new double[numSequences];
         // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
         // fprintf(stderr, "%d\n",i);
