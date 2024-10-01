@@ -87,9 +87,9 @@ void MashPlacement::MSADeviceArrays::deallocateDeviceArrays(){
 
 __device__ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
     int compLen=(seqLen+15)/16;
-    uint64_t px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     for(int i=0;i<compLen;i++){
-        uint64_t vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
             int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
             if(et<4||ec<4) useful++;
