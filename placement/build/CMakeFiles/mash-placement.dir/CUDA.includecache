@@ -1,0 +1,44 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
+stdint.h
+-
+iostream
+-
+vector
+-
+cstdio
+-
+string
+-
+
+/home/zec022@AD.UCSD.EDU/placement/src/placement.cu
+mash_placement.cuh
+/home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
+stdio.h
+-
+queue
+-
+thrust/sort.h
+-
+thrust/scan.h
+-
+thrust/binary_search.h
+-
+thrust/host_vector.h
+-
+thrust/device_vector.h
+-
+chrono
+-
+iostream
+-
+cub/cub.cuh
+-
+
