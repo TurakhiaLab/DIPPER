@@ -6,19 +6,7 @@
 
 #IncludeRegexTransform: 
 
-/home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
-stdint.h
--
-iostream
--
-vector
--
-cstdio
--
-string
--
-
-/home/zec022@AD.UCSD.EDU/placement/src/placement.cu
+/home/zec022@AD.UCSD.EDU/placement/src/mash.cu
 mash_placement.cuh
 /home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
 stdio.h
@@ -40,5 +28,17 @@ chrono
 iostream
 -
 cub/cub.cuh
+-
+
+/home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
+stdint.h
+-
+iostream
+-
+vector
+-
+cstdio
+-
+string
 -
 
