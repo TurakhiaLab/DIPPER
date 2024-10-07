@@ -167,47 +167,76 @@ void utility::rate_matrix_calc()
 
 }
 
+#include <Eigen/Dense>
+#include <unsupported/Eigen/MatrixFunctions>
+
 void utility::matrix_exp(float bl, std::vector<std::vector<float>>& mat_out)
 {
-    // Approximating e^(l*x) = I + l*x + (l*x)^2/2;
-    mat_out.resize(STATES);
+    Eigen::MatrixXf A(rate_matrix.size(), rate_matrix.size());
     for (size_t i = 0; i < rate_matrix.size(); i++)
     {
-        mat_out[i].resize(STATES);
         for (size_t j = 0; j < rate_matrix[i].size(); j++)
         {
-            mat_out[i][j] = bl*rate_matrix[i][j];
-            if (i == j)
-            {
-                mat_out[i][j] += 1;
-            }
+            A(i, j) = rate_matrix[i][j];
         }
     }
 
+    Eigen::MatrixXf expA = (A * bl).exp();
+
+    mat_out.resize(rate_matrix.size());
     for (size_t i = 0; i < rate_matrix.size(); i++)
-    { 
-        for (size_t j = 0; j < rate_matrix[i].size(); j++)
-        { 
-            float value = 0;
-            for (size_t k = 0; k < rate_matrix[i].size(); k++)
-            { 
-                value += rate_matrix[i][k] * rate_matrix[k][j]; 
-            } 
-            mat_out[i][j] += value*bl*bl*(1/2);
-        }   
-    } 
-    // printf ("P-matrix for branch length %f\n", bl);
-
-    // for (size_t i = 0; i < mat_out.size(); i++)
-    // {
-    //     for (size_t j = 0; j < mat_out[i].size(); j++)
-    //     {
-    //         std::cout << mat_out[i][j] << "\t";
-    //     }
-    //     printf ("\n");
-    // }
-
+    {
+        mat_out[i].resize(rate_matrix.size());
+        for (size_t j = 0; j < rate_matrix.size(); j++)
+        {
+            mat_out[i][j] = expA(i, j);
+        }
+    }
 }
+
+
+
+// void utility::matrix_exp(float bl, std::vector<std::vector<float>>& mat_out)
+// {
+//     // Approximating e^(l*x) = I + l*x + (l*x)^2/2;
+//     mat_out.resize(STATES);
+//     for (size_t i = 0; i < rate_matrix.size(); i++)
+//     {
+//         mat_out[i].resize(STATES);
+//         for (size_t j = 0; j < rate_matrix[i].size(); j++)
+//         {
+//             mat_out[i][j] = bl*rate_matrix[i][j];
+//             if (i == j)
+//             {
+//                 mat_out[i][j] += 1;
+//             }
+//         }
+//     }
+
+//     for (size_t i = 0; i < rate_matrix.size(); i++)
+//     { 
+//         for (size_t j = 0; j < rate_matrix[i].size(); j++)
+//         { 
+//             float value = 0;
+//             for (size_t k = 0; k < rate_matrix[i].size(); k++)
+//             { 
+//                 value += rate_matrix[i][k] * rate_matrix[k][j]; 
+//             } 
+//             mat_out[i][j] += value*bl*bl*(1/2);
+//         }   
+//     } 
+//     // printf ("P-matrix for branch length %f\n", bl);
+
+//     // for (size_t i = 0; i < mat_out.size(); i++)
+//     // {
+//     //     for (size_t j = 0; j < mat_out[i].size(); j++)
+//     //     {
+//     //         std::cout << mat_out[i][j] << "\t";
+//     //     }
+//     //     printf ("\n");
+//     // }
+
+// }
 
 void scale(size_t i, std::vector<std::vector<float>>& bottom, utility::SCALE_TYPE SCALE_TYPE_ASSIGN, float max_prob, float sum_prob, utility::Node* node)
 {
