@@ -1,8 +1,10 @@
-// clustering.cu
-
-// #include <cuda_runtime.h>
-// #include <curand.h>
-// #include <curand_kernel.h>
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <iostream>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -12,411 +14,260 @@
 #include <ctime>
 #include <stdexcept>
 #include <unordered_set>
+#include <vector>
+#include <random>
+#include <algorithm>
+
 
 #define THREADS_PER_BLOCK 256
 
-// Function to check for CUDA errors
-// #define cudaCheckError(ans) { gpuAssert((ans), __FILE__, __LINE__); }
-// inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true){
-//     if (code != cudaSuccess){
-//         fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
-//         if (abort) exit(code);
-//     }
-// }
+const int clusterSize = 100000;
+const int threshold = 1000;
 
-// // Distance function (Euclidean distance in this case)
-// __device__ float distance(float x1, float x2){
-//     return fabsf(x1 - x2);
-// }
-
-// // Kernel to compute distances and assign clusters
-// __global__ void assignClusters(float *E, int size, float a, float b, int *clusterAssignments){
-//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-//     if(idx >= size) return;
-
-//     float distToA = distance(E[idx], a);
-//     float distToB = distance(E[idx], b);
-
-//     if(distToA < distToB)
-//         clusterAssignments[idx] = 0; // Assign to cluster Ea
-//     else
-//         clusterAssignments[idx] = 1; // Assign to cluster Eb
-// }
-
-// // Host function to perform clustering recursively
-// void cluster(float *E, int size, int k, std::vector<std::vector<float>> &clusters){
-//     if(size <= k){
-//         // Base case: add the cluster to the list
-//         clusters.push_back(std::vector<float>(E, E + size));
-//         return;
-//     }
-
-//     // Randomly select two pivot points a and b
-//     srand(time(NULL));
-//     int idxA = rand() % size;
-//     int idxB = rand() % size;
-//     while(idxB == idxA){
-//         idxB = rand() % size;
-//     }
-//     float a = E[idxA];
-//     float b = E[idxB];
-
-//     // Allocate memory on device
-//     float *d_E;
-//     int *d_clusterAssignments;
-//     cudaCheckError(cudaMalloc((void**)&d_E, size * sizeof(float)));
-//     cudaCheckError(cudaMalloc((void**)&d_clusterAssignments, size * sizeof(int)));
-
-//     // Copy data to device
-//     cudaCheckError(cudaMemcpy(d_E, E, size * sizeof(float), cudaMemcpyHostToDevice));
-
-//     // Launch kernel to assign clusters
-//     int blocks = (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-//     assignClusters<<<blocks, THREADS_PER_BLOCK>>>(d_E, size, a, b, d_clusterAssignments);
-//     cudaDeviceSynchronize();
-
-//     // Copy cluster assignments back to host
-//     int *clusterAssignments = new int[size];
-//     cudaCheckError(cudaMemcpy(clusterAssignments, d_clusterAssignments, size * sizeof(int), cudaMemcpyDeviceToHost));
-
-//     // Separate elements into two clusters
-//     std::vector<float> Ea, Eb;
-//     for(int i = 0; i < size; i++){
-//         if(i == idxA || i == idxB) continue; // Exclude a and b
-//         if(clusterAssignments[i] == 0)
-//             Ea.push_back(E[i]);
-//         else
-//             Eb.push_back(E[i]);
-//     }
-
-//     // Free device memory
-//     cudaCheckError(cudaFree(d_E));
-//     cudaCheckError(cudaFree(d_clusterAssignments));
-//     delete[] clusterAssignments;
-
-//     // Recursively cluster Ea and Eb
-//     if(!Ea.empty()){
-//         cluster(Ea.data(), Ea.size(), k, clusters);
-//     }
-//     if(!Eb.empty()){
-//         cluster(Eb.data(), Eb.size(), k, clusters);
-//     }
-// }
-std::vector<int> distCal(const std::vector<int> &cluster, int index)
-{
-    std::vector<int> distCalDiffMatrix;
-    int ref = cluster[index]; // Store the reference value from cluster
-
-    for (size_t iter = 0; iter < cluster.size(); ++iter)
-    {
-        distCalDiffMatrix.push_back(std::abs(ref - cluster[iter])); // Calculate the difference
-    }
-
-    return distCalDiffMatrix;
-}
-
-std::vector<int> clusterAlgo(const std::vector<int> &distMatrix1, const std::vector<int> &distMatrix2, const std::vector<int> &cluster, int *&boundary)
-{
-    std::vector<int> cluster1, cluster2;
-
-    // Ensure both matrices have the same size
-    if (distMatrix1.size() != distMatrix2.size())
-    {
-        throw std::invalid_argument("Distance matrices must have the same size");
-    }
-
-    for (size_t i = 0; i < distMatrix1.size(); ++i)
-    {
-        if (std::abs(distMatrix1[i]) <= std::abs(distMatrix2[i]))
-        {
-            cluster1.push_back(cluster[i]);
-        }
-        else
-        {
-            cluster2.push_back(cluster[i]);
-        }
-    }
-    *boundary = cluster1.size(); // Combine clusters into a single result vector
-    cluster1.insert(cluster1.end(), cluster2.begin(), cluster2.end());
-
-    return cluster1;
-}
-
-struct treeNode
-{
+struct treeNode {
     int nodeNum;
-    int child1;
-    int child2;
+    int nodechild1;
+    int nodechild2;
+    int valuechild1;
+    int valuechild2;
 };
 
-// void cluster(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *dataset)
-// {
-//     for (int idx = 0; idx < totalSize; idx++)
-//     {
-//         if (clusterMap[idx] >= 0)
-//         {
-//             for (int clusterIdx = 0; clusterIdx < 3 * (numCluster); clusterIdx += 3)
-//                 if (cInstr[clusterIdx] == clusterMap[idx])
-//                 {
-//                     int distance1 = std::abs(cInstr[clusterIdx + 1] - dataset[idx]);
-//                     int distance2 = std::abs(cInstr[clusterIdx + 2] - dataset[idx]);
-//                     if (distance1 < distance2)
-//                         clusterMap[idx] = cInstr[clusterIdx] * 2 + 1;
-//                     else
-//                         clusterMap[idx] = cInstr[clusterIdx] * 2 + 2;
-//                 }
-//         }
-//     }
-// }
-
-void getTwoRandomIndices(int *clusterMap, int clusterSize, int searchIndex, treeNode *node)
-{
-    static int result[2] = {-1, -1}; // Static array to store the results
-    std::unordered_set<int> uniqueIndices;
-    const int MAX_ITERATIONS = 10; // Maximum number of iterations to prevent infinite loops
-    int iterations = 0;
-
-    // Seed the random number generator
-    std::srand(std::time(nullptr));
-
-    while (uniqueIndices.size() < 2 && iterations < MAX_ITERATIONS)
-    {
-        iterations++;
-        // Randomly get a number within the size of the array
-        int randomIndex = std::rand() % clusterSize;
-
-        // Start iterating from the random index
-        for (int i = 0; i < clusterSize; i++)
-        {
-            int indx = (randomIndex + i) % clusterSize; // Wrap around if needed
-            if (clusterMap[indx] == searchIndex)
-            {
-                uniqueIndices.insert(indx);
-                break; // Break the inner loop and start over for the next index
+// CUDA kernel for the cluster function
+__global__ void clusterKernel(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *dataset) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < totalSize) {
+        if (clusterMap[idx] >= 0) {
+            bool clusterFound = false;
+            for (int clusterIdx = 0; clusterIdx < 3 * (numCluster); clusterIdx += 3) {
+                if (cInstr[clusterIdx] == clusterMap[idx]) {
+                    int distance1 = abs(dataset[cInstr[clusterIdx + 1]] - dataset[idx]);
+                    int distance2 = abs(dataset[cInstr[clusterIdx + 2]] - dataset[idx]);
+                    clusterMap[idx] = cInstr[clusterIdx] * 2 + (distance1 < distance2 ? 1 : 2);
+                    clusterFound = true;
+                    break;
+                }
+            }
+            if (!clusterFound) {
+                printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, clusterMap[idx]);
             }
         }
     }
+}
 
-    // Error handling for insufficient unique indices
-    if (uniqueIndices.size() == 2)
-    {
-        auto it = uniqueIndices.begin();
-        node->child1 = *it++;
-        node->child2 = *it;
-        node->nodeNum = searchIndex;
+// Function to handle CUDA errors
+void checkCudaError(cudaError_t error, const char *file, int line) {
+    if (error != cudaSuccess) {
+        printf("CUDA error at %s:%d: %s\n", file, line, cudaGetErrorString(error));
+        exit(EXIT_FAILURE);
     }
 }
-void invalidateExtraOccurrences(int *arr, int size)
+
+#define CHECK_CUDA_ERROR(error) checkCudaError(error, __FILE__, __LINE__)
+
+// Wrapper function for cluster kernel
+void clusterGPU(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *d_dataset) {
+    int *d_cInstr, *d_clusterMap;
+
+    // Allocate device memory
+    CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * numCluster * sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, totalSize * sizeof(int)));
+
+    // Copy data to device
+    CHECK_CUDA_ERROR(cudaMemcpy(d_cInstr, cInstr, 3 * numCluster * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, totalSize * sizeof(int), cudaMemcpyHostToDevice));
+
+    // Launch kernel
+    int blocksPerGrid = (totalSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    clusterKernel<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_cInstr, numCluster, totalSize, d_clusterMap, d_dataset);
+
+    // Check for kernel launch errors
+    CHECK_CUDA_ERROR(cudaGetLastError());
+
+    // Copy result back to host
+    CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, totalSize * sizeof(int), cudaMemcpyDeviceToHost));
+
+    // // Free device memory
+    // CHECK_CUDA_ERROR(cudaFree(d_cInstr));
+    // CHECK_CUDA_ERROR(cudaFree(d_clusterMap));
+}
+
+// Rest of the functions (getTwoRandomIndices, invalidateExtraOccurrences) remain the same
+
+
+int invalidateExtraOccurrences(int *arr, int size)
 {
-    // Find the maximum number in the array
-    int maxNum = *std::max_element(arr, arr + size);
-
-    // Allocate memory for the counts array
-    int resultSize = maxNum + 1;
-    int *counts = new int[resultSize](); // Initialize with zeros
-
-    // Count occurrences in a single pass
-    for (int i = 0; i < size; ++i)
+    if (!arr || size <= 0)
     {
-        counts[arr[i]]++;
+        throw std::invalid_argument("Invalid arguments passed to invalidateExtraOccurrences");
     }
 
-    // Invalidate numbers with less than 4 occurrences in a single pass
+    int maxNum = *std::max_element(arr, arr + size);
+    if (maxNum < 0)
+    {
+        printf("Built clusters with give max sub-tree size\n");
+        // break;
+        return 1;
+
+        // return;
+    }
+
+    int resultSize = maxNum + 1;
+    int *counts = new int[resultSize]();
+
     for (int i = 0; i < size; ++i)
     {
-        if (counts[arr[i]] < 4)
+        if (arr[i] >= 0 && arr[i] < resultSize)
+        {
+            counts[arr[i]]++;
+        }
+    }
+
+    for (int i = 0; i < size; ++i)
+    {
+        if (arr[i] >= 0 && arr[i] < resultSize && counts[arr[i]] < threshold)
         {
             arr[i] = -arr[i];
         }
     }
 
-    // Free dynamically allocated memory
     delete[] counts;
+    return 0;
 }
 
-// int main()
-// {
-//     int *boundary = new int;
-//     srand(time(NULL));
-
-// #define clusterSize 21
-
-//     int clusters[clusterSize] = {1, 2, 3, 98, 5, 6, 67, 89, 91, 100, 102, 10, 32, 45, 6, 7, 432, 54, 23, 66, 43};
-//     int clusterMap[clusterSize] = {0};
-//     treeNode *nodes[10];
-//     int n = -1;
-//     for (int i = 0; i < 10; i++)
-//     {
-//         nodes[i] = new treeNode();
-//     }
-//     getTwoRandomIndices(clusterMap, clusterSize, 0, nodes[0]);
-//     int cInstr[3] = {0, nodes[0]->child1, nodes[0]->child2};
-//     cluster(cInstr, 1, clusterSize, clusterMap, clusters);
-//     invalidateExtraOccurrences(clusterMap, clusterSize);
-//     while (n++ < clusterSize - 1)
-//     {
-//         printf("index %d value %d \n", n, clusterMap[n]);
-//     }
-
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[0]->nodeNum * 2 + 1, nodes[1]);
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[0]->nodeNum * 2 + 2, nodes[2]);
-//     int cInstr2[6] = {nodes[0]->nodeNum * 2 + 1, nodes[1]->child1, nodes[1]->child2,
-//                       nodes[0]->nodeNum * 2 + 2, nodes[2]->child1, nodes[2]->child2};
-//     cluster(cInstr2, 2, clusterSize, clusterMap, clusters);
-//     invalidateExtraOccurrences(clusterMap, clusterSize);
-//     n = -1;
-//     while (n++ < clusterSize - 1)
-//     {
-//         printf("index %d value %d \n", n, clusterMap[n]);
-//     }
-
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[1]->nodeNum * 2 + 1, nodes[3]);
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[1]->nodeNum * 2 + 2, nodes[4]);
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[2]->nodeNum * 2 + 1, nodes[5]);
-//     getTwoRandomIndices(clusterMap, clusterSize, nodes[2]->nodeNum * 2 + 2, nodes[6]);
-//     int cInstr3[12] = {nodes[1]->nodeNum * 2 + 1, nodes[3]->child1, nodes[3]->child2,
-//                        nodes[1]->nodeNum * 2 + 2, nodes[4]->child1, nodes[4]->child2,
-//                        nodes[2]->nodeNum * 2 + 2, nodes[5]->child1, nodes[5]->child2,
-//                        nodes[2]->nodeNum * 2 + 2, nodes[6]->child1, nodes[6]->child2};
-//     cluster(cInstr3, 4, clusterSize, clusterMap, clusters);
-//     invalidateExtraOccurrences(clusterMap, clusterSize);
-
-//     n = -1;
-//     while (n++ < clusterSize - 1)
-//     {
-//         printf("index %d value %d \n", n, clusterMap[n]);
-//     }
-//     return 0;
-// }
-
-// CUDA kernel
-__global__ void clusterKernel(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *dataset)
+void getTwoRandomIndices(int *clusterMap, int clusterSize, int searchIndex, treeNode *node)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < totalSize)
+
+    if (!clusterMap || !node || clusterSize <= 0)
     {
-        if (clusterMap[idx] >= 0)
+        throw std::invalid_argument("Invalid arguments passed to getTwoRandomIndices");
+    }
+
+    std::unordered_set<int> uniqueIndices;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, clusterSize - 1); // Range from 0 to clusterSize - 1
+    // int n = -1;
+    // while (n++ < clusterSize - 1)
+    // {
+    //     printf("index %d value %d \n", n, clusterMap[n]);
+    // }
+    for (int i = 0; i < clusterSize; i++)
+    {
+        int indx = (dis(gen) + i) % clusterSize;
+        if (clusterMap[indx] == searchIndex && uniqueIndices.find(indx) == uniqueIndices.end())
         {
-            for (int clusterIdx = 0; clusterIdx < 3 * (numCluster); clusterIdx += 3)
-            {
-                if (cInstr[clusterIdx] == clusterMap[idx])
-                {
-                    int distance1 = abs(cInstr[clusterIdx + 1] - dataset[idx]);
-                    int distance2 = abs(cInstr[clusterIdx + 2] - dataset[idx]);
-                    if (distance1 < distance2)
-                        clusterMap[idx] = cInstr[clusterIdx] * 2 + 1;
-                    else
-                        clusterMap[idx] = cInstr[clusterIdx] * 2 + 2;
-                }
+            uniqueIndices.insert(indx);
+            if (uniqueIndices.size() == 2)
+                break;
+        }
+    }
+    // if )
+    // {
+    //     throw std::runtime_error("Not enough unique indices found for the search index");
+    // }
+    if (uniqueIndices.size() >= 2)
+    {
+
+        auto it = uniqueIndices.begin();
+        node->nodechild1 = *it++;
+        node->nodechild2 = *it;
+        node->nodeNum = searchIndex;
+    }
+}
+
+void processClusterLevels(int *clusterMap, int clusterSize, treeNode *nodes[], int *d_dataset, int MAX_LEVELS) {
+    if (!clusterMap || !nodes || !d_dataset || clusterSize <= 0) {
+        throw std::invalid_argument("Invalid arguments passed to processClusterLevels");
+    }
+
+    int nodeIndex = 0;
+    for (int level = 0; level < MAX_LEVELS; level++) {
+        int nodesInThisLevel = 1 << level;
+        int totalInstructions = nodesInThisLevel * 3;
+
+        int *cInstr = new int[totalInstructions];
+        int instrIndex = 0;
+
+        for (int i = 0; i < nodesInThisLevel; i++) {
+            int parentIndex = (nodeIndex - 1) / 2;
+            int baseClusterIndex = (level == 0) ? 0 : nodes[parentIndex]->nodeNum * 2 + i % 2 + 1;
+
+            try {
+                getTwoRandomIndices(clusterMap, clusterSize, baseClusterIndex, nodes[nodeIndex]);
+            } catch (const std::exception &e) {
+                printf("Error in getTwoRandomIndices: %s\n", e.what());
+                delete[] cInstr;
+                return;
             }
-        }
-    }
-}
 
-// Host function to call the CUDA kernel
-void cluster(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *dataset)
-{
-    int *d_cInstr, *d_clusterMap, *d_dataset;
-    
-    // Allocate device memory
-    cudaMalloc((void**)&d_cInstr, 3 * numCluster * sizeof(int));
-    cudaMalloc((void**)&d_clusterMap, totalSize * sizeof(int));
-    cudaMalloc((void**)&d_dataset, totalSize * sizeof(int));
-
-    // Copy data from host to device
-    cudaMemcpy(d_cInstr, cInstr, 3 * numCluster * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_clusterMap, clusterMap, totalSize * sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_dataset, dataset, totalSize * sizeof(int), cudaMemcpyHostToDevice);
-
-    // Launch kernel
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (totalSize + threadsPerBlock - 1) / threadsPerBlock;
-    clusterKernel<<<blocksPerGrid, threadsPerBlock>>>(d_cInstr, numCluster, totalSize, d_clusterMap, d_dataset);
-
-    // Copy result back to host
-    cudaMemcpy(clusterMap, d_clusterMap, totalSize * sizeof(int), cudaMemcpyDeviceToHost);
-
-    // Free device memory
-    cudaFree(d_cInstr);
-    cudaFree(d_clusterMap);
-    cudaFree(d_dataset);
-}
-
-// Function to initialize GPU memory for dataset (call this once at the start of your program)
-int* initializeGPUDataset(int* dataset, int size)
-{
-    int* d_dataset;
-    cudaMalloc((void**)&d_dataset, size * sizeof(int));
-    cudaMemcpy(d_dataset, dataset, size * sizeof(int), cudaMemcpyHostToDevice);
-    return d_dataset;
-}
-
-// Function to free GPU memory (call this at the end of your program)
-void freeGPUMemory(int* d_dataset)
-{
-    cudaFree(d_dataset);
-}
-
-int main()
-{
-    srand(time(NULL));
-
-    #define clusterSize 21
-    
-        int clusters[clusterSize] = {1, 2, 3, 98, 5, 6, 67, 89, 91, 100, 102, 10, 32, 45, 6, 7, 432, 54, 23, 66, 43};
-        int clusterMap[clusterSize] = {0};
-        treeNode *nodes[10];
-        int n = -1;
-        for (int i = 0; i < 10; i++)
-        {
-            nodes[i] = new treeNode();
+            cInstr[instrIndex++] = baseClusterIndex;
+            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild1;
+            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild2;
+            nodeIndex++;
         }
 
-    // Initialize GPU memory for dataset
-    int* d_clusters = initializeGPUDataset(clusters, clusterSize);
+        try {
+            clusterGPU(cInstr, nodesInThisLevel, clusterSize, clusterMap, d_dataset);
+            if (invalidateExtraOccurrences(clusterMap, clusterSize)) {
+                delete[] cInstr;
+                return;
+            }
+        } catch (const std::exception &e) {
+            printf("Error in cluster or invalidateExtraOccurrences: %s\n", e.what());
+            delete[] cInstr;
+            return;
+        }
 
-    getTwoRandomIndices(clusterMap, clusterSize, 0, nodes[0]);
-    int cInstr[3] = {0, nodes[0]->child1, nodes[0]->child2};
-    cluster(cInstr, 1, clusterSize, clusterMap, d_clusters);
-    invalidateExtraOccurrences(clusterMap, clusterSize);
+        delete[] cInstr;
+    }
+}
 
-        while (n++ < clusterSize - 1)
-    {
-        printf("index %d value %d \n", n, clusterMap[n]);
+
+
+int main() {
+    int *boundary = new int;
+    int clusterSizeVar = (int)clusterSize;
+    int MAX_LEVELS = 0;
+    while (clusterSizeVar >>= 1) ++MAX_LEVELS;
+
+    std::vector<int> clustersVec(clusterSize);
+    std::generate(clustersVec.begin(), clustersVec.end(), []() { return rand() % 10000 + 1; });
+
+    int *clusters = new int[clusterSize];
+    std::copy(clustersVec.begin(), clustersVec.end(), clusters);
+
+    int *clusterMap = new int[clusterSize]();
+
+    treeNode **nodes = new treeNode*[1 << MAX_LEVELS];
+    for (int i = 0; i < 1 << MAX_LEVELS; i++) {
+        nodes[i] = new treeNode();
     }
 
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[0]->nodeNum * 2 + 1, nodes[1]);
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[0]->nodeNum * 2 + 2, nodes[2]);
-    int cInstr2[6] = {nodes[0]->nodeNum * 2 + 1, nodes[1]->child1, nodes[1]->child2,
-                      nodes[0]->nodeNum * 2 + 2, nodes[2]->child1, nodes[2]->child2};
-    cluster(cInstr2, 2, clusterSize, clusterMap, d_clusters);
-    invalidateExtraOccurrences(clusterMap, clusterSize);
+    // Allocate and copy dataset to GPU
+    int *d_dataset;
+    CHECK_CUDA_ERROR(cudaMalloc(&d_dataset, clusterSize * sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMemcpy(d_dataset, clusters, clusterSize * sizeof(int), cudaMemcpyHostToDevice));
 
-    n = -1;
-        while (n++ < clusterSize - 1)
-    {
-        printf("index %d value %d \n", n, clusterMap[n]);
-    }
+    processClusterLevels(clusterMap, clusterSize, nodes, d_dataset, MAX_LEVELS);
 
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[1]->nodeNum * 2 + 1, nodes[3]);
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[1]->nodeNum * 2 + 2, nodes[4]);
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[2]->nodeNum * 2 + 1, nodes[5]);
-    getTwoRandomIndices(clusterMap, clusterSize, nodes[2]->nodeNum * 2 + 2, nodes[6]);
-    int cInstr3[12] = {nodes[1]->nodeNum * 2 + 1, nodes[3]->child1, nodes[3]->child2,
-                       nodes[1]->nodeNum * 2 + 2, nodes[4]->child1, nodes[4]->child2,
-                       nodes[2]->nodeNum * 2 + 2, nodes[5]->child1, nodes[5]->child2,
-                       nodes[2]->nodeNum * 2 + 2, nodes[6]->child1, nodes[6]->child2};
-    cluster(cInstr3, 4, clusterSize, clusterMap, d_clusters);
-    invalidateExtraOccurrences(clusterMap, clusterSize);
-   
-    n = -1;
-        while (n++ < clusterSize - 1)
-    {
-        printf("index %d value %d \n", n, clusterMap[n]);
+
+    // int n = -1;
+    // while (n++ < clusterSize - 1)
+    // {
+    //     printf("cluster value %d index %d value %d \n", clusters[n], n, clusterMap[n]);
+    // }
+
+    // Clean up
+    for (int i = 0; i < 1 << MAX_LEVELS; i++) {
+        delete nodes[i];
     }
+    delete[] nodes;
+    delete[] clusters;
+    delete[] clusterMap;
+    delete boundary;
 
     // Free GPU memory
-    freeGPUMemory(d_clusters);
+    CHECK_CUDA_ERROR(cudaFree(d_dataset));
 
     return 0;
 }
