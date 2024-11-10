@@ -21,24 +21,21 @@
 
 #define THREADS_PER_BLOCK 256
 
-const int clusterSize = 10000000;
-const int threshold = 1000000;
+const int clusterSize = 10000;
+const int threshold = 1000;
 
 struct treeNode {
     int nodeNum;
     int nodechild1;
     int nodechild2;
+    int valuechild1;
+    int valuechild2;
 };
 
 // CUDA kernel for the cluster function
-__global__ void clusterKernel(int *cInstr, int numCluster, int clusterSize, int *clusterMap, int *dataset, int MAX_LEVELS, int * stopFlag, int* sharedCount ) {
-    //Randomization to select 2 random 
-   
-
-    // __syncthreads(); 
-    //Clustering phase
+__global__ void clusterKernel(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *dataset) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < clusterSize) {
+    if (idx < totalSize) {
         if (clusterMap[idx] >= 0) {
             bool clusterFound = false;
             for (int clusterIdx = 0; clusterIdx < 3 * (numCluster); clusterIdx += 3) {
@@ -55,33 +52,6 @@ __global__ void clusterKernel(int *cInstr, int numCluster, int clusterSize, int 
             }
         }
     }
-    
-    __syncthreads();
-
-    // Invalidation step
-    if(idx==0)
-        stopFlag[0]=0;
-
-    __syncthreads();
-    
-
-    if(idx < (1<<(MAX_LEVELS+1)))
-        sharedCount[clusterMap[idx]] =0;
-   
-    __syncthreads();
-    
-    if (idx < clusterSize) 
-    {
-        if(clusterMap[idx]>0){
-            atomicAdd(&sharedCount[clusterMap[idx]], 1);  
-                if(sharedCount[clusterMap[idx]] <=threshold)
-                    clusterMap[idx] = -clusterMap[idx] ;
-        }
-        else
-            atomicAdd(&stopFlag[0], 1); 
-    }
-
-
 }
 
 // Function to handle CUDA errors
@@ -93,6 +63,76 @@ void checkCudaError(cudaError_t error, const char *file, int line) {
 }
 
 #define CHECK_CUDA_ERROR(error) checkCudaError(error, __FILE__, __LINE__)
+
+// Wrapper function for cluster kernel
+void clusterGPU(int *cInstr, int numCluster, int totalSize, int *clusterMap, int *d_dataset) {
+    int *d_cInstr, *d_clusterMap;
+
+    // Allocate device memory
+    CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * numCluster * sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, totalSize * sizeof(int)));
+
+    // Copy data to device
+    CHECK_CUDA_ERROR(cudaMemcpy(d_cInstr, cInstr, 3 * numCluster * sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, totalSize * sizeof(int), cudaMemcpyHostToDevice));
+
+    // Launch kernel
+    int blocksPerGrid = (totalSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+    clusterKernel<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_cInstr, numCluster, totalSize, d_clusterMap, d_dataset);
+
+    // Check for kernel launch errors
+    CHECK_CUDA_ERROR(cudaGetLastError());
+
+    // Copy result back to host
+    CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, totalSize * sizeof(int), cudaMemcpyDeviceToHost));
+
+    // // Free device memory
+    // CHECK_CUDA_ERROR(cudaFree(d_cInstr));
+    // CHECK_CUDA_ERROR(cudaFree(d_clusterMap));
+}
+
+// Rest of the functions (getTwoRandomIndices, invalidateExtraOccurrences) remain the same
+
+
+int invalidateExtraOccurrences(int *arr, int size)
+{
+    if (!arr || size <= 0)
+    {
+        throw std::invalid_argument("Invalid arguments passed to invalidateExtraOccurrences");
+    }
+
+    int maxNum = *std::max_element(arr, arr + size);
+    if (maxNum < 0)
+    {
+        printf("Built clusters with give max sub-tree size\n");
+        // break;
+        return 1;
+
+        // return;
+    }
+
+    int resultSize = maxNum + 1;
+    int *counts = new int[resultSize]();
+
+    for (int i = 0; i < size; ++i)
+    {
+        if (arr[i] >= 0 && arr[i] < resultSize)
+        {
+            counts[arr[i]]++;
+        }
+    }
+
+    for (int i = 0; i < size; ++i)
+    {
+        if (arr[i] >= 0 && arr[i] < resultSize && counts[arr[i]] < threshold)
+        {
+            arr[i] = -arr[i];
+        }
+    }
+
+    delete[] counts;
+    return 0;
+}
 
 void getTwoRandomIndices(int *clusterMap, int clusterSize, int searchIndex, treeNode *node)
 {
@@ -141,13 +181,6 @@ void processClusterLevels(int *clusterMap, int clusterSize, treeNode *nodes[], i
     }
 
     int nodeIndex = 0;
-    int *stopFlag = new int;
-    int size = (1<<(MAX_LEVELS+1));
-    int *sharedCount = new int[size];
-    for(int i=0;i<size;i++)
-        sharedCount[i]=0;
-
-    int *d_cInstr, *d_clusterMap, *d_stopFlag,*d_sharedCount;
     for (int level = 0; level < MAX_LEVELS; level++) {
         int nodesInThisLevel = 1 << level;
         int totalInstructions = nodesInThisLevel * 3;
@@ -174,52 +207,11 @@ void processClusterLevels(int *clusterMap, int clusterSize, treeNode *nodes[], i
         }
 
         try {
-
-            CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
-            CHECK_CUDA_ERROR(cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice));
-
-            CHECK_CUDA_ERROR(cudaMalloc(&d_sharedCount, sizeof(int)));
-            CHECK_CUDA_ERROR(cudaMemcpy(d_sharedCount, sharedCount, sizeof(int), cudaMemcpyHostToDevice));
-            
-            CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * nodesInThisLevel * sizeof(int)));
-            CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, clusterSize * sizeof(int)));
-        
-            // Copy data to device
-            CHECK_CUDA_ERROR(cudaMemcpy(d_cInstr, cInstr, 3 * nodesInThisLevel * sizeof(int), cudaMemcpyHostToDevice));
-            CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, clusterSize * sizeof(int), cudaMemcpyHostToDevice));
-        
-            // Launch kernel
-            int blocksPerGrid = (clusterSize + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-            clusterKernel<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_cInstr, nodesInThisLevel, clusterSize, d_clusterMap, d_dataset,MAX_LEVELS, d_stopFlag, d_sharedCount);
-        
-            CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, clusterSize* sizeof(int), cudaMemcpyDeviceToHost));
-            CHECK_CUDA_ERROR(cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost));
-          
-            // clusterGPU(cInstr, nodesInThisLevel, clusterSize, clusterMap, d_dataset);
-
-            // int n = -1;
-            // while (n++ < clusterSize - 1)
-            // {
-            //     printf("cluster value index %d value %d \n", n, clusterMap[n]);
-            // }
-
-            if(stopFlag[0] != 0)
-                break;
-
-            // Check for kernel launch errors
-            CHECK_CUDA_ERROR(cudaGetLastError());
-        
-            // Copy result back to host
-          
-
-
-
-
-            // clusterGPU(cInstr, nodesInThisLevel, clusterSize, clusterMap, d_dataset);
-            // if (invalidateExtraOccurrences(clusterMap, clusterSize)) {
-            //     delete[] cInstr;
-            //     return;
-            // }
+            clusterGPU(cInstr, nodesInThisLevel, clusterSize, clusterMap, d_dataset);
+            if (invalidateExtraOccurrences(clusterMap, clusterSize)) {
+                delete[] cInstr;
+                return;
+            }
         } catch (const std::exception &e) {
             printf("Error in cluster or invalidateExtraOccurrences: %s\n", e.what());
             delete[] cInstr;
@@ -227,9 +219,6 @@ void processClusterLevels(int *clusterMap, int clusterSize, treeNode *nodes[], i
         }
 
         delete[] cInstr;
-        CHECK_CUDA_ERROR(cudaFree(d_sharedCount));
-        CHECK_CUDA_ERROR(cudaFree(d_cInstr));
-        CHECK_CUDA_ERROR(cudaFree(d_stopFlag));
     }
 }
 
@@ -262,11 +251,11 @@ int main() {
     processClusterLevels(clusterMap, clusterSize, nodes, d_dataset, MAX_LEVELS);
 
 
-    // int n = -1;
-    // while (n++ < clusterSize - 1)
-    // {
-    //     printf("cluster value %d index %d value %d \n", clusters[n], n, clusterMap[n]);
-    // }
+    int n = -1;
+    while (n++ < clusterSize - 1)
+    {
+        printf("cluster value %d index %d value %d \n", clusters[n], n, clusterMap[n]);
+    }
 
     // Clean up
     for (int i = 0; i < 1 << MAX_LEVELS; i++) {

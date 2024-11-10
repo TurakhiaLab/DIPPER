@@ -26,6 +26,9 @@ KSEQ_INIT2(, gzFile, gzread)
 
 po::options_description mainDesc("Placement Command Line Arguments");
 
+#define CHECK_CUDA_ERROR(error) checkCudaError(error, __FILE__, __LINE__)
+
+#define THREADS_PER_BLOCK 256
 
 void parseArguments(int argc, char** argv)
 {
@@ -68,7 +71,91 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
     // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
 }
 
+struct treeNode {
+    int nodeNum;
+    int nodechild1;
+    int nodechild2;
+};
 
+
+void getTwoRandomIndices(int *clusterMap, int numSequences, int searchIndex, treeNode *node)
+{
+    std::unordered_set<int> uniqueIndices;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, numSequences - 1); // Range from 0 to clusterSize - 1
+    // int n = -1;
+    // while (n++ < clusterSize - 1)
+    // {
+    //     printf("index %d value %d \n", n, clusterMap[n]);
+    // }
+    for (int i = 0; i <numSequences; i++)
+    {
+        int indx = (dis(gen) + i) % numSequences;
+        if (clusterMap[indx] == searchIndex && uniqueIndices.find(indx) == uniqueIndices.end())
+        {
+            uniqueIndices.insert(indx);
+            if (uniqueIndices.size() == 2)
+                break;
+        }
+    }
+    // if )
+    // {
+    //     throw std::runtime_error("Not enough unique indices found for the search index");
+    // }
+    if (uniqueIndices.size() >= 2)
+    {
+
+        auto it = uniqueIndices.begin();
+        node->nodechild1 = *it++;
+        node->nodechild2 = *it;
+        node->nodeNum = searchIndex;
+    }
+}
+
+
+
+void processClusterLevels(int *clusterMap, int numSequences, treeNode *nodes[], uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS) {
+
+
+    int nodeIndex = 0;
+    int *stopFlag = new int;
+
+
+    int *d_cInstr,*cInstr, *d_clusterMap, *d_stopFlag,*d_sharedCount;
+    for (int level = 0; level < MAX_LEVELS; level++) {
+        int nodesInThisLevel = 1 << level;
+        int totalInstructions = nodesInThisLevel * 3;
+
+        // 
+        int instrIndex = 0;
+        for (int i = 0; i < nodesInThisLevel; i++) {
+            int parentIndex = (nodeIndex - 1) / 2;
+            int baseClusterIndex = (level == 0) ? 0 : nodes[parentIndex]->nodeNum * 2 + i % 2 + 1;
+             try {
+                getTwoRandomIndices(clusterMap, numSequences, baseClusterIndex, nodes[nodeIndex]);
+            } catch (const std::exception &e) {
+                printf("Error in getTwoRandomIndices: %s\n", e.what());
+                delete[] cInstr;
+                return;
+            }
+            cInstr[instrIndex++] = baseClusterIndex;
+            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild1;
+            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild2;
+            nodeIndex++;
+        }
+
+        try{
+            clusterKernelWrapper(clusterMap,numSequences, twoBitCompressedSeqs, MAX_LEVELS, d_stopFlag, d_sharedCount, d_clusterMap, d_cInstr, nodesInThisLevel, stopFlag);
+
+        } catch (const std::exception &e) {
+            printf("Error in cluster or invalidateExtraOccurrences: %s\n", e.what());
+            delete[] cInstr;
+            return;
+        }
+        delete[] cInstr;
+    }
+}
 
 
 int main(int argc, char** argv) {
@@ -215,6 +302,22 @@ int main(int argc, char** argv) {
             twoBitCompressedSeqs[i] = twoBitCompressed;
 
         }
+        //Clustering operation
+        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        int *clusterMap = new int[numSequences]();
+        int MAX_LEVELS = 0;
+        while (numSequences >>= 1) ++MAX_LEVELS;
+        treeNode **nodes = new treeNode*[1 << MAX_LEVELS];
+        
+        for (int i = 0; i < 1 << MAX_LEVELS; i++)  nodes[i] = new treeNode();
+    
+
+        processClusterLevels(clusterMap, numSequences, nodes, twoBitCompressedSeqs, MAX_LEVELS);
+
+
+        delete[] nodes;
+        delete[] clusterMap;
+
         auto compressEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds compressTime = compressEnd - compressStart;
         // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";

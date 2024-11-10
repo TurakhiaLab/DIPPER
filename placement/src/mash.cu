@@ -257,6 +257,91 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     return 0;
 }
 
+void clusterKernelWrapper(int *clusterMap, int numSequences, uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS, int  *d_stopFlag, int *d_sharedCount,
+    int *d_clusterMap,int *d_cInstr,int nodesInThisLevel,int *stopFlag){
+        int *cInstr = new int[  nodesInThisLevel * 3];
+        int size = (1<<(MAX_LEVELS+1));
+        int *sharedCount = new int[size];
+        for(int i=0;i<size;i++) sharedCount[i]=0;
+
+
+        CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice));
+
+        CHECK_CUDA_ERROR(cudaMalloc(&d_sharedCount, sizeof(int)));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_sharedCount, sharedCount, sizeof(int), cudaMemcpyHostToDevice));
+    
+        CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, numSequences * sizeof(int)));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, numSequences * sizeof(int), cudaMemcpyHostToDevice));
+        
+        CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * nodesInThisLevel * sizeof(int)));
+        CHECK_CUDA_ERROR(cudaMemcpy(d_cInstr, cInstr, 3 * nodesInThisLevel * sizeof(int), cudaMemcpyHostToDevice));
+
+        int blocksPerGrid = (numSequences + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+        clusterKernel<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_cInstr, nodesInThisLevel, numSequences, d_clusterMap, twoBitCompressedSeqs,MAX_LEVELS, d_stopFlag, d_sharedCount);
+    
+        CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, numSequences* sizeof(int), cudaMemcpyDeviceToHost));
+        CHECK_CUDA_ERROR(cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost));
+
+        CHECK_CUDA_ERROR(cudaFree(d_sharedCount));
+        CHECK_CUDA_ERROR(cudaFree(d_cInstr));
+        CHECK_CUDA_ERROR(cudaFree(d_stopFlag));
+    }
+
+// CUDA kernel for the cluster function
+__global__ void clusterKernel(int *cInstr, int numSequences, int clusterSize, int *clusterMap, int *dataset, int MAX_LEVELS, int * stopFlag, int* sharedCount ) {
+    //Randomization to select 2 random 
+   
+
+    // __syncthreads(); 
+    //Clustering phase
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < clusterSize) {
+        if (clusterMap[idx] >= 0) {
+            bool clusterFound = false;
+            for (int clusterIdx = 0; clusterIdx < 3 * (numSequences); clusterIdx += 3) {
+                if (cInstr[clusterIdx] == clusterMap[idx]) {
+                    int distance1 = abs(dataset[cInstr[clusterIdx + 1]] - dataset[idx]);
+                    int distance2 = abs(dataset[cInstr[clusterIdx + 2]] - dataset[idx]);
+                    clusterMap[idx] = cInstr[clusterIdx] * 2 + (distance1 < distance2 ? 1 : 2);
+                    clusterFound = true;
+                    break;
+                }
+            }
+            if (!clusterFound) {
+                printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, clusterMap[idx]);
+            }
+        }
+    }
+    
+    __syncthreads();
+
+    // Invalidation step
+    if(idx==0)
+        stopFlag[0]=0;
+
+    __syncthreads();
+    
+
+    if(idx < (1<<(MAX_LEVELS+1)))
+        sharedCount[clusterMap[idx]] =0;
+   
+    __syncthreads();
+    
+    if (idx < clusterSize) 
+    {
+        if(clusterMap[idx]>0){
+            atomicAdd(&sharedCount[clusterMap[idx]], 1);  
+                if(sharedCount[clusterMap[idx]] <=threshold)
+                    clusterMap[idx] = -clusterMap[idx] ;
+        }
+        else
+            atomicAdd(&stopFlag[0], 1); 
+    }
+
+
+}
+
 __global__ void sketchConstruction(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,

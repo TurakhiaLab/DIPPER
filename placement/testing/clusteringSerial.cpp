@@ -18,10 +18,9 @@
 
 #define THREADS_PER_BLOCK 256
 
-const int clusterSize = 1000000;
-// Adjust this based on how many levels you want
-// const int MAX_NODES = 21;
-const int threshold = 10000;
+
+const int clusterSize = 10000000;
+const int threshold = 1000000;
 
 struct treeNode
 {

@@ -9,6 +9,8 @@
 
 // typedef uint64_t hash_t;
 
+void clusterKernelWrapper(int *clusterMap, int numSequences, uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS, int  *d_stopFlag, int *d_sharedCount,
+    int *d_clusterMap,int *d_cInstr,int nodesInThisLevel,int *stopFlag);
 
 namespace MashPlacement
 {

@@ -1,4 +1,4 @@
-build*
-/home/ssathyaprakash@AD.UCSD.EDU/phylo-accel/placement/build
+build
 CMakeFiles
-placement/build*
+.vscode
+.cache
