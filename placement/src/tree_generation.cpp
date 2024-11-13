@@ -1,3 +1,4 @@
+#include <cstdint>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -71,38 +72,35 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
     // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
 }
 
-struct treeNode {
-    int nodeNum;
-    int nodechild1;
-    int nodechild2;
-};
+// struct treeNode {
+//     int nodeNum;
+//     int nodechild1;
+//     int nodechild2;
+// };
 
 
-void getTwoRandomIndices(int *clusterMap, int numSequences, int searchIndex, treeNode *node)
+
+void getTwoRandomIndices(int *clusterMap, int numSequences, int searchIndex, MashPlacement::treeNode *node)
 {
     std::unordered_set<int> uniqueIndices;
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, numSequences - 1); // Range from 0 to clusterSize - 1
-    // int n = -1;
-    // while (n++ < clusterSize - 1)
-    // {
-    //     printf("index %d value %d \n", n, clusterMap[n]);
-    // }
+
+    int randomNumber = dis(gen);
     for (int i = 0; i <numSequences; i++)
     {
-        int indx = (dis(gen) + i) % numSequences;
+        int indx = ( randomNumber+ i) % numSequences;
         if (clusterMap[indx] == searchIndex && uniqueIndices.find(indx) == uniqueIndices.end())
         {
             uniqueIndices.insert(indx);
-            if (uniqueIndices.size() == 2)
+            if (uniqueIndices.size() == 1)
+                randomNumber = dis(gen);
+            else if (uniqueIndices.size() == 2)
                 break;
         }
     }
-    // if )
-    // {
-    //     throw std::runtime_error("Not enough unique indices found for the search index");
-    // }
+
     if (uniqueIndices.size() >= 2)
     {
 
@@ -112,50 +110,189 @@ void getTwoRandomIndices(int *clusterMap, int numSequences, int searchIndex, tre
         node->nodeNum = searchIndex;
     }
 }
+// double jukesCantor(uint64_t** twoBitCompressedSeqs, int i, int j, int seqLength) {
+//     int mismatches = 0;
+//     int totalBases = seqLength;
+
+//     // Calculate how many uint64_t are needed to store the sequence
+//     int numUint64 = (seqLength + 31) / 32; // 32 bases per uint64_t
+
+//     for (int k = 0; k < numUint64; ++k) {
+//         uint64_t seqI = twoBitCompressedSeqs[i][k];
+//         uint64_t seqJ = twoBitCompressedSeqs[j][k];
+//         uint64_t xor_result = seqI ^ seqJ;
+
+//         // Count mismatches in this uint64_t
+//         while (xor_result) {
+//             mismatches += (xor_result & 3) != 0; // Check if lowest 2 bits are different
+//             xor_result >>= 2; // Move to next base
+//         }
+//     }
+
+//     // Adjust mismatches if we processed more bases than seqLength
+//     int excessBases = numUint64 * 32 - seqLength;
+//     if (excessBases > 0) {
+//         uint64_t mask = (1ULL << (2 * excessBases)) - 1;
+//         uint64_t lastSeqI = twoBitCompressedSeqs[i][numUint64 - 1] & ~mask;
+//         uint64_t lastSeqJ = twoBitCompressedSeqs[j][numUint64 - 1] & ~mask;
+//         uint64_t lastXor = lastSeqI ^ lastSeqJ;
+//         int lastMismatches = 0;
+//         while (lastXor) {
+//             lastMismatches += (lastXor & 3) != 0;
+//             lastXor >>= 2;
+//         }
+//         mismatches -= lastMismatches;
+//     }
+
+//     // Calculate p (proportion of sites that differ)
+//     double p = static_cast<double>(mismatches) / totalBases;
+
+//     // Check if p is too large for the Jukes-Cantor model
+//     if (p >= 0.75) {
+//         return std::numeric_limits<double>::infinity();
+//     }
+
+//     // Calculate and return the Jukes-Cantor distance
+//     return -0.75 * std::log(1.0 - (4.0 / 3.0) * p);
+// }
+
+// void clusterKernelSerial(int *clusterMap, int numSequences, int seqLen, uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS, int  *d_stopFlag, int *d_sharedCount,
+//     int *d_clusterMap,int *d_cInstr,int nodesInThisLevel,int *stopFlag)
+// {
+//     // for(int i=0; i<4*seqLen;i++)
+
+//     //     printf("index %d  vl")
+
+//         // int *cInstr = new int[nodesInThisLevel * 3];
+//         int size = (1<<(MAX_LEVELS+1));
+//         int *sharedCount = new int[size];
+//         for(int i=0;i<size;i++) sharedCount[i]=0;
 
 
+//         if (!d_cInstr || !clusterMap || !twoBitCompressedSeqs)
+//             {
+//                 throw std::invalid_argument("Null pointer passed to cluster function");
+//             }
+   
+//         int clusterIdx =0 ;
+//         for (int idx = 0; idx < numSequences; idx++)
+//         {
+//             if (clusterMap[idx] >= 0)
+//             {
+//                 bool clusterFound = false;
+//                 for (int clusterIdx = 0; clusterIdx < 3 * (nodesInThisLevel); clusterIdx += 3)
+//                 {
+//                     int clusteridxx  =clusterMap[idx];
+//                     int clusteridxy = d_cInstr[clusterIdx];
+//                     if (d_cInstr[clusterIdx] == clusterMap[idx])
+//                     {
+//                         double distance1 = jukesCantor(twoBitCompressedSeqs, d_cInstr[clusterIdx+1], idx,seqLen);
+//                         double distance2 = jukesCantor(twoBitCompressedSeqs, d_cInstr[clusterIdx+2], idx,seqLen);
+//                         clusterIdx =  d_cInstr[clusterIdx] * 2 + (distance1 <= distance2 ? 1 : 2);
+//                         clusterMap[idx] = clusterIdx;
+//                         clusterFound = true;
+//                         break;
+//                     }
+//                 }
+//                 if (!clusterFound)
+//                 {
+//                     printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, clusterMap[idx]);
+//                 }
+//             }
+//         }
+//         // clusterKernel(int *cInstr, int numSequences, int clusterSize, int *clusterMap, uint64_t **dataset, int MAX_LEVELS, int * stopFlag, int* sharedCount );
+// }
 
-void processClusterLevels(int *clusterMap, int numSequences, treeNode *nodes[], uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS) {
+
+// int invalidateExtraOccurrences(int *arr, int size)
+// {
+//     if (!arr || size <= 0)
+//     {
+//         throw std::invalid_argument("Invalid arguments passed to invalidateExtraOccurrences");
+//     }
+
+//     int maxNum = *std::max_element(arr, arr + size);
+//     if (maxNum < 0)
+//     {
+//         printf("Built clusters with give max sub-tree size\n");
+//         return 1;
+//     }
+
+//     int resultSize = maxNum + 1;
+//     int *counts = new int[resultSize]();
+
+//     for (int i = 0; i < size; ++i)
+//     {
+//         if (arr[i] >= 0 && arr[i] < resultSize)
+//         {
+//             counts[arr[i]]++;
+//         }
+//     }
+
+//     for (int i = 0; i < size; ++i)
+//     {
+//         if (arr[i] >= 0 && arr[i] < resultSize && counts[arr[i]] < 10)
+//         {
+//             arr[i] = -arr[i];
+//         }
+//     }
+
+//     delete[] counts;
+//     return 0;
+// }
+// void processClusterLevels(int *clusterMap, int numSequences, uint64_t *seqLen, treeNode *nodes[], uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS) {
 
 
-    int nodeIndex = 0;
-    int *stopFlag = new int;
+//     int nodeIndex = 0;
+//     int *stopFlag = new int;
 
 
-    int *d_cInstr,*cInstr, *d_clusterMap, *d_stopFlag,*d_sharedCount;
-    for (int level = 0; level < MAX_LEVELS; level++) {
-        int nodesInThisLevel = 1 << level;
-        int totalInstructions = nodesInThisLevel * 3;
+//     int *d_cInstr, *d_clusterMap, *d_stopFlag,*d_sharedCount;
+   
+//     for (int level = 0; level < MAX_LEVELS; level++) {
+//         int nodesInThisLevel = 1 << level;
+//         int totalInstructions = nodesInThisLevel * 3;
 
-        // 
-        int instrIndex = 0;
-        for (int i = 0; i < nodesInThisLevel; i++) {
-            int parentIndex = (nodeIndex - 1) / 2;
-            int baseClusterIndex = (level == 0) ? 0 : nodes[parentIndex]->nodeNum * 2 + i % 2 + 1;
-             try {
-                getTwoRandomIndices(clusterMap, numSequences, baseClusterIndex, nodes[nodeIndex]);
-            } catch (const std::exception &e) {
-                printf("Error in getTwoRandomIndices: %s\n", e.what());
-                delete[] cInstr;
-                return;
-            }
-            cInstr[instrIndex++] = baseClusterIndex;
-            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild1;
-            cInstr[instrIndex++] = nodes[nodeIndex]->nodechild2;
-            nodeIndex++;
-        }
+//         // 
+//         int *cInstr = new int[3*nodesInThisLevel];
+//         int instrIndex = 0;
+//         for (int i = 0; i < nodesInThisLevel; i++) {
+//             int parentIndex = (nodeIndex - 1) / 2;
+//             int baseClusterIndex = (level == 0) ? 0 : nodes[parentIndex]->nodeNum * 2 + i % 2 + 1;
+//              try {
+//                 getTwoRandomIndices(clusterMap, numSequences, baseClusterIndex, nodes[nodeIndex]);
+//             } catch (const std::exception &e) {
+//                 printf("Error in getTwoRandomIndices: %s\n", e.what());
+//                 delete[] cInstr;
+//                 return;
+//             }
+//             cInstr[instrIndex++] = baseClusterIndex;
+//             cInstr[instrIndex++] = nodes[nodeIndex]->nodechild1;
+//             cInstr[instrIndex++] = nodes[nodeIndex]->nodechild2;
+//             nodeIndex++;
+//         }
 
-        try{
-            clusterKernelWrapper(clusterMap,numSequences, twoBitCompressedSeqs, MAX_LEVELS, d_stopFlag, d_sharedCount, d_clusterMap, d_cInstr, nodesInThisLevel, stopFlag);
+//         try{
+//             clusterKernelGPU(clusterMap,numSequences,seqLen, twoBitCompressedSeqs, MAX_LEVELS, d_stopFlag, d_sharedCount, d_clusterMap, cInstr, nodesInThisLevel, stopFlag);
 
-        } catch (const std::exception &e) {
-            printf("Error in cluster or invalidateExtraOccurrences: %s\n", e.what());
-            delete[] cInstr;
-            return;
-        }
-        delete[] cInstr;
-    }
-}
+//             for(int i=0;i<numSequences;i++)
+//                 printf("index %d clusterMapValue %d\n",i, clusterMap[i]);
+//             if (invalidateExtraOccurrences(clusterMap, numSequences))
+//             {
+//                 delete[] cInstr;
+//                 return;
+//             }
+
+//             for(int i=0;i<numSequences;i++)
+//                 printf("index %d clusterMapValue %d\n",i, clusterMap[i]);
+//         } catch (const std::exception &e) {
+//             printf("Error in cluster or invalidateExtraOccurrences: %s\n", e.what());
+//             delete[] cInstr;
+//             return;
+//         }
+//         delete[] cInstr;
+//     }
+// }
 
 
 int main(int argc, char** argv) {
@@ -302,60 +439,61 @@ int main(int argc, char** argv) {
             twoBitCompressedSeqs[i] = twoBitCompressed;
 
         }
-        //Clustering operation
-        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        // Clustering operation
+        // MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
         int *clusterMap = new int[numSequences]();
         int MAX_LEVELS = 0;
-        while (numSequences >>= 1) ++MAX_LEVELS;
-        treeNode **nodes = new treeNode*[1 << MAX_LEVELS];
+        int tempNumSequences =numSequences;
+        while (tempNumSequences >>= 1) ++MAX_LEVELS;
+        MashPlacement::treeNode **nodes = new MashPlacement::treeNode*[1 << MAX_LEVELS];
         
-        for (int i = 0; i < 1 << MAX_LEVELS; i++)  nodes[i] = new treeNode();
+        for (int i = 0; i < 1 << MAX_LEVELS; i++)  nodes[i] = new MashPlacement::treeNode();
     
-
-        processClusterLevels(clusterMap, numSequences, nodes, twoBitCompressedSeqs, MAX_LEVELS);
+        MashPlacement::mashDeviceArrays.allocateDeviceArraysClustering(twoBitCompressedSeqs,seqLengths,numSequences,params);
+        MashPlacement::mashDeviceArrays.processClusterLevels(clusterMap, numSequences,nodes, MAX_LEVELS, params);
 
 
         delete[] nodes;
         delete[] clusterMap;
 
-        auto compressEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds compressTime = compressEnd - compressStart;
-        // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
-        auto inputEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
-        std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
+        // auto compressEnd = std::chrono::high_resolution_clock::now();
+        // std::chrono::nanoseconds compressTime = compressEnd - compressStart;
+        // // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
+        // auto inputEnd = std::chrono::high_resolution_clock::now();
+        // std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
+        // std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
 
-        // Create arrays
-        auto createArrayStart = std::chrono::high_resolution_clock::now();
-        // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
-        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
-        MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
-        auto createArrayEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
-        std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+        // // Create arrays
+        // auto createArrayStart = std::chrono::high_resolution_clock::now();
+        // // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
+        // MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        // MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
+        // auto createArrayEnd = std::chrono::high_resolution_clock::now();
+        // std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+        // std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
-        // Build sketch on Gpu
-        auto createSketchStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
-        auto createSketchEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
-        std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
-        // MashPlacement::mashDeviceArrays.printSketchValues(1000);
+        // // Build sketch on Gpu
+        // auto createSketchStart = std::chrono::high_resolution_clock::now();
+        // MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+        // auto createSketchEnd = std::chrono::high_resolution_clock::now();
+        // std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
+        // std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
+        // // MashPlacement::mashDeviceArrays.printSketchValues(1000);
 
-        //Build Tree on Gpu
-        auto createTreeStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
-        auto createTreeEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-        MashPlacement::placementDeviceArrays.printTree(names);
-        std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+        // //Build Tree on Gpu
+        // auto createTreeStart = std::chrono::high_resolution_clock::now();
+        // MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+        // auto createTreeEnd = std::chrono::high_resolution_clock::now();
+        // std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+        // MashPlacement::placementDeviceArrays.printTree(names);
+        // std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
 
-        // Print first 10 hash values corresponding to each sequence
-        // MashPlacement::mashDeviceArrays.printSketchValues(10);
+        // // Print first 10 hash values corresponding to each sequence
+        // // MashPlacement::mashDeviceArrays.printSketchValues(10);
 
 
-        MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
-        MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+        // MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+        // MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
     }
     else if(in == "d" && out == "t") {
         std::string fileName = vm["input-file"].as<std::string>();
@@ -388,3 +526,5 @@ int main(int argc, char** argv) {
     }
     return 0;
 }
+
+
