@@ -1,0 +1,34 @@
+Unique numbers and their indices:
+Number -2 occurs at indices: 1 2 3 4 5 6 8 9 10 11 12 13 16 17 18 
+Number -1 occurs at indices: 0 7 14 15 
+
+
+
+
+1 2 3 4 5 6 8 9 10 11 12 13 16 17 18 Input in: 135 ms
+Allocated in: 0 ms
+Sketch Created in: 3 ms
+Distance Operation Time 0 ms
+Tree Operation Time 5 ms
+(((((Seq10:0.085329,Seq3:0.074024):0.011596,Seq14:0.058577):0.011626,((Seq12:0.082035,Seq17:0.060136):0.0095599,Seq7:0.076597):0.0016666):0.0043324,(Seq11:0.065095,(((Seq2:0.070945,Seq1:0.062028):0.0097828,Seq18:0.059485):0.021495,Seq15:0.062195):0.007411):0.0065796):0.00034593,(Seq8:0.072026,(Seq19:0.074002,(Seq4:0.076426,Seq6:0.057406):0.0050738):0.01073):0.0033228);
+Tree Created in: 5 ms
+
+
+
+
+0 7 14 15 Input in: 145 ms
+Allocated in: 0 ms
+Sketch Created in: 1 ms
+Distance Operation Time 0 ms
+Tree Operation Time 0 ms
+(Seq15:0.073147,((Seq11:0.076002,Seq8:0.074719):0.008893,Seq6:0.073147):0);
+
+
+Tree Created in: 1 ms
+Input in: 147 ms
+Allocated in: 0 ms
+Sketch Created in: 4 ms
+Distance Operation Time 0 ms
+Tree Operation Time 7 ms
+((Seq7:0.070801,((Seq3:0.070416,((Seq12:0.071086,Seq11:0.071086):0.0013477,(Seq19:0.065095,((Seq2:0.073603,((Seq14:0.070238,Seq17:0.061058):0.016707,Seq4:0.077736):0.0029021):0.0022928,Seq8:0.063362):0.0062444):0.0098414):0.00085708):0.006793,(Seq1:0.073671,Seq15:0.060161):0.0058055):0.005874):0.00077764,(Seq16:0.0873,((Seq10:0.075878,(((Seq13:0.069972,Seq9:0.075263):0.0049337,Seq5:0.068269):0.0089297,Seq18:0.064972):0.0076157):0.0071923,Seq6:0.066513):0.0056311):0.00047394);
+Tree Created in: 7 ms

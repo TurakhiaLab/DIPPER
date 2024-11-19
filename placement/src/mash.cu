@@ -54,10 +54,10 @@ __device__ double jukesCantor(const uint64_t* d_compressedSeqs, const uint64_t* 
     
     for (int k = 0; k < min(numUint64I, numUint64J); ++k) {
         // Check for array bounds
-        if (startI + k >= numSequences || startJ + k >= numSequences) {
-            printf("Error: Array index out of bounds in jukesCantor\n");
-            return -1.0; // Return an error value
-        }
+        // if (startI + k >= numSequences || startJ + k >= numSequences) {
+        //     printf("Error: Array index out of bounds in jukesCantor\n");
+        //     return -1.0; // Return an error value
+        // }
         
         uint64_t seqI = d_compressedSeqs[startI + k];
         uint64_t seqJ = d_compressedSeqs[startJ + k];
@@ -73,12 +73,12 @@ __device__ double jukesCantor(const uint64_t* d_compressedSeqs, const uint64_t* 
         int excessBases = processedBases - totalBases;
         uint64_t mask = (1ULL << (2 * excessBases)) - 1;
         
-        // Check for array bounds
-        if (startI + min(numUint64I, numUint64J) - 1 >= numSequences || 
-            startJ + min(numUint64I, numUint64J) - 1 >= numSequences) {
-            printf("Error: Array index out of bounds when adjusting mismatches\n");
-            return -1.0; // Return an error value
-        }
+        // // Check for array bounds
+        // if (startI + min(numUint64I, numUint64J) - 1 >= numSequences || 
+        //     startJ + min(numUint64I, numUint64J) - 1 >= numSequences) {
+        //     printf("Error: Array index out of bounds when adjusting mismatches\n");
+        //     return -1.0; // Return an error value
+        // }
         
         uint64_t lastSeqI = d_compressedSeqs[startI + min(numUint64I, numUint64J) - 1] & ~mask;
         uint64_t lastSeqJ = d_compressedSeqs[startJ + min(numUint64I, numUint64J) - 1] & ~mask;
@@ -113,16 +113,16 @@ __device__ double jukesCantor(const uint64_t* d_compressedSeqs, const uint64_t* 
     return distance;
 }
 
-__global__ void clusterKernelGPU(int *clusterMap, int numSequences, uint64_t *d_compressedSeqs, uint64_t *d_seqLengths, uint64_t *d_prefixCompressed, int MAX_LEVELS, int *d_stopFlag, int *d_sharedCount, int *d_clusterMap, int *d_cInstr, int nodesInThisLevel, int *stopFlag)
+__global__ void clusterKernelGPU(int *d_clusterMap, int numSequences, uint64_t *d_compressedSeqs, uint64_t *d_seqLengths, uint64_t *d_prefixCompressed, int MAX_LEVELS, int *d_stopFlag, int *d_sharedCount, int *d_cInstr, int nodesInThisLevel, int *stopFlag)
 {
     int size = (1 << (MAX_LEVELS + 1));
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < numSequences) {
-        if (clusterMap[idx] >= 0) {
+        if (d_clusterMap[idx] >= 0) {
             bool clusterFound = false;
             for (int clusterIdx = 0; clusterIdx < 3 * nodesInThisLevel; clusterIdx += 3) {
-                if (d_cInstr[clusterIdx] == clusterMap[idx]) {
+                if (d_cInstr[clusterIdx] == d_clusterMap[idx]) {
                     double distance1, distance2;
                     
                     // Error checking for jukesCantor function calls
@@ -147,13 +147,13 @@ __global__ void clusterKernelGPU(int *clusterMap, int numSequences, uint64_t *d_
                         return;
                     }
                     
-                    clusterMap[idx] = newClusterIdx;
+                    d_clusterMap[idx] = newClusterIdx;
                     clusterFound = true;
                     break;
                 }
             }
             if (!clusterFound) {
-                printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, clusterMap[idx]);
+                printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, d_clusterMap[idx]);
             }
         }
     }
@@ -173,18 +173,19 @@ __global__ void clusterKernelGPU(int *clusterMap, int numSequences, uint64_t *d_
     __syncthreads();
 
     if (idx < numSequences) {
-        if (clusterMap[idx] > 0) {
-            if (clusterMap[idx] >= size) {
-                printf("Error: Invalid clusterMap value %d for idx %d\n", clusterMap[idx], idx);
+        if (d_clusterMap[idx] > 0) {
+            if (d_clusterMap[idx] >= size) {
+                printf("Error: Invalid d_clusterMap value %d for idx %d\n", d_clusterMap[idx], idx);
                 return;
             }
-            atomicAdd(&d_sharedCount[clusterMap[idx]], 1);
-            if (d_sharedCount[clusterMap[idx]] <= 10) {
-                clusterMap[idx] = -clusterMap[idx];
+            atomicAdd(&d_sharedCount[d_clusterMap[idx]], 1);
+            if (d_sharedCount[d_clusterMap[idx]] <= 20) {
+                d_clusterMap[idx] = -d_clusterMap[idx];
             }
-        } else {
-            atomicAdd(d_stopFlag, 1);
         }
+        //  else {
+        //     atomicAdd(d_stopFlag, 1);
+        // }
     }
 }
 
@@ -195,17 +196,17 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
     int sharedCount = 0;
     int *d_cInstr, *d_clusterMap, *d_stopFlag, *d_sharedCount;
 
-    std::cout << "Starting processClusterLevels with numSequences: " << numSequences << ", MAX_LEVELS: " << MAX_LEVELS << std::endl;
+    // std::cout << "Starting processClusterLevels with numSequences: " << numSequences << ", MAX_LEVELS: " << MAX_LEVELS << std::endl;
 
     CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
 
     for (int level = 0; level < MAX_LEVELS; level++) {
-        std::cout << "Processing level " << level << std::endl;
+        // std::cout << "Processing level " << level << std::endl;
 
         int nodesInThisLevel = 1 << level;
         int totalInstructions = nodesInThisLevel * 3;
 
-        std::cout << "Allocating cInstr array with size: " << 3 * nodesInThisLevel << std::endl;
+        // std::cout << "Allocating cInstr array with size: " << 3 * nodesInThisLevel << std::endl;
         int *cInstr = new int[3 * nodesInThisLevel];
         if (!cInstr) {
             std::cerr << "Error: Failed to allocate cInstr array" << std::endl;
@@ -232,7 +233,7 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
         }
 
         try {
-            std::cout << "Copying data to device and launching kernel" << std::endl;
+            // std::cout << "Copying data to device and launching kernel" << std::endl;
 
             CHECK_CUDA_ERROR(cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice));
             CHECK_CUDA_ERROR(cudaMalloc(&d_sharedCount, sizeof(int)));
@@ -244,29 +245,29 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
             CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, numSequences * sizeof(int), cudaMemcpyHostToDevice));
 
             int blocksPerGrid = (numSequences + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-            std::cout << "Launching kernel with " << blocksPerGrid << " blocks" << std::endl;
+            // std::cout << "Launching kernel with " << blocksPerGrid << " blocks" << std::endl;
 
             clusterKernelGPU<<<blocksPerGrid, THREADS_PER_BLOCK>>>(
-                clusterMap, numSequences, d_compressedSeqs, d_seqLengths, d_prefixCompressed,
-                MAX_LEVELS, d_stopFlag, d_sharedCount, d_clusterMap, d_cInstr, nodesInThisLevel, stopFlag
+                d_clusterMap, numSequences, d_compressedSeqs, d_seqLengths, d_prefixCompressed,
+                MAX_LEVELS, d_stopFlag, d_sharedCount, d_cInstr, nodesInThisLevel, stopFlag
             );
 
             CHECK_CUDA_ERROR(cudaGetLastError());
             CHECK_CUDA_ERROR(cudaDeviceSynchronize());
 
-            std::cout << "Kernel execution completed" << std::endl;
+            // std::cout << "Kernel execution completed" << std::endl;
 
             CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, numSequences * sizeof(int), cudaMemcpyDeviceToHost));
             CHECK_CUDA_ERROR(cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost));
 
-            std::cout << "Data copied back to host" << std::endl;
+            // std::cout << "Data copied back to host" << std::endl;
 
-            for (int i = 0; i < numSequences; i++) {
-                std::cout << "index " << i << " clusterMapValue " << clusterMap[i] << std::endl;
-            }
+            // for (int i = 0; i < numSequences; i++) {
+                // std::cout << "index " << i << " clusterMapValue " << clusterMap[i] << std::endl;
+            // }
 
             if (*stopFlag != 0) {
-                std::cout << "Stop flag set, breaking out of loop" << std::endl;
+                // std::cout << "Stop flag set, breaking out of loop" << std::endl;
                 break;
             }
 
@@ -282,84 +283,7 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
     }
 
     CHECK_CUDA_ERROR(cudaFree(d_stopFlag));
-    std::cout << "processClusterLevels completed successfully" << std::endl;
-}
-void MashPlacement::MashDeviceArrays::allocateDeviceArraysClustering(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
-{
-    cudaError_t err;
-
-    numSequences = int(num);
-    err = cudaMalloc(&d_seqLengths, numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    /* Flatten data */
-    uint64_t * h_aggseqLengths = new uint64_t[numSequences];
-    uint64_t flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+31)/32;
-    uint64_t * h_flattenCompressSeqs = new uint64_t[flatStringLength];
-    flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) 
-    {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i]+31)/32;
-                flatStringLength+=flatStringLengthLocal;
-        for (size_t j=0; j<flatStringLengthLocal;j++)  
-        {
-            h_flattenCompressSeqs[j] = h_compressedSeqs[i][j];
-            // if (i==9) printf("%u\n",h_flattenCompressSeqs[j]); 
-        }
-        h_flattenCompressSeqs += flatStringLengthLocal;
-        h_aggseqLengths[i] = flatStringLength;
-    }
-
-    h_flattenCompressSeqs -= flatStringLength;
-
-
-    err = cudaMalloc(&d_compressedSeqs, flatStringLength*sizeof(uint64_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    err = cudaMemcpy(d_seqLengths, h_seqLengths, numSequences*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
-        exit(1);
-    }
-
-    err = cudaMemcpy(d_compressedSeqs, h_flattenCompressSeqs, flatStringLength*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
-        exit(1);
-    }
-
-    err = cudaMalloc(&d_prefixCompressed, numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-       // generate prefix array    
-       thrust::device_ptr<uint64_t> dev_seqLengths(d_seqLengths);
-       thrust::device_ptr<uint64_t> dev_prefixComp(d_prefixCompressed);
-   
-       thrust::transform(thrust::device,
-           dev_seqLengths, dev_seqLengths + numSequences, dev_prefixComp, 
-           [] __device__ (const uint64_t& x) -> uint64_t { 
-               return (x + 31) / 32;
-           }
-       );
-   
-       thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + numSequences, dev_prefixComp);
-   
-       cudaDeviceSynchronize();
+    // DEBUG_PRINT("processClusterLevels completed successfully");
 }
 
 void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
@@ -469,6 +393,8 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
 
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + numSequences, dev_prefixComp);
 
+    free(h_flattenCompressSeqs);
+    free(h_aggseqLengths);
     cudaDeviceSynchronize();
 }
 
@@ -477,7 +403,7 @@ void MashPlacement::MashDeviceArrays::deallocateDeviceArrays(){
     cudaFree(d_aggseqLengths);
     cudaFree(d_seqLengths);
     cudaFree(d_prefixCompressed);
-    // cudaFree(d_hashList);
+    cudaFree(d_hashList);
     // cudaFree(d_mashDist);
 }
 
@@ -607,97 +533,6 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     }
     return 0;
 }
-
-
-
-// CUDA kernel for the cluster function
-__global__ void clusterKernel(int *cInstr, int numSequences, int clusterSize, int *clusterMap, uint64_t **dataset, int MAX_LEVELS, int * stopFlag, int* sharedCount ) {
-    //Randomization to select 2 random 
-   
-    const int threshold = 1000000;
-
-#define THREADS_PER_BLOCK 256
-
-    // __syncthreads(); 
-    //Clustering phase
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < clusterSize) {
-        if (clusterMap[idx] >= 0) {
-            bool clusterFound = false;
-            for (int clusterIdx = 0; clusterIdx < 3 * (numSequences); clusterIdx += 3) {
-                if (cInstr[clusterIdx] == clusterMap[idx]) {
-                    int distance1 = abs(dataset[cInstr[clusterIdx + 1]] - dataset[idx]);
-                    int distance2 = abs(dataset[cInstr[clusterIdx + 2]] - dataset[idx]);
-                    clusterMap[idx] = cInstr[clusterIdx] * 2 + (distance1 < distance2 ? 1 : 2);
-                    clusterFound = true;
-                    break;
-                }
-            }
-            if (!clusterFound) {
-                printf("Warning: No matching cluster found for clusterMap index %d with value %d\n", idx, clusterMap[idx]);
-            }
-        }
-    }
-    
-    __syncthreads();
-
-    // Invalidation step
-    if(idx==0)
-        stopFlag[0]=0;
-
-    __syncthreads();
-    
-
-    if(idx < (1<<(MAX_LEVELS+1)))
-        sharedCount[clusterMap[idx]] =0;
-   
-    __syncthreads();
-    
-    if (idx < clusterSize) 
-    {
-        if(clusterMap[idx]>0){
-            atomicAdd(&sharedCount[clusterMap[idx]], 1);  
-                if(sharedCount[clusterMap[idx]] <=threshold)
-                    clusterMap[idx] = -clusterMap[idx] ;
-        }
-        else
-            atomicAdd(&stopFlag[0], 1); 
-    }
-
-
-}
-
-
-void clusterKernelWrapper(int *clusterMap, int numSequences, uint64_t ** twoBitCompressedSeqs, int MAX_LEVELS, int  *d_stopFlag, int *d_sharedCount,
-    int *d_clusterMap,int *d_cInstr,int nodesInThisLevel,int *stopFlag){
-        int *cInstr = new int[  nodesInThisLevel * 3];
-        int size = (1<<(MAX_LEVELS+1));
-        int *sharedCount = new int[size];
-        for(int i=0;i<size;i++) sharedCount[i]=0;
-
-
-        CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
-        CHECK_CUDA_ERROR(cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice));
-
-        CHECK_CUDA_ERROR(cudaMalloc(&d_sharedCount, sizeof(int)));
-        CHECK_CUDA_ERROR(cudaMemcpy(d_sharedCount, sharedCount, sizeof(int), cudaMemcpyHostToDevice));
-    
-        CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, numSequences * sizeof(int)));
-        CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMap, clusterMap, numSequences * sizeof(int), cudaMemcpyHostToDevice));
-        
-        CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * nodesInThisLevel * sizeof(int)));
-        CHECK_CUDA_ERROR(cudaMemcpy(d_cInstr, cInstr, 3 * nodesInThisLevel * sizeof(int), cudaMemcpyHostToDevice));
-
-        int blocksPerGrid = (numSequences + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-        clusterKernel<<<blocksPerGrid, THREADS_PER_BLOCK>>>(d_cInstr, nodesInThisLevel, numSequences, d_clusterMap, twoBitCompressedSeqs,MAX_LEVELS, d_stopFlag, d_sharedCount);
-    
-        CHECK_CUDA_ERROR(cudaMemcpy(clusterMap, d_clusterMap, numSequences* sizeof(int), cudaMemcpyDeviceToHost));
-        CHECK_CUDA_ERROR(cudaMemcpy(stopFlag, d_stopFlag, sizeof(int), cudaMemcpyDeviceToHost));
-
-        CHECK_CUDA_ERROR(cudaFree(d_sharedCount));
-        CHECK_CUDA_ERROR(cudaFree(d_cInstr));
-        CHECK_CUDA_ERROR(cudaFree(d_stopFlag));
-    }
 
 __global__ void sketchConstruction(
     uint64_t * d_compressedSeqs,

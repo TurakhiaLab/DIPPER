@@ -179,7 +179,7 @@ void processClusterLevels(int *clusterMap, int clusterSize, treeNode *nodes[], i
             CHECK_CUDA_ERROR(cudaMemcpy(d_stopFlag, stopFlag, sizeof(int), cudaMemcpyHostToDevice));
 
             CHECK_CUDA_ERROR(cudaMalloc(&d_sharedCount, sizeof(int)));
-            CHECK_CUDA_ERROR(cudaMemcpy(d_sharedCount, sharedCount, sizeof(int), cudaMemcpyHostToDevice));
+            CHECK_CUDA_ERROR(cudaMemcpy(d_clusterMapCount, sharedCount, sizeof(int), cudaMemcpyHostToDevice));
             
             CHECK_CUDA_ERROR(cudaMalloc(&d_cInstr, 3 * nodesInThisLevel * sizeof(int)));
             CHECK_CUDA_ERROR(cudaMalloc(&d_clusterMap, clusterSize * sizeof(int)));

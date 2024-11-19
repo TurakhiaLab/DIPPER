@@ -46,9 +46,10 @@ namespace MashPlacement
         uint64_t * h_hashList;
 
         void processClusterLevels(int *clusterMap, int numSequences, treeNode *nodes[], int MAX_LEVELS, MashPlacement::Param&  params);
-        void allocateDeviceArraysClustering(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void allocateDeviceArraysCluster(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
         
         void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        
         void printSketchValues(int numValues);
         void sketchConstructionOnGpu (Param& params);
         void deallocateDeviceArrays ();

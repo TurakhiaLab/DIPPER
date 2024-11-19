@@ -294,6 +294,15 @@ void getTwoRandomIndices(int *clusterMap, int numSequences, int searchIndex, Mas
 //     }
 // }
 
+ std::unordered_map<int, std::vector<int>> findUniqueNumbersAndIndices(const std::vector<int>& arr) {
+            std::unordered_map<int, std::vector<int>> numberIndices;
+
+            for (int i = 0; i < arr.size(); ++i) {
+                numberIndices[arr[i]].push_back(i);
+            }
+
+            return numberIndices;
+        }
 
 int main(int argc, char** argv) {
     auto inputStart = std::chrono::high_resolution_clock::now();
@@ -437,7 +446,6 @@ int main(int argc, char** argv) {
 
             seqLengths[i] = seqs[i].size();
             twoBitCompressedSeqs[i] = twoBitCompressed;
-
         }
         // Clustering operation
         // MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
@@ -449,51 +457,195 @@ int main(int argc, char** argv) {
         
         for (int i = 0; i < 1 << MAX_LEVELS; i++)  nodes[i] = new MashPlacement::treeNode();
     
-        MashPlacement::mashDeviceArrays.allocateDeviceArraysClustering(twoBitCompressedSeqs,seqLengths,numSequences,params);
+        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs,seqLengths,numSequences,params);
         MashPlacement::mashDeviceArrays.processClusterLevels(clusterMap, numSequences,nodes, MAX_LEVELS, params);
 
+        auto uniqueNumberIndices = findUniqueNumbersAndIndices(std::vector<int>(clusterMap, clusterMap + numSequences));
 
         delete[] nodes;
         delete[] clusterMap;
 
-        // auto compressEnd = std::chrono::high_resolution_clock::now();
-        // std::chrono::nanoseconds compressTime = compressEnd - compressStart;
-        // // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
-        // auto inputEnd = std::chrono::high_resolution_clock::now();
-        // std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
-        // std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
+        MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
 
-        // // Create arrays
-        // auto createArrayStart = std::chrono::high_resolution_clock::now();
-        // // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
-        // MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
-        // MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
-        // auto createArrayEnd = std::chrono::high_resolution_clock::now();
-        // std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
-        // std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
-
-        // // Build sketch on Gpu
-        // auto createSketchStart = std::chrono::high_resolution_clock::now();
-        // MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
-        // auto createSketchEnd = std::chrono::high_resolution_clock::now();
-        // std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
-        // std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
-        // // MashPlacement::mashDeviceArrays.printSketchValues(1000);
-
-        // //Build Tree on Gpu
-        // auto createTreeStart = std::chrono::high_resolution_clock::now();
-        // MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
-        // auto createTreeEnd = std::chrono::high_resolution_clock::now();
-        // std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-        // MashPlacement::placementDeviceArrays.printTree(names);
-        // std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
-
-        // // Print first 10 hash values corresponding to each sequence
-        // // MashPlacement::mashDeviceArrays.printSketchValues(10);
+        std::cout << "Unique numbers and their indices:" << std::endl;
+        for (const auto& pair : uniqueNumberIndices) {
+            std::cout << "Number " << pair.first << " occurs at indices: ";
+            for (int index : pair.second) {
+                std::cout << index << " ";
+            }
+            std::cout << std::endl;
+        }
+        
 
 
-        // MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
-        // MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+        for (const auto& pair : uniqueNumberIndices) {
+            // std::cout << "Number " << pair.first << " occurs at indices: ";
+            std::cout<<std::endl<<std::endl<<std::endl<<std::endl;
+
+            uint64_t ** twoBitCompressedSeqsCluster;
+            int numSequencesCluster = pair.second.size();
+            uint64_t * seqLengthsCluster;
+
+            twoBitCompressedSeqsCluster = new uint64_t*[numSequencesCluster];
+            seqLengthsCluster = new uint64_t[numSequencesCluster];
+            // printf("\n");
+            for (int k =0; k< numSequencesCluster;k++) {
+                int index = pair.second[k]; 
+                std::cout << index << " ";
+                
+
+                seqLengthsCluster[k] = seqLengths[index];
+                //  printf("|| %ld seqLengths %d index , %ld seqLengthsCluster[k], %d k ||",seqLengths[index],index, seqLengthsCluster[k], k);
+                twoBitCompressedSeqsCluster[k] = twoBitCompressedSeqs[index];
+            }
+
+
+
+            auto compressEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds compressTime = compressEnd - compressStart;
+            // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
+            auto inputEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
+            std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
+
+            // Create arrays
+            auto createArrayStart = std::chrono::high_resolution_clock::now();
+            // // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
+            MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqsCluster, seqLengthsCluster, numSequencesCluster, params);
+            MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequencesCluster);
+            auto createArrayEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+            std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+
+            // Build sketch on Gpu
+            auto createSketchStart = std::chrono::high_resolution_clock::now();
+            MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+            auto createSketchEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
+            std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
+            // MashPlacement::mashDeviceArrays.printSketchValues(1000);
+
+            //Build Tree on Gpu
+            auto createTreeStart = std::chrono::high_resolution_clock::now();
+            MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+            auto createTreeEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+            MashPlacement::placementDeviceArrays.printTree(names);
+            std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+
+            // Print first 10 hash values corresponding to each sequence
+            // MashPlacement::mashDeviceArrays.printSketchValues(10);
+
+            MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+            MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+
+            delete[] twoBitCompressedSeqsCluster;
+            delete[] seqLengthsCluster;
+        }
+
+
+
+
+
+        //     auto compressEnd = std::chrono::high_resolution_clock::now();
+        //     std::chrono::nanoseconds compressTime = compressEnd - compressStart;
+        //     // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
+        //     auto inputEnd = std::chrono::high_resolution_clock::now();
+        //     std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
+        //     std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
+
+        //     // Create arrays
+        //     auto createArrayStart = std::chrono::high_resolution_clock::now();
+        //     // // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
+        //     MashPlacement::mashDeviceArrays.allocateDeviceArraysCluster(twoBitCompressedSeqsCluster, seqLengthsCluster, numSequencesCluster, params);
+        //     // MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequencesCluster);
+        //     // auto createArrayEnd = std::chrono::high_resolution_clock::now();
+        //     // std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+        //     // std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+
+        //     // Build sketch on Gpu
+        //     // auto createSketchStart = std::chrono::high_resolution_clock::now();
+        //     // MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+        //     // auto createSketchEnd = std::chrono::high_resolution_clock::now();
+        //     // std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
+        //     // std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
+        //     // MashPlacement::mashDeviceArrays.printSketchValues(1000);
+
+        //     // //Build Tree on Gpu
+        //     // auto createTreeStart = std::chrono::high_resolution_clock::now();
+        //     // MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+        //     // auto createTreeEnd = std::chrono::high_resolution_clock::now();
+        //     // std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+        //     // MashPlacement::placementDeviceArrays.printTree(names);
+        //     // std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+
+        //     // // Print first 10 hash values corresponding to each sequence
+        //     // // MashPlacement::mashDeviceArrays.printSketchValues(10);
+
+        //     // MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+        //     // MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+
+        //     // delete[] twoBitCompressedSeqsCluster;
+        //     // delete[] seqLengthsCluster;
+        //     // std::cout << std::endl;
+        //     MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+        //     MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+        // }
+
+        // uint64_t ** twoBitCompressedSeqsCluster = new uint64_t*[numSequencesCluster];
+        // uint64_t * seqLengthsCluster = new uint64_t[numSequencesCluster];
+        // for (size_t i=0; i<numSequencesCluster; i++)
+        // {   
+        //     uint64_t twoBitCompressedSizeCluster = (seqsCluster[i].size()+31)/32;
+        //     uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSizeCluster];
+        //     twoBitCompressor(seqsCluster[i], seqsCluster[i].size(), twoBitCompressedCluster);
+
+        //     seqLengthsCluster[i] = seqsCluster[i].size();
+        //     twoBitCompressedSeqsCluster[i] = twoBitCompressedCluster;
+
+        // }
+
+
+
+        std::cout<<std::endl;
+        auto compressEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds compressTime = compressEnd - compressStart;
+        // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
+        auto inputEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
+        std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
+
+        // Create arrays
+        auto createArrayStart = std::chrono::high_resolution_clock::now();
+        // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
+        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
+        auto createArrayEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+        std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+
+        // Build sketch on Gpu
+        auto createSketchStart = std::chrono::high_resolution_clock::now();
+        MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+        auto createSketchEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
+        std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
+        // MashPlacement::mashDeviceArrays.printSketchValues(1000);
+
+        //Build Tree on Gpu
+        auto createTreeStart = std::chrono::high_resolution_clock::now();
+        MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+        auto createTreeEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+        MashPlacement::placementDeviceArrays.printTree(names);
+        std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+
+        // Print first 10 hash values corresponding to each sequence
+        // MashPlacement::mashDeviceArrays.printSketchValues(10);
+
+
+        MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+        MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
     }
     else if(in == "d" && out == "t") {
         std::string fileName = vm["input-file"].as<std::string>();
