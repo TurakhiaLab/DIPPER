@@ -49,11 +49,12 @@ namespace MashPlacement
         void allocateDeviceArraysCluster(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
         
         void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
-        
+        void printMashDist(Param& params,uint64_t h_numSequences, std::vector <std::string> seqs);
         void printSketchValues(int numValues);
         void sketchConstructionOnGpu (Param& params);
         void deallocateDeviceArrays ();
         void distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const;
+        void distConstructionOnGpuRowPrint(Param& params, int rowId, double* d_mashDist) const;
 
     };
     static MashDeviceArrays mashDeviceArrays;

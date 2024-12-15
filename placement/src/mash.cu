@@ -24,6 +24,43 @@ void checkCudaError(cudaError_t error, const char *file, int line) {
 
 
 #define CHECK_CUDA_ERROR(error) checkCudaError(error, __FILE__, __LINE__)
+
+
+__device__ void mashDistConstructionRowWise(
+    int rowId,
+    uint64_t * d_hashList,
+    double * d_mashDist,
+    uint64_t kmerSize,
+    uint64_t sketchSize,
+    int numSequences
+) {
+    for(int bx =0 ;bx <(numSequences+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;bx++){
+        for(int tx=0; tx < THREADS_PER_BLOCK ;tx++){
+        // int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+            int indx = tx+bx*(numSequences+THREADS_PER_BLOCK-1)/THREADS_PER_BLOCK;
+        // if(idx>=rowId) return;
+            int uni = 0, bPos = rowId, inter = 0;
+            uint64_t aval, bval;
+            for(int i=indx; uni < sketchSize; i+=numSequences, uni++){
+                aval = d_hashList[i];
+                while(uni < sketchSize && bPos < numSequences * sketchSize){
+                    bval = d_hashList[bPos];
+                    // printf("%ull %ull\n",aval,bval);
+                    if(bval > aval) break;
+                    if(bval < aval) uni++;
+                    else inter++;
+                    bPos += numSequences;
+                }
+                if(uni >= sketchSize) break;
+            }
+            double jaccardEstimate = double(inter)/uni;
+            d_mashDist[indx] = min(1.0, abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize));
+        }
+    }
+    // printf("\n");
+}
+
+
 __device__ double jukesCantor(const uint64_t* d_compressedSeqs, const uint64_t* d_seqLengths, const uint64_t* d_prefixCompressed, int i, int j, int numSequences) {
     // Check for valid input indices
     if (i < 0 || i >= numSequences || j < 0 || j >= numSequences) {
@@ -113,26 +150,69 @@ __device__ double jukesCantor(const uint64_t* d_compressedSeqs, const uint64_t* 
     return distance;
 }
 
-__global__ void clusterKernelGPU(int *d_clusterMap, int numSequences, uint64_t *d_compressedSeqs, uint64_t *d_seqLengths, uint64_t *d_prefixCompressed, int MAX_LEVELS, int *d_stopFlag, int *d_sharedCount, int *d_cInstr, int nodesInThisLevel, int *stopFlag)
+__global__ void distanceMatrixTester(uint64_t kmerSize, uint64_t sketchSize,uint64_t  * d_hashList,  int numSequences, double *d_mashDist){
+
+    for(int i =0; i<numSequences;i++){
+
+    
+        mashDistConstructionRowWise(i,   d_hashList, 
+            d_mashDist, 
+            kmerSize, 
+            sketchSize, 
+            numSequences);
+
+        // if(i==0){
+        //     for (int j=0; j<numSequences; j++) 
+        //     {
+        //         std::cout<<seqs[j]<<'\t';
+        //     }
+        // }
+        printf("\n");  
+
+        for (int j=0; j<numSequences; j++) 
+        {
+            printf("%f\t", d_mashDist[j]);
+        }
+    }
+}
+__global__ void clusterKernelGPU( uint64_t kmerSize, uint64_t sketchSize, int *d_clusterMap, int numSequences, uint64_t *d_compressedSeqs, uint64_t *d_seqLengths, uint64_t *d_prefixCompressed, int MAX_LEVELS, int *d_stopFlag, int *d_sharedCount, int *d_cInstr, int nodesInThisLevel, int *stopFlag, uint64_t  * d_hashList, double *d_mashDist1, double* d_mashDist2)
 {
     int size = (1 << (MAX_LEVELS + 1));
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx < numSequences) {
         if (d_clusterMap[idx] >= 0) {
-            bool clusterFound = false;
+            bool clusterFound = false;          
             for (int clusterIdx = 0; clusterIdx < 3 * nodesInThisLevel; clusterIdx += 3) {
                 if (d_cInstr[clusterIdx] == d_clusterMap[idx]) {
-                    double distance1, distance2;
+
+
+                    mashDistConstructionRowWise(d_cInstr[clusterIdx+1],
+                    d_hashList, 
+                    d_mashDist1, 
+                    kmerSize, 
+                    sketchSize, 
+                    numSequences);
+                    mashDistConstructionRowWise(d_cInstr[clusterIdx+2],
+                    d_hashList, 
+                    d_mashDist2, 
+                    kmerSize, 
+                    sketchSize, 
+                    numSequences);
+
+                    // double distance1 =1, distance2=2;
                     
                     // Error checking for jukesCantor function calls
                     if (d_cInstr[clusterIdx+1] >= numSequences || d_cInstr[clusterIdx+2] >= numSequences) {
                         printf("Error: Invalid index in d_cInstr at clusterIdx %d\n", clusterIdx);
                         return;
                     }
+                    double distance1 = d_mashDist1[idx];
+                    double distance2 = d_mashDist2[idx];
+                    printf("%f\t %f\n" ,distance1, distance2);
                     
-                    distance1 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+1], idx, numSequences);
-                    distance2 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+2], idx, numSequences);
+                    // distance1 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+1], idx, numSequences);
+                    // distance2 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+2], idx, numSequences);
                     
                     if (isinf(distance1) || isinf(distance2) || isnan(distance1) || isnan(distance2)) {
                         printf("Error: Invalid distance calculated for idx %d\n", idx);
@@ -183,9 +263,6 @@ __global__ void clusterKernelGPU(int *d_clusterMap, int numSequences, uint64_t *
                 d_clusterMap[idx] = -d_clusterMap[idx];
             }
         }
-        //  else {
-        //     atomicAdd(d_stopFlag, 1);
-        // }
     }
 }
 
@@ -198,6 +275,11 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
 
     // std::cout << "Starting processClusterLevels with numSequences: " << numSequences << ", MAX_LEVELS: " << MAX_LEVELS << std::endl;
 
+    double *d_mashDist;
+    double * d_mashDist1,*d_mashDist2;
+    cudaMalloc(&d_mashDist, numSequences*sizeof(double));
+    distanceMatrixTester<<< 1, 1>>>(params.kmerSize, params.sketchSize,d_hashList,  numSequences,  d_mashDist);
+    
     CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
 
     for (int level = 0; level < MAX_LEVELS; level++) {
@@ -246,10 +328,13 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
 
             int blocksPerGrid = (numSequences + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
             // std::cout << "Launching kernel with " << blocksPerGrid << " blocks" << std::endl;
+            
+            cudaMalloc(&d_mashDist1, numSequences*sizeof(double));
+            cudaMalloc(&d_mashDist2, numSequences*sizeof(double));
 
-            clusterKernelGPU<<<blocksPerGrid, THREADS_PER_BLOCK>>>(
-                d_clusterMap, numSequences, d_compressedSeqs, d_seqLengths, d_prefixCompressed,
-                MAX_LEVELS, d_stopFlag, d_sharedCount, d_cInstr, nodesInThisLevel, stopFlag
+            clusterKernelGPU<<< blocksPerGrid, THREADS_PER_BLOCK>>>(
+                params.kmerSize, params.sketchSize,d_clusterMap, numSequences, d_compressedSeqs, d_seqLengths, d_prefixCompressed,
+                MAX_LEVELS, d_stopFlag, d_sharedCount, d_cInstr, nodesInThisLevel, stopFlag, d_hashList, d_mashDist1, d_mashDist2
             );
 
             CHECK_CUDA_ERROR(cudaGetLastError());
@@ -279,6 +364,8 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
 
         delete[] cInstr;
         CHECK_CUDA_ERROR(cudaFree(d_cInstr));
+        CHECK_CUDA_ERROR(cudaFree(d_mashDist1));
+        CHECK_CUDA_ERROR(cudaFree(d_mashDist2));
         CHECK_CUDA_ERROR(cudaFree(d_sharedCount));
     }
 
@@ -769,4 +856,85 @@ void MashPlacement::MashDeviceArrays::printSketchValues(int numValues)
     }
     
 
+}
+
+
+__global__ void mashDistConstructionRowPrint(
+    int rowId,
+    uint64_t * d_hashList,
+    double * d_mashDist,
+    uint64_t kmerSize,
+    uint64_t sketchSize,
+    int numSequences
+) {
+    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+    int idx = tx+bx*bs;
+    // if(idx>=rowId) return;
+    int uni = 0, bPos = rowId, inter = 0;
+    uint64_t aval, bval;
+    for(int i=idx; uni < sketchSize; i+=numSequences, uni++){
+        aval = d_hashList[i];
+        while(uni < sketchSize && bPos < numSequences * sketchSize){
+            bval = d_hashList[bPos];
+            // printf("%ull %ull\n",aval,bval);
+            if(bval > aval) break;
+            if(bval < aval) uni++;
+            else inter++;
+            bPos += numSequences;
+        }
+        if(uni >= sketchSize) break;
+    }
+    double jaccardEstimate = double(inter)/uni;
+    d_mashDist[idx] = min(1.0, abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize));
+}
+
+void MashPlacement::MashDeviceArrays::distConstructionOnGpuRowPrint(Param& params, int rowId, double* d_mashDist) const{
+    // if(rowId%100==0) cudaMemcpy(d_hashList,h_hashList,1000*numSequences*sizeof(uint64_t),cudaMemcpyHostToDevice);
+    int threadNum = 256, blockNum = (numSequences+threadNum-1)/threadNum;
+    mashDistConstructionRowPrint <<<threadNum, blockNum>>> (
+        rowId, 
+        d_hashList, 
+        d_mashDist, 
+        params.kmerSize, 
+        params.sketchSize, 
+        numSequences
+    );
+}
+
+
+void MashPlacement::MashDeviceArrays::printMashDist(Param& params,uint64_t h_numSequences, std::vector<std::string> seqs) 
+{
+    
+    cudaError_t err;
+    
+    double *d_mashDist;
+    err = cudaMalloc(&d_mashDist, numSequences*sizeof(double));
+ 
+    for (int i=0; i<h_numSequences; i++) 
+    { 
+        double * h_mashDist = new double[h_numSequences];
+        err = cudaMemcpy(h_mashDist, d_mashDist, (h_numSequences)*sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        distConstructionOnGpuRowPrint(params, i,d_mashDist);
+        if (err != cudaSuccess) {
+            fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
+            exit(1);
+        }
+
+        // if(i==0){
+        //     for (int j=0; j<h_numSequences; j++) 
+        //     {
+        //         std::cout<<seqs[j]<<'\t';
+        //     }
+        // }
+        printf("\n");  
+
+        for (int j=0; j<h_numSequences; j++) 
+        {
+            printf("%f\t", h_mashDist[j]);
+        }
+    
+        delete []    h_mashDist;
+    }
+    
+    printf("\n");
 }
