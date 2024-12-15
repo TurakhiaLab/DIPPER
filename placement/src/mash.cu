@@ -209,7 +209,7 @@ __global__ void clusterKernelGPU( uint64_t kmerSize, uint64_t sketchSize, int *d
                     }
                     double distance1 = d_mashDist1[idx];
                     double distance2 = d_mashDist2[idx];
-                    printf("%f\t %f\n" ,distance1, distance2);
+                    // printf("%f\t %f\n" ,distance1, distance2);
                     
                     // distance1 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+1], idx, numSequences);
                     // distance2 = jukesCantor(d_compressedSeqs, d_seqLengths, d_prefixCompressed, d_cInstr[clusterIdx+2], idx, numSequences);
@@ -238,13 +238,10 @@ __global__ void clusterKernelGPU( uint64_t kmerSize, uint64_t sketchSize, int *d
         }
     }
 
-    __syncthreads();
 
     if (idx == 0) {
         *d_stopFlag = 0;
     }
-
-    __syncthreads();
 
     if (idx < size) {
         d_sharedCount[idx] = 0;
@@ -278,7 +275,7 @@ void MashPlacement::MashDeviceArrays::processClusterLevels(int *clusterMap, int 
     double *d_mashDist;
     double * d_mashDist1,*d_mashDist2;
     cudaMalloc(&d_mashDist, numSequences*sizeof(double));
-    distanceMatrixTester<<< 1, 1>>>(params.kmerSize, params.sketchSize,d_hashList,  numSequences,  d_mashDist);
+    // distanceMatrixTester<<< 1, 1>>>(params.kmerSize, params.sketchSize,d_hashList,  numSequences,  d_mashDist);
     
     CHECK_CUDA_ERROR(cudaMalloc(&d_stopFlag, sizeof(int)));
 
