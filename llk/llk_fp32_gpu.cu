@@ -366,8 +366,157 @@ __global__ void non_recursive_dfs(GPUNode *nodes, int sequenceLength)
         }
     }
 }
-
 __global__ void felsenstein_pruning_kernel(GPUNode *nodes, int *order, int sequenceLength, int nodeCount)
+{
+    int seqPosStart = (blockIdx.x * blockDim.x + threadIdx.x) * siteNum;
+    if (seqPosStart >= sequenceLength)
+        return;
+
+    const int MAX_STACK_SIZE = 15; // Maximum depth of the tree
+    const int MAX_SITE_NUM = siteNum; // Number of sites processed per thread
+    float bottomValuesStack[MAX_STACK_SIZE][STATE_COUNT][MAX_SITE_NUM];
+    float results[STATE_COUNT][MAX_SITE_NUM]; // Stores intermediate results
+    int sp = 0; // Stack pointer
+
+    for (int idx = 0; idx < nodeCount; idx++)
+    {
+        int nodeIdx = order[idx];
+        GPUNode &node = nodes[nodeIdx];
+
+        if (node.numChildren == 0)
+        { // Leaf node
+            for (int s = 0; s < siteNum; ++s)
+            {
+                int seqPos = seqPosStart + s;
+                if (seqPos >= sequenceLength)
+                    break;
+
+                // Initialize bottomValues for leaf nodes
+                for (int j = 0; j < STATE_COUNT; j++)
+                {
+                    bottomValuesStack[sp][j][s] = 0.0f;
+                }
+
+                char nucleotide = node.sequence[seqPos];
+
+                if (nucleotide == 'A')
+                {
+                    bottomValuesStack[sp][0][s] = 1.0f;
+                }
+                else if (nucleotide == 'C')
+                {
+                    bottomValuesStack[sp][1][s] = 1.0f;
+                }
+                else if (nucleotide == 'G')
+                {
+                    bottomValuesStack[sp][2][s] = 1.0f;
+                }
+                else if (nucleotide == 'T')
+                {
+                    bottomValuesStack[sp][3][s] = 1.0f;
+                }
+                else
+                {
+                    if (STATE_COUNT == 5)
+                    {
+                        bottomValuesStack[sp][4][s] = 1.0f;
+                    }
+                }
+
+                // Set scaling factor to 1.0 in global memory
+                node.scaleVector[seqPos] = 1.0;
+            }
+            // Push bottomValues onto the stack
+            sp++;
+        }
+        else
+        { // Internal node
+            // Pop children's bottomValues from the stack
+            sp -= node.numChildren;
+
+            for (int s = 0; s < siteNum; ++s)
+            {
+                int seqPos = seqPosStart + s;
+                if (seqPos >= sequenceLength)
+                    break;
+
+                // Initialize results to 1.0
+                for (int j = 0; j < STATE_COUNT; ++j)
+                {
+                    results[j][s] = 1.0f;
+                }
+                
+                // Compute the product of children's likelihoods
+                for (int i = 0; i < node.numChildren; ++i)
+                {
+                    int childIdx = node.childrenIndices[i];
+
+                    for (int j = 0; j < STATE_COUNT; ++j)
+                    {
+                        float sum = 0.0f;
+                        for (int k = 0; k < STATE_COUNT; ++k)
+                        {
+                            sum += nodes[childIdx].probabilityMatrix[j][k] * bottomValuesStack[sp + i][k][s];
+                        }
+                        results[j][s] *= sum;
+                    }
+                }
+
+                float sumLikelihoods = 0.0f;
+                
+                int exponents[STATE_COUNT];
+                int minExp = INT_MAX;
+                int maxExp = INT_MIN;
+
+                for (int j = 0; j < STATE_COUNT; ++j)
+                {
+                    sumLikelihoods += results[j][s];
+                    frexpf(results[j][s], &exponents[j]);
+                    maxExp = max(exponents[j], maxExp);
+                }
+                scaling_f scaleFactor = pow(2,maxExp); // 2^{maxExp}
+
+                // Store scaling factor in global memory
+
+                // node.scaleVector[seqPos] = scaleFactor;
+                node.scaleVector[seqPos] *= sumLikelihoods;
+
+                // Normalize and store bottomValues in the stack
+                for (int j = 0; j < STATE_COUNT; ++j)
+                {
+                    bottomValuesStack[sp][j][s] = results[j][s] / sumLikelihoods;
+                    // bottomValuesStack[sp][j][s] = results[j][s] / scaleFactor;
+
+                }
+                
+
+            }
+            // Push the current node's bottomValues onto the stack
+            sp++;
+        }
+    }
+
+    // After processing all nodes, write the root's bottomValues to global memory
+    int rootIdx = order[nodeCount - 1];
+    GPUNode &rootNode = nodes[rootIdx];
+
+    for (int s = 0; s < siteNum; ++s)
+    {
+        int seqPos = seqPosStart + s;
+        if (seqPos >= sequenceLength)
+            break;
+
+        // 'scaleVector' is already stored; copy 'bottom' values to global memory
+        for (int i = 0; i < STATE_COUNT; ++i)
+        {
+            rootNode.bottom[i][seqPos] = bottomValuesStack[sp - 1][i][s];
+        }
+    }
+}
+
+
+
+__global__ void felsenstein_pruning_kernel1(GPUNode *nodes, int *order, int sequenceLength, int nodeCount)
 {
     int seqPosStart = (blockIdx.x * blockDim.x + threadIdx.x) * siteNum;
     if (seqPosStart >= sequenceLength)
@@ -423,34 +572,92 @@ __global__ void felsenstein_pruning_kernel(GPUNode *nodes, int *order, int seque
                     }
                 }
             }
+
+//             for (int s = 0; s < siteNum; ++s)
+//             {
+//                 int seqPos = seqPosStart + s;
+//                 if (seqPos >= sequenceLength)
+//                     break;
+
+//                 float sumLikelihoods = 0.0f;
+
+//                 for (int i = 0; i < STATE_COUNT; ++i)
+//                 {
+//                     for (int j = 0; j < node.numChildren; ++j)
+//                     {
+//                         if (childResults[j][i][s] == 0)
+//                         {
+//                             continue;
+//                         }
+//                         results[i][s] *= childResults[j][i][s];
+//                     }
+//                     sumLikelihoods += results[i][s];
+//                 }
+
+//                 node.scaleVector[seqPos] = sumLikelihoods; // Store scaling factor
+                
+//                 for (int i = 0; i < STATE_COUNT; ++i)
+//                 {
+//                     node.bottom[i][seqPos] = results[i][s] / sumLikelihoods; // Normalize result
+//                 }
+//             }
+// //
+
             for (int s = 0; s < siteNum; ++s)
             {
                 int seqPos = seqPosStart + s;
                 if (seqPos >= sequenceLength)
                     break;
 
-                float sumLikelihoods = 0.0f;
+                int exponents[STATE_COUNT];
+                int minExp = INT_MAX;
+                int maxExp = INT_MIN;
 
                 for (int i = 0; i < STATE_COUNT; ++i)
                 {
+
                     for (int j = 0; j < node.numChildren; ++j)
                     {
-                        if (childResults[j][i][s] == 0)
+                        if (childResults[j][i][s] == 0.0f)
                         {
                             continue;
                         }
                         results[i][s] *= childResults[j][i][s];
                     }
-                    sumLikelihoods += results[i][s];
+                    frexpf(results[i][s], &exponents[i]);
+                    maxExp = max(exponents[i], maxExp);
+                }
+                scaling_f scaleFactor = pow(2,maxExp); // 2^{maxExp}
+                // scaling_f scaleFactor = ldexpf(1.0f, -maxExp); 
+                // node.scaleVector[seqPos] = scaleFactor;
+                node.scaleVector[seqPos] = scaleFactor;
+                if (threadIdx.x == 0 && blockIdx.x == 0)
+                {
+                    printf("seqPos = %d\n", seqPos);
+                    printf("maxExp = %d, scaleFactor = %d\n", maxExp, scaleFactor);
+                    for (int i = 0; i < STATE_COUNT; ++i)
+                    {
+                        printf("Before scaling - results[%d][%d] = %e, exponent = %d\n", i, s, results[i][s], exponents[i]);
+                    }
                 }
 
-                node.scaleVector[seqPos] = sumLikelihoods; // Store scaling factor
-                
+                // 对结果进行缩放并存储到 bottom 中
                 for (int i = 0; i < STATE_COUNT; ++i)
                 {
-                    node.bottom[i][seqPos] = results[i][s] / sumLikelihoods; // Normalize result
+                    results[i][s] /= scaleFactor;
+                    
+                    node.bottom[i][seqPos] = results[i][s];
+
+                    // 添加调试输出（仅在第一个线程中）
+                    if (threadIdx.x == 0 && blockIdx.x == 0)
+                    {
+                        printf("After scaling - results[%d][%d] = %e\n", i, s, results[i][s]);
+                    }
                 }
             }
+
+
+
         }
     }
 }
@@ -485,7 +692,7 @@ __host__ void precompute_eigen_decomposition(int n, cusolverDnHandle_t solverHan
 
     CHECK_CUDA(cudaMalloc((void **)&devInfo, sizeof(int)));
     CHECK_CUSOLVER(cusolverDnSsyevd_bufferSize(solverHandle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, d_matrixA, n, d_eigenvalues, &lwork));
-    
+
     exp_f *d_work;
     CHECK_CUDA(cudaMalloc((void **)&d_work, lwork * sizeof(exp_f)));
     CHECK_CUSOLVER(cusolverDnSsyevd(solverHandle, CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_UPPER, n, d_matrixA, n, d_eigenvalues, d_work, lwork, devInfo));
@@ -623,33 +830,132 @@ __host__ void compute_exponential(GPUNode *d_nodes)
     CHECK_CUDA(cudaDeviceSynchronize());
 }
 
-void postorderTraversal(const GPUTree &tree, int nodeIndex, std::vector<int> &order)
-{
-    GPUNode node = tree.nodes[nodeIndex];
 
+// Modify the function to return the depth of the subtree rooted at nodeIndex
+int postorderTraversal(const GPUTree &tree, int nodeIndex, std::vector<int> &order)
+{
+    const GPUNode &node = tree.nodes[nodeIndex];
+
+    int maxChildDepth = 0; // To keep track of the maximum depth among child subtrees
+
+    // Recursively traverse child nodes
     for (int i = 0; i < node.numChildren; ++i)
     {
         int childIndex = node.childrenIndices[i];
-        postorderTraversal(tree, childIndex, order);
+        int childDepth = postorderTraversal(tree, childIndex, order);
+        maxChildDepth = std::max(maxChildDepth, childDepth);
     }
 
-    order.push_back(nodeIndex);
+    order.push_back(nodeIndex); // Add current node to post-order traversal
+
+    return maxChildDepth + 1; // Depth of current node is max child depth + 1
 }
 
 void computePostorder(GPUTree &tree, int rootIndex)
 {
     std::vector<int> order;
-    postorderTraversal(tree, rootIndex, order);
+    int maxTreeDepth = postorderTraversal(tree, rootIndex, order);
 
-    // add to order
-    for (int i = 0; i < order.size(); ++i)
+    // Copy the traversal order into the tree's order array
+    for (size_t i = 0; i < order.size(); ++i)
     {
         tree.order[i] = order[i];
     }
+
+    // Print out the maximum tree depth
+    std::cout << "Maximum tree depth: " << maxTreeDepth << std::endl;
 }
 
+// void postorderTraversal(const GPUTree &tree, int nodeIndex, std::vector<int> &order)
+// {
+//     GPUNode node = tree.nodes[nodeIndex];
+
+//     for (int i = 0; i < node.numChildren; ++i)
+//     {
+//         int childIndex = node.childrenIndices[i];
+//         postorderTraversal(tree, childIndex, order);
+//     }
+
+//     order.push_back(nodeIndex);
+// }
+
+// void computePostorder(GPUTree &tree, int rootIndex)
+// {
+//     std::vector<int> order;
+//     postorderTraversal(tree, rootIndex, order);
+
+//     // add to order
+//     for (int i = 0; i < order.size(); ++i)
+//     {
+//         tree.order[i] = order[i];
+//     }
+// }
+
+
+
+#include <Eigen/Dense>
+#include <unsupported/Eigen/MatrixFunctions>
+
+void matrix_exp(float bl, const std::vector<std::vector<float>>& rate_matrix, std::vector<std::vector<float>>& mat_out)
+{
+    Eigen::MatrixXf A(rate_matrix.size(), rate_matrix.size());
+    for (size_t i = 0; i < rate_matrix.size(); i++)
+    {
+        for (size_t j = 0; j < rate_matrix[i].size(); j++)
+        {
+            A(i, j) = rate_matrix[i][j];
+        }
+    }
+
+    Eigen::MatrixXf expA = (A * bl).exp();
+
+    mat_out.resize(rate_matrix.size());
+    for (size_t i = 0; i < rate_matrix.size(); i++)
+    {
+        mat_out[i].resize(rate_matrix.size());
+        for (size_t j = 0; j < rate_matrix.size(); j++)
+        {
+            mat_out[i][j] = expA(i, j);
+        }
+    }
+}
+
+
+void computeProbabilityMatrices(GPUTree &h_gpuTree)
+{
+    std::vector<std::vector<float>> rate_matrix(STATE_COUNT, std::vector<float>(STATE_COUNT));
+    for (int i = 0; i < STATE_COUNT; i++)
+    {
+        for (int j = 0; j < STATE_COUNT; j++)
+        {
+            rate_matrix[i][j] = h_gpuTree.rateMatrix[i * STATE_COUNT + j];
+        }
+    }
+
+    for (int i = 0; i < NODE_COUNT; i++)
+    {
+        GPUNode &node = h_gpuTree.nodes[i];
+        for (int i = 0; i < SEQUENCE_LENGTH; i++)
+        {
+            node.scaleVector[i] = 1.0;
+        }
+
+        std::vector<std::vector<float>> prob_matrix;
+
+        matrix_exp(node.branchLength, rate_matrix, prob_matrix);
+
+        for (int m = 0; m < STATE_COUNT; m++)
+        {
+            for (int n = 0; n < STATE_COUNT; n++)
+            {
+                node.probabilityMatrix[m][n] = prob_matrix[m][n];
+            }
+        }
+    }
+}
 void top_down(GPUTree &h_gpuTree)
 {
+    computeProbabilityMatrices(h_gpuTree);
 
     GPUNode *d_nodes;
     CHECK_CUDA(cudaMalloc((void **)&d_rateMatrix, STATE_COUNT * STATE_COUNT * sizeof(exp_f)));
@@ -675,7 +981,7 @@ void top_down(GPUTree &h_gpuTree)
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    compute_exponential(d_nodes);
+    // compute_exponential(d_nodes);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -807,7 +1113,7 @@ void felsenstein_pruning(GPUTree &h_gpuTree)
             sum += bottom[j][i];
         }
 
-        lk += log(lk_node);
+        lk += (double)log(lk_node);
     }
     printf("sum: %.50f\n", sum);
 
@@ -833,7 +1139,7 @@ int main(int argc, char **argv)
         utility::subs_param[i] = 1;
     utility::rate_matrix_calc(); // Find the rate matrix
 
-    if (0) // Print matrix_exp Matrix
+    if (1) // Print matrix_exp Matrix
     {
         for (size_t i = 0; i < utility::rate_matrix.size(); i++)
         {
