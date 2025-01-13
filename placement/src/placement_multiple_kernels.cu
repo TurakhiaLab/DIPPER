@@ -11,6 +11,19 @@
 #include <iostream>
 #include <cub/cub.cuh>
 
+void checkCudaErrorsHere(const char* location) {
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error before %s: %s\n", location, cudaGetErrorString(err));
+        exit(-1);
+    }
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA error after sync at %s: %s\n", location, cudaGetErrorString(err));
+        exit(-1);
+    }
+}
+
 void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     cudaError_t err;
     numSequences = int(num);
@@ -69,13 +82,13 @@ void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_levelst, numSequences*sizeof(int));
+    err = cudaMalloc(&d_levelst, numSequences*sizeof(int)*2);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_leveled, numSequences*sizeof(int));
+    err = cudaMalloc(&d_leveled, numSequences*sizeof(int)*2);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
@@ -488,7 +501,8 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
 void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     Param& params,
     const MashDeviceArrays& mashDeviceArrays,
-    MatrixReader& matrixReader
+    MatrixReader& matrixReader,
+    const MSADeviceArrays& msaDeviceArrays
 ){ 
     if(params.in == "d"){
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
@@ -500,7 +514,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
     initialize <<<blockNum, threadNum>>> (
         numSequences*4-4,
-        numSequences*2,
+        numSequences*2-1,
         d_head,
         d_nxt,
         d_belong,
@@ -527,7 +541,13 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             d_dist
         );
     }
-
+    else if(params.in == "m"){
+        msaDeviceArrays.distConstructionOnGpu(
+            params,
+            1,
+            d_dist
+        );
+    }
     // double * h_dis = new double[numSequences];
     // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
     // fprintf(stderr, "%d\n",1);
@@ -550,8 +570,9 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         d_rev
     );
     idx += 4;
+    // cudaDeviceSynchronize();
+    // std::cerr<<"FFFF\n";
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
-    // std::cout<<"FFF\n";
     std::chrono::nanoseconds disTime(0), treeTime(0);
     int *id_maxdep=new int[1], *maxdep=new int[1];
     int *levelst=new int[numSequences], *leveled=new int[numSequences];
@@ -579,8 +600,14 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
                 d_dist
             );
         }
-        cudaDeviceSynchronize();
-
+        else if(params.in == "m"){
+            msaDeviceArrays.distConstructionOnGpu(
+                params,
+                i,
+                d_dist
+            );
+        }
+        // cudaDeviceSynchronize();
         // double * h_dis = new double[numSequences];
         // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
         // fprintf(stderr, "%d\n",i);
@@ -745,7 +772,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             i,
             numSequences
         );
-        cudaDeviceSynchronize();
+        // cudaDeviceSynchronize();
         auto treeEnd = std::chrono::high_resolution_clock::now();
         disTime += disEnd - disStart;
         treeTime += treeEnd - treeStart;
