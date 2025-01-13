@@ -1,0 +1,99 @@
+import subprocess
+import re
+import random
+import os
+from ete3 import Tree
+
+
+def replace_numbers(input_string):
+    def replace_match(match):
+        # randomly chooose the number of sites
+        return f":{random.choice([i for i in range(1,6)])/29903}"
+
+    # 使用正则表达式匹配 ":" 后面的数字
+    modified_string = re.sub(r':\d+(\.\d+)?', replace_match, input_string)
+    return modified_string
+
+def execute_command_realtime(command):
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=1, universal_newlines=True)
+    for line in iter(process.stdout.readline, ''):
+        print(line, end='', flush=True)
+    for line in iter(process.stderr.readline, ''):
+        print(line, end='', flush=True)
+
+def write_string_to_file(file_path, content):
+    try:
+        with open(file_path, 'w', encoding='utf-8') as file:
+            file.write(content)
+        print(f"Successfully wrote to the file: {file_path}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def read_string_from_file(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+        print(f"Successfully read from the file: {file_path}")
+        return content
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+
+def split_file(input_filename):
+    with open(input_filename, 'r', encoding='utf-8') as infile:
+        lines = infile.readlines()
+
+    for i in range(0, len(lines), 2):
+        if i + 1 < len(lines):
+            title = lines[i].strip().replace(' ', '_').replace('/', '_')
+            output_filename = f"./seqs/{title[1:]}.fa"
+            with open(output_filename, 'w', encoding='utf-8') as outfile:
+                outfile.write(lines[i])
+                outfile.write(lines[i + 1])
+
+def change_directory(new_directory):
+    try:
+        # 改变当前工作目录
+        os.chdir(new_directory)
+        print(f"Changed directory to: {new_directory}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+def replace_first_line(filename, new_first_line):
+    try:
+        with open(filename, 'r', encoding='utf-8') as file:
+            lines = file.readlines()
+        if lines:
+            lines[0] = new_first_line + '\n'
+        else:
+            lines.append(new_first_line + '\n')
+        with open(filename, 'w', encoding='utf-8') as file:
+            file.writelines(lines)
+    
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
+def load_tree_from_file(filename):
+    """
+    Load a tree from a Newick format file.
+    """
+    try:
+        with open(filename, 'r') as file:
+            newick_str = file.read().strip()
+            tree = Tree(newick_str)
+            return tree
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+
+
+change_directory(os.path.expanduser('~/phylo-accel/test'))
+content = read_string_from_file("rawtree.phy")
+output = replace_numbers(content)
+write_string_to_file("modified_tree.phy",output)
+
+
+
+
