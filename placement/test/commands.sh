@@ -5,7 +5,7 @@
 # And leave the "phylo-accel" under home directory as well
 # And clone every baseline to the home directory
 # And clone "phastsim" and "MAPLE" to the home directory
-for n in 100
+for n in 1000
 do
     echo "-------------------Calculating $n-------------------------------------------"
 
@@ -93,6 +93,20 @@ do
     # cd ~/MAPLE
     # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/decenttree/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
     # cat ~/temp.txt_RFdistances.txt 
+
+    mkdir /data/zec022/SNJ/dataset_$n
+    python create_npy.py --dataset_size $n
+    log_n=$(echo "l($n)" | bc -l)
+    floor_log_n=$(echo "$log_n / 1" | bc)
+    result=$(echo "scale=10; sqrt($n * l($n))" | bc -l)
+    floor_result=$(echo "$result / 1" | bc)
+    cd ~/SNJ
+    timeout 3600 /usr/bin/time -v snj -data msa -seed 2 -n_i $floor_result -n_s $floor_log_n -n_o 3
+    cd ~/placement/test
+    python snj_postprocessing.py --dataset_size $n
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/SNJ/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
 
 
 done
