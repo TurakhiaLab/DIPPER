@@ -16,8 +16,8 @@
 #include "../src/twoBitCompressor.hpp"
 #endif
 
-#ifndef MASH_CUH
-#include "../src/mash.cuh"
+#ifndef MASHPL_CUH
+#include "../src/mash_placement.cuh"
 #endif
 
 #ifndef MASHDISTANCE_HPP
@@ -26,10 +26,6 @@
 
 #ifndef DISTANCEMATRIX_HPP
 #include "../src/distanceMatrix.hpp"
-#endif
-
-#ifndef NJ_CUH
-#include "../src/neighbourJoining.cuh"
 #endif
 
 namespace po = boost::program_options;
@@ -97,8 +93,7 @@ void checkAlignment(std::vector<std::string>& ref)
 
 
 int main(int argc, char** argv) {
-
-    std::string seqFileName;
+    auto inputStart = std::chrono::high_resolution_clock::now();
 
     parseArguments(argc, argv);
 
@@ -148,7 +143,7 @@ int main(int argc, char** argv) {
     // "\nNo. of thread per cuda block: " << blockSize << 
     // "\n";
 
-    GpuSketch::Param params(k, sketchSize, threshold, numBlocks, blockSize);
+    MashPlacement::Param params(k, sketchSize, threshold, numBlocks, blockSize);
 
     std::vector<std::string> seqs,names;
 
@@ -183,26 +178,28 @@ int main(int argc, char** argv) {
     auto compressEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds compressTime = compressEnd - compressStart;
     // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
-
+    auto inputEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds inputTime = inputEnd - inputStart; 
+    std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
 
     // Create arrays
     auto createArrayStart = std::chrono::high_resolution_clock::now();
     // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
-    GpuSketch::deviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+    MashPlacement::deviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
     auto createArrayEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
-    // std::cout << "Allocated in: " <<  createArrayTime.count() << " ns\n";
+    std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
     // Build sketch on Gpu
     auto createSketchStart = std::chrono::high_resolution_clock::now();
-    GpuSketch::sketchConstructionOnGpu
+    MashPlacement::sketchConstructionOnGpu
     (
-        GpuSketch::deviceArrays.d_compressedSeqs,
-        GpuSketch::deviceArrays.d_prefixCompressed,
-        GpuSketch::deviceArrays.d_aggseqLengths,
-        GpuSketch::deviceArrays.d_seqLengths,
-        GpuSketch::deviceArrays.d_numSequences,
-        GpuSketch::deviceArrays.d_hashList,
+        MashPlacement::deviceArrays.d_compressedSeqs,
+        MashPlacement::deviceArrays.d_prefixCompressed,
+        MashPlacement::deviceArrays.d_aggseqLengths,
+        MashPlacement::deviceArrays.d_seqLengths,
+        MashPlacement::deviceArrays.d_numSequences,
+        MashPlacement::deviceArrays.d_hashList,
         seqLengths,
         params
     );
@@ -211,30 +208,38 @@ int main(int argc, char** argv) {
     std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
 
     // Print first 10 hash values corresponding to each sequence
-    // GpuSketch::deviceArrays.printSketchValues(10);
+    // MashPlacement::deviceArrays.printSketchValues(10);
 
     // Build distance matrix
-    auto createDistMatStart = std::chrono::high_resolution_clock::now();
-    GpuSketch::mashDistConstructionOnGpu
-    (
-        GpuSketch::deviceArrays.d_hashList,
-        GpuSketch::deviceArrays.d_seqLengths,
-        GpuSketch::deviceArrays.d_numSequences,
-        GpuSketch::deviceArrays.d_mashDist,
-        seqLengths,
+    auto createTreeStart = std::chrono::high_resolution_clock::now();
+    MashPlacement::findPlacementTree(
+        MashPlacement::deviceArrays.numSequences,
+        MashPlacement::deviceArrays.bd, // id to place
+        MashPlacement::deviceArrays.idx, // id of linked-list position
+        MashPlacement::deviceArrays.d_dist,
+        MashPlacement::deviceArrays.d_head,
+        MashPlacement::deviceArrays.d_e,
+        MashPlacement::deviceArrays.d_len,
+        MashPlacement::deviceArrays.d_nxt,
+        MashPlacement::deviceArrays.d_belong,
+        MashPlacement::deviceArrays.d_closest_dis,
+        MashPlacement::deviceArrays.d_closest_id,
+        names,
+        MashPlacement::deviceArrays.d_hashList,
+        MashPlacement::deviceArrays.d_seqLengths,
         params
     );
-    auto createDistMatEnd = std::chrono::high_resolution_clock::now();
-    std::chrono::nanoseconds createDistMatTime = createDistMatEnd - createDistMatStart; 
-    std::cerr << "Distance Matrix Created in: " <<  createDistMatTime.count()/1000000 << " ms\n";
+    auto createTreeEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+    std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
 
-    GpuSketch::deviceArrays.printMashDist(numSequences, names);
+    // MashPlacement::deviceArrays.printMashDist(numSequences, names);
 
-    /*Allocate NJ device arrays before deallocating GpuSketch device arrays*/
+    /*Allocate NJ device arrays before deallocating MashPlacement device arrays*/
     
-    // neighbourJoining::deviceArrays.allocateDeviceArrays(numSequences, GpuSketch::deviceArrays.d_mashDist);
+    // neighbourJoining::deviceArrays.allocateDeviceArrays(numSequences, MashPlacement::deviceArrays.d_mashDist);
     
-    GpuSketch::deviceArrays.deallocateDeviceArrays();
+    MashPlacement::deviceArrays.deallocateDeviceArrays();
 
 
 

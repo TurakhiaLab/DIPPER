@@ -6,6 +6,6 @@
 #include <tbb/parallel_for.h>
 #include "kseq.h"
 
-void twoBitCompressor(std::string seq, size_t seqLen, uint32_t* compressedSeq);
+void twoBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq);
 
 #endif

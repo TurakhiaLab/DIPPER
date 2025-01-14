@@ -44,7 +44,7 @@ void parseArguments(int argc, char** argv)
 {
     // Setup boost::program_options
     mainDesc.add_options()
-        ("tree,t", po::value<std::string>()->required(), "Initial Tree - Newick format (required)")
+        // ("tree,t", po::value<std::string>()->required(), "Initial Tree - Newick format (required)")
         ("sequences,f", po::value<std::string>()->required(), "Tip sequences - Fasta format (required)")
         ("kmer-size,k", po::value<std::string>(), "Kmer-size (Default = 16)")
         ("sketch-size,s", po::value<std::string>(), "Sketch-size (Default = 10000)")
@@ -116,7 +116,7 @@ int main(int argc, char** argv) {
     }
 
     // Kmer Size
-    int k = 16;
+    int k = 15;
     try {k= std::stoi(vm["kmer-size"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     distanceMatrix(sketchLocal->sketchMap, k, sketchSize, distMatrix, distMatrixSeqOrder);
 
 
-    // int count = 0;
+    int count = 0;
     // for (size_t i=0; i<sketchLocal->sketchMap.size(); i++)
     // {
     //     for (size_t j=0; j<sketchLocal->sketchMap.size(); j++)
@@ -157,9 +157,11 @@ int main(int argc, char** argv) {
     //     }
     //     std::cout << "\n";
     // }
-
+    auto njStart = std::chrono::high_resolution_clock::now();
     findNeighbourJoiningTree(distMatrix, sketchLocal->sketchMap.size(), distMatrixSeqOrder);
-
+    auto njEnd = std:: chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds njTime = njEnd - njStart;
+    std::cout << "Neighbor Joining in: " <<  njTime.count() << " ns\n";
     // for (auto& s: sketchLocal->sketchMap)
     // {
     //     std::cout<<s.first<<"\t";

@@ -3,10 +3,11 @@
 #include <string>
 #include <chrono>
 #include <vector>
+#include <bits/stdc++.h>
 #include <boost/program_options.hpp> 
 
 #ifndef NJ_CUH
-#include "../src/neighbourJoining.cuh"
+#include "../src/rapidNJ.cuh"
 #endif
 
 
@@ -33,15 +34,21 @@ int main(int argc, char** argv) {
     }
     freopen(matrixFileName.c_str(),"r",stdin);
     uint32_t numSequences;
-    std::cin>>numSequences;
+    //std::cin>>numSequences;
+    numSequences=40000;
     auto ImportStart = std::chrono::high_resolution_clock::now();
     std::vector <std::string> name(numSequences);
     double *dismatrix = new double[numSequences*(numSequences-1)/2];
+    std::mt19937 rnd(time(NULL));
     for(int i=0,id;i<numSequences;i++){
+        // std::cout<<i<<'\n';
         std::cin>>name[i];
+        // name[i]="Node_i";
         for(int j=0;j<numSequences;j++){
+            // if(j==0) std::cout<<j<<' ';
             double temp;
             scanf("%lf",&temp);
+            // temp=double(rnd())/UINT_MAX;
             if(j>i) dismatrix[id++]=temp;
             // In order to match with other applications,
             // only upper-triangle matrix is passed to the neighbourJoining namespace
@@ -52,24 +59,30 @@ int main(int argc, char** argv) {
     if(verbosity) std::cerr << "Import distance matrix in: "<< ImportTime.count() <<" ns\n";
     // Output the time on loading distance matrix from file
     auto njStart = std::chrono::high_resolution_clock::now();
-    neighbourJoining::deviceArrays.inputDismatrix(numSequences, dismatrix);
+    rapidNJ::deviceArrays.inputDismatrix(numSequences, dismatrix);
     //If having dismatrix available on GPU, use allocateDeviceArrays instead of inputDismatrix
     //Note that dismatrix has to be upper-triangle matrix
     auto njEnd = std:: chrono::high_resolution_clock::now();
     std::chrono::nanoseconds njTime = njEnd - njStart;
     if(verbosity) std::cerr << "Allocate memory in: "<< njTime.count() <<" ns\n";
     // Output the time on allocating memory
-    neighbourJoining::findNeighbourJoiningTree(
-        neighbourJoining::deviceArrays.d_numSequences,
-        neighbourJoining::deviceArrays.d_mashDist,
-        neighbourJoining::deviceArrays.d_U,
-        neighbourJoining::deviceArrays.d_oriMashDist,
-        name
+    rapidNJ::findNeighbourJoiningTree(
+        rapidNJ::deviceArrays.d_numSequences,
+        rapidNJ::deviceArrays.d_mashDist,
+        rapidNJ::deviceArrays.d_U,
+        rapidNJ::deviceArrays.d_oriMashDist,
+        rapidNJ::deviceArrays.d_id,
+        name,
+        rapidNJ::deviceArrays.d_globalMin,
+        rapidNJ::deviceArrays.d_timeStamp,
+        rapidNJ::deviceArrays.global_id,
+        rapidNJ::deviceArrays.d_rowId,
+        rapidNJ::deviceArrays.d_preMaxU
     );
     njEnd = std:: chrono::high_resolution_clock::now();
     njTime = njEnd - njStart;
     if(verbosity) std::cerr << "Neighbor Joining in: " <<  njTime.count() << " ns\n";
     // Output the time on calculating Neighbour Joining tree
-    neighbourJoining::deviceArrays.deallocateDeviceArrays();
+    rapidNJ::deviceArrays.deallocateDeviceArrays();
     return 0;
 }

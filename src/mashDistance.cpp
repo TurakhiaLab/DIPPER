@@ -19,8 +19,8 @@ float jaccardEstimate(std::priority_queue<hash_t> A, std::priority_queue<hash_t>
         B.pop();
     }
 
-    float inter = 0;
-    float uni = 0;
+    int inter = 0;
+    int uni = 0;
     int ADashPointer=ADash.size()-1;
     int BDashPointer=BDash.size()-1;
 
@@ -43,7 +43,7 @@ float jaccardEstimate(std::priority_queue<hash_t> A, std::priority_queue<hash_t>
     }
 
     // std::cout << inter << "\t" << uni << "\t";
-    return (inter/uni);
+    return (float(inter)/uni);
 }
 
 float mashDistance(std::priority_queue<hash_t>& A, std::priority_queue<hash_t>& B, int k, size_t sketchSize)

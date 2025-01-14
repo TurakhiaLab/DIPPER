@@ -1,5 +1,5 @@
-#ifndef MASH_CUH
-#define MASH_CUH
+#ifndef MASHPL_CUH
+#define MASHPL_CUH
 
 #include <stdint.h>
 #include <iostream>
@@ -8,7 +8,7 @@
 // typedef uint64_t hash_t;
 
 
-namespace GpuSketch
+namespace MashPlacement
 {
     struct Param
     {
@@ -33,8 +33,18 @@ namespace GpuSketch
         size_t d_numSequences;
         uint64_t * d_hashList;
         double * d_mashDist;
+        int numSequences;
+        double * d_dist;
+        int * d_head;
+        int * d_e;
+        int * d_nxt;
+        int idx, bd;
+        double * d_len;
+        int * d_belong;
+        double * d_closest_dis;
+        int * d_closest_id;
 
-        void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t numSequences, Param& params);
+        void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
         void printSketchValues(int numValues);
         void printMashDist(uint64_t h_numSequences, std::vector<std::string> seqs);
         void deallocateDeviceArrays ();
@@ -56,15 +66,24 @@ namespace GpuSketch
         Param& params
     );
 
-    void mashDistConstructionOnGpu
-    (
+    void findPlacementTree(
+        int numSequences,
+        int bd, // id to place
+        int idx, // id of linked-list position
+        double * d_dist,
+        int * d_head,
+        int * d_e,
+        double * d_len,
+        int * d_nxt,
+        int * d_belong,
+        double * d_closest_dis,
+        int * d_closest_id,
+        std::vector <std::string> name,
         uint64_t * d_hashList,
         uint64_t * d_seqLengths,
-        size_t d_numSequences,
-        double * d_mashDist,
-        uint64_t * h_seqLengths,
         Param& params
     );
+
 
 };
 
