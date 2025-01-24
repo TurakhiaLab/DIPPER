@@ -27,6 +27,9 @@ void twoBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq) {
             case 'T':
                 twoBitVal = 3;
                 break;
+            case 'U':
+                twoBitVal = 3;
+                break;
             default:
                 twoBitVal = 0;
                 break;
