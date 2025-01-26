@@ -434,9 +434,9 @@ __device__ double mashDistance
         uni += 1;
     }
 
-    double jaccardEstimate = (inter/uni);
+    double jaccardEstimate = (max(1.0,inter)/uni);
 
-    double mashDist = abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize);
+    double mashDist = min(1.0,abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 
     return mashDist;
 
