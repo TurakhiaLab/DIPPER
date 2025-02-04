@@ -10,8 +10,14 @@ CMakeFiles/mash-placement.dir/src/mash.cu.o: ../src/mash_placement.cuh
 CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o: ../src/mash_placement.cuh
 CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o: ../src/matrix_reader.cu
 
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o: ../src/mash_placement.cuh
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o: ../src/neighborJoining.cu
+
 CMakeFiles/mash-placement.dir/src/placement.cu.o: ../src/mash_placement.cuh
 CMakeFiles/mash-placement.dir/src/placement.cu.o: ../src/placement.cu
+
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o: ../src/mash_placement.cuh
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o: ../src/placement_close_k.cu
 
 CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o: ../src/fourBitCompressor.cpp
 CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o: ../src/fourBitCompressor.hpp

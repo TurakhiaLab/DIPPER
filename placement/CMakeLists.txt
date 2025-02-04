@@ -26,7 +26,9 @@ add_executable (mash-placement
                 src/twoBitCompressor.cpp
                 src/fourBitCompressor.cpp
                 src/matrix_reader.cu
-                src/MSA.cu)
+                src/MSA.cu
+                src/neighborJoining.cu
+                src/placement_close_k.cu)
 
 set_target_properties(mash-placement PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 

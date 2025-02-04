@@ -10,9 +10,15 @@ CMakeFiles/mash-placement.dir/src/mash.cu.o
 CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o
  /home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
  /home/zec022@AD.UCSD.EDU/placement/src/matrix_reader.cu
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o
+ /home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
+ /home/zec022@AD.UCSD.EDU/placement/src/neighborJoining.cu
 CMakeFiles/mash-placement.dir/src/placement.cu.o
  /home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
  /home/zec022@AD.UCSD.EDU/placement/src/placement.cu
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o
+ /home/zec022@AD.UCSD.EDU/placement/src/mash_placement.cuh
+ /home/zec022@AD.UCSD.EDU/placement/src/placement_close_k.cu
 CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o
  /home/zec022@AD.UCSD.EDU/placement/src/fourBitCompressor.cpp
  /home/zec022@AD.UCSD.EDU/placement/src/fourBitCompressor.hpp

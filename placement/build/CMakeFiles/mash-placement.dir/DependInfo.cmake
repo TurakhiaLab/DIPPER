@@ -8,7 +8,9 @@ set(CMAKE_DEPENDS_CHECK_CUDA
   "/home/zec022@AD.UCSD.EDU/placement/src/MSA.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/MSA.cu.o"
   "/home/zec022@AD.UCSD.EDU/placement/src/mash.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/mash.cu.o"
   "/home/zec022@AD.UCSD.EDU/placement/src/matrix_reader.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o"
+  "/home/zec022@AD.UCSD.EDU/placement/src/neighborJoining.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o"
   "/home/zec022@AD.UCSD.EDU/placement/src/placement.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/placement.cu.o"
+  "/home/zec022@AD.UCSD.EDU/placement/src/placement_close_k.cu" "/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o"
   )
 set(CMAKE_CUDA_COMPILER_ID "NVIDIA")
 

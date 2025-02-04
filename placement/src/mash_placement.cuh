@@ -104,6 +104,47 @@ namespace MashPlacement
     };
     static PlacementDeviceArrays placementDeviceArrays;
 
+    struct KPlacementDeviceArrays{
+        int idx, bd;
+        int numSequences;
+        int * d_head;
+        int * d_e;
+        int * d_nxt;
+        int * d_belong;
+        int * d_closest_id;
+        double * d_dist;
+        double * d_len;
+        double * d_closest_dis;
+
+        void allocateDeviceArrays (size_t num);
+        void deallocateDeviceArrays ();
+        void findPlacementTree(
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays
+        );
+        void printTree(std::vector <std::string> name);
+    };
+    static KPlacementDeviceArrays kplacementDeviceArrays;
+
+    struct NJDeviceArrays
+    {
+        int d_numSequences;
+        double * d_mashDist;
+        double * d_U;
+        void deallocateDeviceArrays ();
+        void getDismatrix(
+            int numSequences,
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays
+        );
+        void findNeighbourJoiningTree(std::vector <std::string> &name);
+    };
+    static NJDeviceArrays njDeviceArrays;
+
 };
 
 #endif

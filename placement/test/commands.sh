@@ -5,7 +5,7 @@
 # And leave the "phylo-accel" under home directory as well
 # And clone every baseline to the home directory
 # And clone "phastsim" and "MAPLE" to the home directory
-for n in 1000
+for n in 16000
 do
     echo "-------------------Calculating $n-------------------------------------------"
 
@@ -69,14 +69,20 @@ do
     # cat ~/temp.txt_RFdistances.txt 
 
     # Running Placement algorithm by providing (distance matrix) or (MSA) or (Raw seqs)
-    # mkdir /data/zec022/placement/dataset_$n
-    # cd /data/zec022/placement/dataset_$n
-    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy -i d -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
-    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    # cd ~/MAPLE
-    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    # cat ~/temp.txt_RFdistances.txt 
+    mkdir /data/zec022/placement/dataset_$n
+    cd /data/zec022/placement/dataset_$n
+    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy -i d -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
+    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
+    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
 
     # Running FastME by providing (distance matrix) or (MSA)
     # mkdir /data/zec022/fastme/dataset_$n
@@ -94,19 +100,25 @@ do
     # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/decenttree/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
     # cat ~/temp.txt_RFdistances.txt 
 
-    mkdir /data/zec022/SNJ/dataset_$n
-    python create_npy.py --dataset_size $n
-    log_n=$(echo "l($n)" | bc -l)
-    floor_log_n=$(echo "$log_n / 1" | bc)
-    result=$(echo "scale=10; sqrt($n * l($n))" | bc -l)
-    floor_result=$(echo "$result / 1" | bc)
-    cd ~/SNJ
-    timeout 3600 /usr/bin/time -v snj -data msa -seed 2 -n_i $floor_result -n_s $floor_log_n -n_o 3
-    cd ~/placement/test
-    python snj_postprocessing.py --dataset_size $n
-    cd ~/MAPLE
-    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/SNJ/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    cat ~/temp.txt_RFdistances.txt 
+    # mkdir /data/zec022/SNJ/dataset_$n
+    # python create_npy.py --dataset_size $n
+    # log_n=$(echo "l($n)" | bc -l)
+    # floor_log_n=$(echo "$log_n / 1" | bc)
+    # result=$(echo "scale=10; sqrt($n * l($n))" | bc -l)
+    # floor_result=$(echo "$result / 1" | bc)
+    # cd ~/SNJ
+    # timeout 3600 /usr/bin/time -v snj -data msa -seed 2 -n_i $floor_result -n_s $floor_log_n -n_o 3
+    # cd ~/placement/test
+    # python snj_postprocessing.py --dataset_size $n
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/SNJ/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
+
+    # g++ divide_conquer_test.cpp -o test -w
+    # ./test < /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy > ../test/cpuout.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree ~/placement/test/cpuout.nwk  --inputRFtrees /data/zec022/fastme/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
 
 
 done

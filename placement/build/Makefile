@@ -231,6 +231,33 @@ src/matrix_reader.cu.s:
 	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/matrix_reader.cu.s
 .PHONY : src/matrix_reader.cu.s
 
+src/neighborJoining.o: src/neighborJoining.cu.o
+
+.PHONY : src/neighborJoining.o
+
+# target to build an object file
+src/neighborJoining.cu.o:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o
+.PHONY : src/neighborJoining.cu.o
+
+src/neighborJoining.i: src/neighborJoining.cu.i
+
+.PHONY : src/neighborJoining.i
+
+# target to preprocess a source file
+src/neighborJoining.cu.i:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/neighborJoining.cu.i
+.PHONY : src/neighborJoining.cu.i
+
+src/neighborJoining.s: src/neighborJoining.cu.s
+
+.PHONY : src/neighborJoining.s
+
+# target to generate assembly for a file
+src/neighborJoining.cu.s:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/neighborJoining.cu.s
+.PHONY : src/neighborJoining.cu.s
+
 src/placement.o: src/placement.cu.o
 
 .PHONY : src/placement.o
@@ -257,6 +284,33 @@ src/placement.s: src/placement.cu.s
 src/placement.cu.s:
 	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/placement.cu.s
 .PHONY : src/placement.cu.s
+
+src/placement_close_k.o: src/placement_close_k.cu.o
+
+.PHONY : src/placement_close_k.o
+
+# target to build an object file
+src/placement_close_k.cu.o:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o
+.PHONY : src/placement_close_k.cu.o
+
+src/placement_close_k.i: src/placement_close_k.cu.i
+
+.PHONY : src/placement_close_k.i
+
+# target to preprocess a source file
+src/placement_close_k.cu.i:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/placement_close_k.cu.i
+.PHONY : src/placement_close_k.cu.i
+
+src/placement_close_k.s: src/placement_close_k.cu.s
+
+.PHONY : src/placement_close_k.s
+
+# target to generate assembly for a file
+src/placement_close_k.cu.s:
+	$(MAKE) -f CMakeFiles/mash-placement.dir/build.make CMakeFiles/mash-placement.dir/src/placement_close_k.cu.s
+.PHONY : src/placement_close_k.cu.s
 
 src/tree_generation.o: src/tree_generation.cpp.o
 
@@ -333,9 +387,15 @@ help:
 	@echo "... src/matrix_reader.o"
 	@echo "... src/matrix_reader.i"
 	@echo "... src/matrix_reader.s"
+	@echo "... src/neighborJoining.o"
+	@echo "... src/neighborJoining.i"
+	@echo "... src/neighborJoining.s"
 	@echo "... src/placement.o"
 	@echo "... src/placement.i"
 	@echo "... src/placement.s"
+	@echo "... src/placement_close_k.o"
+	@echo "... src/placement_close_k.i"
+	@echo "... src/placement_close_k.s"
 	@echo "... src/tree_generation.o"
 	@echo "... src/tree_generation.i"
 	@echo "... src/tree_generation.s"

@@ -148,6 +148,32 @@ CMakeFiles/mash-placement.dir/src/MSA.cu.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/mash-placement.dir/src/MSA.cu.s"
 	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
 
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o: CMakeFiles/mash-placement.dir/flags.make
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o: ../src/neighborJoining.cu
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building CUDA object CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o"
+	/usr/local/cuda/bin/nvcc  $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -x cu -dc /home/zec022@AD.UCSD.EDU/placement/src/neighborJoining.cu -o CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o
+
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CUDA source to CMakeFiles/mash-placement.dir/src/neighborJoining.cu.i"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_PREPROCESSED_SOURCE
+
+CMakeFiles/mash-placement.dir/src/neighborJoining.cu.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/mash-placement.dir/src/neighborJoining.cu.s"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
+
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o: CMakeFiles/mash-placement.dir/flags.make
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o: ../src/placement_close_k.cu
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building CUDA object CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o"
+	/usr/local/cuda/bin/nvcc  $(CUDA_DEFINES) $(CUDA_INCLUDES) $(CUDA_FLAGS) -x cu -dc /home/zec022@AD.UCSD.EDU/placement/src/placement_close_k.cu -o CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o
+
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.i: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Preprocessing CUDA source to CMakeFiles/mash-placement.dir/src/placement_close_k.cu.i"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_PREPROCESSED_SOURCE
+
+CMakeFiles/mash-placement.dir/src/placement_close_k.cu.s: cmake_force
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green "Compiling CUDA source to assembly CMakeFiles/mash-placement.dir/src/placement_close_k.cu.s"
+	$(CMAKE_COMMAND) -E cmake_unimplemented_variable CMAKE_CUDA_CREATE_ASSEMBLY_SOURCE
+
 # Object files for target mash-placement
 mash__placement_OBJECTS = \
 "CMakeFiles/mash-placement.dir/src/tree_generation.cpp.o" \
@@ -156,7 +182,9 @@ mash__placement_OBJECTS = \
 "CMakeFiles/mash-placement.dir/src/twoBitCompressor.cpp.o" \
 "CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o" \
 "CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o" \
-"CMakeFiles/mash-placement.dir/src/MSA.cu.o"
+"CMakeFiles/mash-placement.dir/src/MSA.cu.o" \
+"CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o" \
+"CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o"
 
 # External object files for target mash-placement
 mash__placement_EXTERNAL_OBJECTS =
@@ -168,6 +196,8 @@ CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir
 CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o
 CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o
 CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/src/MSA.cu.o
+CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o
+CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o
 CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/build.make
 CMakeFiles/mash-placement.dir/cmake_device_link.o: /usr/lib/x86_64-linux-gnu/libboost_program_options.so.1.71.0
 CMakeFiles/mash-placement.dir/cmake_device_link.o: /usr/lib/x86_64-linux-gnu/libz.so
@@ -175,7 +205,7 @@ CMakeFiles/mash-placement.dir/cmake_device_link.o: tbb_cmake_build/tbb_cmake_bui
 CMakeFiles/mash-placement.dir/cmake_device_link.o: tbb_cmake_build/tbb_cmake_build_subdir_release/libtbb_preview.so.2
 CMakeFiles/mash-placement.dir/cmake_device_link.o: tbb_cmake_build/tbb_cmake_build_subdir_release/libtbbmalloc.so.2
 CMakeFiles/mash-placement.dir/cmake_device_link.o: CMakeFiles/mash-placement.dir/dlink.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Linking CUDA device code CMakeFiles/mash-placement.dir/cmake_device_link.o"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Linking CUDA device code CMakeFiles/mash-placement.dir/cmake_device_link.o"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/mash-placement.dir/dlink.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.
@@ -191,7 +221,9 @@ mash__placement_OBJECTS = \
 "CMakeFiles/mash-placement.dir/src/twoBitCompressor.cpp.o" \
 "CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o" \
 "CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o" \
-"CMakeFiles/mash-placement.dir/src/MSA.cu.o"
+"CMakeFiles/mash-placement.dir/src/MSA.cu.o" \
+"CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o" \
+"CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o"
 
 # External object files for target mash-placement
 mash__placement_EXTERNAL_OBJECTS =
@@ -203,6 +235,8 @@ mash-placement: CMakeFiles/mash-placement.dir/src/twoBitCompressor.cpp.o
 mash-placement: CMakeFiles/mash-placement.dir/src/fourBitCompressor.cpp.o
 mash-placement: CMakeFiles/mash-placement.dir/src/matrix_reader.cu.o
 mash-placement: CMakeFiles/mash-placement.dir/src/MSA.cu.o
+mash-placement: CMakeFiles/mash-placement.dir/src/neighborJoining.cu.o
+mash-placement: CMakeFiles/mash-placement.dir/src/placement_close_k.cu.o
 mash-placement: CMakeFiles/mash-placement.dir/build.make
 mash-placement: /usr/lib/x86_64-linux-gnu/libboost_program_options.so.1.71.0
 mash-placement: /usr/lib/x86_64-linux-gnu/libz.so
@@ -211,7 +245,7 @@ mash-placement: tbb_cmake_build/tbb_cmake_build_subdir_release/libtbb_preview.so
 mash-placement: tbb_cmake_build/tbb_cmake_build_subdir_release/libtbbmalloc.so.2
 mash-placement: CMakeFiles/mash-placement.dir/cmake_device_link.o
 mash-placement: CMakeFiles/mash-placement.dir/link.txt
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Linking CXX executable mash-placement"
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --green --bold --progress-dir=/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Linking CXX executable mash-placement"
 	$(CMAKE_COMMAND) -E cmake_link_script CMakeFiles/mash-placement.dir/link.txt --verbose=$(VERBOSE)
 
 # Rule to build all files generated by this target.

@@ -36,9 +36,11 @@ void parseArguments(int argc, char** argv)
         ("kmer-size,k", po::value<std::string>(), "Kmer-size (Valid: 2-15, Default = 15)")
         ("sketch-size,s", po::value<std::string>(), "Sketch-size (Default = 10000)")
         ("threshold,r", po::value<std::string>(), "Erroneous k-mer threshold (Default = 1)")
-        ("distance-type,t", po::value<std::string>(), "Distance type to be calculated, range from 1 to 5, please try 1 and 2 for now")
-        ("input-format,i", po::value<std::string>()->required(), "Input format (d - distance matrix, r - raw sequences, a - MSA), required")
+        ("distance-type,t", po::value<std::string>(), "Distance type to be calculated, range from 1 to 6: 1 - uncorrected, 2 - JC, 3 - tajima-nei, 4 - K2P, 5 - Tamura, 6 - Jinnei")
+        ("input-format,i", po::value<std::string>()->required(), "Input format (d - distance matrix, r - raw sequences, m - MSA), required")
         ("output-format,o", po::value<std::string>()->required(), "Output format (d - distance matrix, t - phylogenetic tree), required")
+        ("algorithm,a", po::value<std::string>(), "Algorithm selection (0 - default mode, 1 - force placement, 2 - force conventional NJ)")
+        ("placement-mode,p", po::value<std::string>(), "Placement mode selection (0 - exact mode, 1 - k-closest mode), default is k-closest")
         ("help,h", "Print help messages");
 
 }
@@ -117,6 +119,15 @@ int main(int argc, char** argv) {
     try {out = vm["output-format"].as<std::string>();}
     catch(std::exception &e){}
 
+    std::string algo = "0";
+    try {algo = vm["algorithm"].as<std::string>();}
+    catch(std::exception &e){}
+
+    std::string placemode = "1";
+    try {placemode = vm["algorithm"].as<std::string>();}
+    catch(std::exception &e){}
+
+    int defau_thre = 10000; // Default threshold between conventional NJ and placement
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
     if (in == "m" && out == "t"){
@@ -163,26 +174,62 @@ int main(int argc, char** argv) {
         // std::cerr<<"########\n";
         MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
         // std::cerr<<"########\n";
-        MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
-        auto createArrayEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
-        std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+        if(algo=="1"||algo=="0"&&numSequences>=defau_thre){
+            if(placemode=="0"){
+                std::cerr<<"Using exact placement mode\n";
+                MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
+                auto createArrayEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+                std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
 
-        //Build Tree on Gpu
-        auto createTreeStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
-        auto createTreeEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-        MashPlacement::placementDeviceArrays.printTree(names);
-        std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+                //Build Tree on Gpu
+                auto createTreeStart = std::chrono::high_resolution_clock::now();
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                auto createTreeEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+                MashPlacement::placementDeviceArrays.printTree(names);
+                std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
 
-        // Print first 10 hash values corresponding to each sequence
-        // MashPlacement::mashDeviceArrays.printSketchValues(10);
+                // Print first 10 hash values corresponding to each sequence
+                // MashPlacement::mashDeviceArrays.printSketchValues(10);
+                MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+            }
+            else{
+                std::cerr<<"Using k-closest placement mode\n";
+                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences);
+                auto createArrayEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+                std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
 
-        MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
-        MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+                //Build Tree on Gpu
+                auto createTreeStart = std::chrono::high_resolution_clock::now();
+                MashPlacement::kplacementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                auto createTreeEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+                MashPlacement::kplacementDeviceArrays.printTree(names);
+                std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+
+                // Print first 10 hash values corresponding to each sequence
+                // MashPlacement::mashDeviceArrays.printSketchValues(10);
+                MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::kplacementDeviceArrays.deallocateDeviceArrays();
+            }
+        }
+        else{
+            std::cerr<<"Using conventional NJ\n";
+            if(numSequences>=40000){
+                std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
+            }
+            MashPlacement::njDeviceArrays.getDismatrix(
+                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+            );
+            MashPlacement::njDeviceArrays.findNeighbourJoiningTree(names);
+            MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+            MashPlacement::njDeviceArrays.deallocateDeviceArrays();
+        }
     }
     else if (in == "r" && out == "t"){
         std::vector<std::string> seqs,names;
@@ -226,7 +273,6 @@ int main(int argc, char** argv) {
         auto createArrayStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
         MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
-        MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
         auto createArrayEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
         std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
@@ -240,19 +286,48 @@ int main(int argc, char** argv) {
         // MashPlacement::mashDeviceArrays.printSketchValues(1000);
 
         //Build Tree on Gpu
-        auto createTreeStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
-        auto createTreeEnd = std::chrono::high_resolution_clock::now();
-        std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-        MashPlacement::placementDeviceArrays.printTree(names);
-        std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+        if(algo=="1"||algo=="0"&&numSequences>=defau_thre){
+            if(placemode=="0"){
+                std::cerr<<"Using exact placement mode\n";
+                MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
+                auto createTreeStart = std::chrono::high_resolution_clock::now();
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                auto createTreeEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+                MashPlacement::placementDeviceArrays.printTree(names);
+                std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+                MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
+            }
+            else{
+                std::cerr<<"Using k-closest placement mode\n";
+                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences);
+                auto createTreeStart = std::chrono::high_resolution_clock::now();
+                MashPlacement::kplacementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                auto createTreeEnd = std::chrono::high_resolution_clock::now();
+                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
+                MashPlacement::kplacementDeviceArrays.printTree(names);
+                std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
+                MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::kplacementDeviceArrays.deallocateDeviceArrays();
+            }
+        }
+        else{
+            std::cerr<<"Using conventional NJ\n";
+            if(numSequences>=40000){
+                std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
+            }
+            MashPlacement::njDeviceArrays.getDismatrix(
+                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+            );
+            MashPlacement::njDeviceArrays.findNeighbourJoiningTree(names);
+            MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+            MashPlacement::njDeviceArrays.deallocateDeviceArrays();
+        }
 
         // Print first 10 hash values corresponding to each sequence
         // MashPlacement::mashDeviceArrays.printSketchValues(10);
 
-
-        MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
-        MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
     }
     else if(in == "d" && out == "t") {
         std::string fileName = vm["input-file"].as<std::string>();
@@ -274,9 +349,31 @@ int main(int argc, char** argv) {
         fscanf(filePtr, "%d", &numSequences);
         fgets(temp, 20, filePtr);
         MashPlacement::matrixReader.allocateDeviceArrays(numSequences, filePtr);
-        MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
-        MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
-        MashPlacement::placementDeviceArrays.printTree(MashPlacement::matrixReader.name);
+        if(algo=="1"||algo=="0"&&numSequences>=defau_thre){
+            if(placemode=="0"){
+                std::cerr<<"Using exact placement mode\n";
+                MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                MashPlacement::placementDeviceArrays.printTree(MashPlacement::matrixReader.name);
+            }
+            else{
+                std::cerr<<"Using k-closest placement mode\n";
+                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences);
+                MashPlacement::kplacementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                MashPlacement::kplacementDeviceArrays.printTree(MashPlacement::matrixReader.name);
+            }
+        }
+        else{
+            std::cerr<<"Using conventional NJ\n";
+            if(numSequences>=40000){
+                std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
+            }
+            MashPlacement::njDeviceArrays.getDismatrix(
+                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+            );
+            MashPlacement::njDeviceArrays.findNeighbourJoiningTree(MashPlacement::matrixReader.name);
+            MashPlacement::njDeviceArrays.deallocateDeviceArrays();
+        }
         fclose(filePtr);
     }
     else{
