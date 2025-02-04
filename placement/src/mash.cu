@@ -448,8 +448,8 @@ __global__ void mashDistConstruction(
         }
         if(uni >= sketchSize) break;
     }
-    double jaccardEstimate = double(inter)/uni;
-    d_mashDist[idx] = min(1.0, abs((log(2.0*jaccardEstimate/(1.0+jaccardEstimate)))/kmerSize));
+    double jaccardEstimate = max(double(inter),1.0)/uni;
+    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
 
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
