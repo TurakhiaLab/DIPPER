@@ -30,7 +30,22 @@ add_executable (mash-placement
                 src/neighborJoining.cu
                 src/placement_close_k.cu)
 
+add_executable (mash-placement-divide-and-conquer
+                src/divide_and_conquer/tree_generation_divide_and_conquer.cpp
+                src/placement.cu
+                src/divide_and_conquer/mash.cu
+                src/twoBitCompressor.cpp
+                src/fourBitCompressor.cpp
+                src/matrix_reader.cu
+                src/MSA.cu
+                src/neighborJoining.cu
+                src/divide_and_conquer/placement_close_k.cu)
+
 set_target_properties(mash-placement PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+set_target_properties(mash-placement-divide-and-conquer PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
 
 target_link_libraries(mash-placement PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(mash-placement-divide-and-conquer PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+
 

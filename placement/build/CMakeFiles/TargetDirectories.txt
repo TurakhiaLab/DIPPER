@@ -1,3 +1,4 @@
-/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/rebuild_cache.dir
-/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/edit_cache.dir
 /home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement.dir
+/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/mash-placement-divide-and-conquer.dir
+/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/edit_cache.dir
+/home/zec022@AD.UCSD.EDU/placement/build/CMakeFiles/rebuild_cache.dir

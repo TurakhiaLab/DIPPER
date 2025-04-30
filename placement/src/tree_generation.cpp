@@ -283,7 +283,7 @@ int main(int argc, char** argv) {
         auto createSketchEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
         std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
-        // MashPlacement::mashDeviceArrays.printSketchValues(1000);
+        // MashPlacement::mashDeviceArrays.printSketchValues(10);
 
         //Build Tree on Gpu
         if(algo=="1"||algo=="0"&&numSequences>=defau_thre){

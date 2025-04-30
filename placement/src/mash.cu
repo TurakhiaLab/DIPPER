@@ -448,6 +448,9 @@ __global__ void mashDistConstruction(
         }
         if(uni >= sketchSize) break;
     }
+    assert(uni==1000);
+    assert(inter!=0);
+    assert(0);
     double jaccardEstimate = max(double(inter),1.0)/uni;
     d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
@@ -455,6 +458,7 @@ __global__ void mashDistConstruction(
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
     // if(rowId%100==0) cudaMemcpy(d_hashList,h_hashList,1000*numSequences*sizeof(uint64_t),cudaMemcpyHostToDevice);
     int threadNum = 256, blockNum = (numSequences+threadNum-1)/threadNum;
+    // std::cerr<<threadNum<<" "<<blockNum<<'\n';
     mashDistConstruction <<<threadNum, blockNum>>> (
         rowId, 
         d_hashList, 
@@ -463,6 +467,22 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int r
         params.sketchSize, 
         numSequences
     );
+
+    cudaError_t err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    }
+
+    // double * h_dist = new double[numSequences];
+    // auto err = cudaMemcpy(h_dist, d_mashDist, numSequences*sizeof(double), cudaMemcpyDeviceToHost);
+    // if (err != cudaSuccess) {
+    //     fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
+    //     exit(1);
+    // }
+
+    // fprintf(stderr, "Row (%d)\n", rowId);
+    // for(int i=0;i<10;i++) fprintf(stderr, "%.5lf\n", h_dist[i]);
+    // fprintf(stderr, "\n");
 }
 
 

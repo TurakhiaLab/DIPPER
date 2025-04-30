@@ -7,6 +7,7 @@ string name[N*2+5];
 vector <pair<int,double>> v[N*2+5];
 int fa[N*2+5];
 double dn[N*2+5],up[N*2+5],falen[N*2+5],mn,ublen,dblen;
+double subd[N*2+5],upd[N*2+5],m;
 int vis[N*2+5],sz[N*2+5],bd,nowmn,sel,viscnt;
 double dep[N*2+5];
 mt19937 rnd(time(NULL));
@@ -88,6 +89,7 @@ pair<pair<int,int>,double> check_place(int x,int st){
 void dfssz(int x,int from,int tot){
     int mnsz=INT_MAX,used=0;
     sz[x]=x<n?1:0;
+    subd[x]=0;
     for(auto t:v[x])
         if(t.first!=from&&!vis[t.first])
             dfssz(t.first,x,tot),sz[x]+=sz[t.first],mnsz=min(mnsz,sz[t.first]),used++;
@@ -105,6 +107,27 @@ void pb(int x,int from,int group){
             dep[t.first]=dep[x]+t.second,pb(t.first,x,group);
 }
 int center, samp=7, threshold=5;
+int vote(int x,std::vector<int> c1,std::vector<int> c2,std::vector<int> c3){
+    std::vector<int> a[3]={c1,c2,c3};
+    int best=-1;
+    double bl[3]={dep[allct[0][0]],dep[allct[1][0]],dep[allct[2][0]]};
+    double mn=1e9;
+    for(int i=0;i<3;i++){
+        double l1=0;
+        for(auto t:a[i]) l1=std::max(l1,dis[t][x]-(dep[t]-bl[i]));
+        double l2=0;
+        for(int j=0;j<3;j++) if(j!=i) for(auto t:a[j]) l2=std::max(l2,dis[t][x]-dep[t]);
+        double total=l1+l2;
+        double addi=max(0.0,(total-bl[i])/2);
+        double ub=l1-addi,db=l2-addi;
+        // if(ub<0) addi-=ub,ub=0;
+        // if(db<0) addi-=db,db=0;
+        if(addi<mn) mn=addi,best=i,ublen=ub,dblen=db;
+        // cout<<x<<" "<<i<<" "<<addi<<" "<<dis[a[i]][x]<<" "<<dep[a[i]]<<'\n'; 
+    }
+    return best;
+}
+
 int vote(int x,int c1,int c2,int c3){
     int a[3]={c1,c2,c3},best=-1;
     double mn=1e9;
@@ -141,7 +164,13 @@ int divide_and_conquer(int x,int st,int tot){
     //     for(auto t:allct[i])
     //         if(t==temp.first.first||t==temp.first.second)
     //             correct=i;
-    int cnt=0,c[3]={},mx=0,subtreeid=-1;
+    int cnt=0,mx=0,subtreeid=-1,c[3]={};
+    std::vector<int> sp[3];
+    int sz=min(samp,int(min(min(ct[0].size(),ct[1].size()),ct[2].size())));
+    for(int i=0;i<sz;i++)
+        for(int j=0;j<3;j++)
+            sp[j].push_back(ct[j][i]);
+    // c[vote(x,sp[0],sp[1],sp[2])]++;
     for(int i=0;i<min(samp,int(min(min(ct[0].size(),ct[1].size()),ct[2].size())));i++){
         c[vote(x,ct[0][i],ct[1][i],ct[2][i])]++;
     }
@@ -177,7 +206,7 @@ int main(){
     v[n].push_back({0,st/2}),v[n].push_back({1,st/2});
     bd=n/10;
     threshold=max(5,n/50);
-    samp=20;
+    samp=1000;
     for(int i=2;i<bd;i++){
         place(i);
         // cout<<"#######"<<i<<'\n';

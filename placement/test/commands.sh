@@ -5,7 +5,7 @@
 # And leave the "phylo-accel" under home directory as well
 # And clone every baseline to the home directory
 # And clone "phastsim" and "MAPLE" to the home directory
-for n in 16000
+for n in 500000
 do
     echo "-------------------Calculating $n-------------------------------------------"
 
@@ -14,16 +14,16 @@ do
     # Creating dataset directory
     # mkdir /data/zec022/phastsim_datasets/dataset_$n 
 
-    # Generating tree structure and branch lengths
-    # To change average branch lengths, please go to line 11 in ~/phylo-accel/test/test.py
-    # It is set to 3 sites per branch on average now
+    # # Generating tree structure and branch lengths
+    # # To change average branch lengths, please go to line 11 in ~/phylo-accel/test/test.py
+    # # It is set to 3 sites per branch on average now
     # cd ~/phylo-accel/build/ 
     # ./gen_newick.out $n > ../test/rawtree.phy 
     # cd ~/phylo-accel/test
     # rm -r phastsim_dataset
     # python test.py
 
-    # Generating sars-cov-2-like sequences
+    # # Generating sars-cov-2-like sequences
     # cd ~/phastSim
     # pip install -e .
     # python bin/phastSim --outpath /data/zec022/phastsim_datasets/dataset_$n/ --seed 8 --createFasta --createInfo --createNewick --treeFile ~/phylo-accel/test/modified_tree.phy --invariable 0.1 --alpha 1.0 --omegaAlpha 1.0 --hyperMutProbs 0.01 0.01 --hyperMutRates 20.0 200.0 --codon --reference phastSim/example/MN908947.3.fasta
@@ -69,20 +69,20 @@ do
     # cat ~/temp.txt_RFdistances.txt 
 
     # Running Placement algorithm by providing (distance matrix) or (MSA) or (Raw seqs)
-    mkdir /data/zec022/placement/dataset_$n
-    cd /data/zec022/placement/dataset_$n
-    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy -i d -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    cd ~/MAPLE
-    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    cat ~/temp.txt_RFdistances.txt 
-    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
-    cd ~/MAPLE
-    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    cat ~/temp.txt_RFdistances.txt 
-    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    cd ~/MAPLE
-    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    cat ~/temp.txt_RFdistances.txt 
+    # mkdir /data/zec022/placement/dataset_$n
+    # cd /data/zec022/placement/dataset_$n
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy -i d -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -t 2 > /data/zec022/placement/dataset_$n/tree.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
 
     # Running FastME by providing (distance matrix) or (MSA)
     # mkdir /data/zec022/fastme/dataset_$n
@@ -114,11 +114,29 @@ do
     # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/SNJ/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
     # cat ~/temp.txt_RFdistances.txt 
 
-    # g++ divide_conquer_test.cpp -o test -w
+    # g++ cluster_and_combine.cpp -o test -w
     # ./test < /data/zec022/phastsim_datasets/dataset_$n/distance_matrix.phy > ../test/cpuout.nwk
+    # # cat /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output_polytomy.tree
     # cd ~/MAPLE
-    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree ~/placement/test/cpuout.nwk  --inputRFtrees /data/zec022/fastme/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree ~/placement/test/cpuout.nwk  --inputRFtrees /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree --output ~/temp.txt --overwrite
     # cat ~/temp.txt_RFdistances.txt 
 
+    # mkdir /data/zec022/placement/dataset_$n
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement-divide-and-conquer -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
+
+    # mkdir /data/zec022/placement/dataset_$n
+    # cd /data/zec022/placement/dataset_$n
+    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement-divide-and-conquer -f /data/swalia/dipper/alisim/datasets/500000/len_10000_leaves_500000.unaligned.fa -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/swalia/dipper/alisim/trees/nleaves500000.treefile  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
+
+    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement-divide-and-conquer -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t -a 1 > /data/zec022/placement/dataset_$n/tree.nwk
+    # cd ~/MAPLE
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # cat ~/temp.txt_RFdistances.txt 
 
 done
