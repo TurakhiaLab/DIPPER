@@ -259,14 +259,17 @@ __global__ void updateClosestNodesInCluster(
     int * id,
     int * from,
     double * dis,
-    int eid
+    int cluster_eid,
+    int * belong
 ){
     int l=0,r=-1;
     id[++r]=x,dis[x]=0,from[x]=-1;
+    int ed1=e[cluster_eid], ed2=belong[cluster_eid];
     while(l<=r){
         int node=id[l],fb=from[l];
         double d=dis[l];
         l++;
+        if(node==ed1||node==ed2) continue;
         for(int i=head[node];i!=-1;i=nxt[i]){
             if(e[i]==fb) continue;
             for(int j=0;j<5;j++){
@@ -947,7 +950,7 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
             Update closest nodes
             */
 
-            updateClosestNodes <<<1,1>>> (
+            updateClosestNodesInCluster <<<1,1>>> (
                 d_head,
                 d_nxt,
                 d_e,
@@ -957,7 +960,9 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
                 leaf,
                 d_id,
                 d_from,
-                d_dis
+                d_dis,
+                i,
+                d_belong
             );
 
             /*
