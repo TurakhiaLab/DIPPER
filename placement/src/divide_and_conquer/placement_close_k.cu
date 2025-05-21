@@ -814,10 +814,12 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
             );
         }
         else if(params.in == "m"){
-            msaDeviceArrays.distConstructionOnGpu(
+            msaDeviceArrays.distRangeConstructionOnGpu(
                 params,
                 i,
-                d_dist
+                d_dist,
+                0,
+                numSequences-1
             );
         }
         cudaDeviceSynchronize();
@@ -895,6 +897,15 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
         for(auto &leaf:contains[i]){
             if(params.in == "r"){
                 mashDeviceArrays.distSpecialIDConstructionOnGpu(
+                    params,
+                    leaf,
+                    d_dist,
+                    leafCount,
+                    d_leafMask
+                );
+            }
+            else if(params.in == "m"){
+                msaDeviceArrays.distSpecialIDConstructionOnGpu(
                     params,
                     leaf,
                     d_dist,

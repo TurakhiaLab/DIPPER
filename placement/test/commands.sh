@@ -5,7 +5,7 @@
 # And leave the "phylo-accel" under home directory as well
 # And clone every baseline to the home directory
 # And clone "phastsim" and "MAPLE" to the home directory
-for n in 500000
+for n in 8000
 do
     echo "-------------------Calculating $n-------------------------------------------"
 
@@ -129,14 +129,18 @@ do
 
     # mkdir /data/zec022/placement/dataset_$n
     # cd /data/zec022/placement/dataset_$n
-    timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement-divide-and-conquer -f /data/swalia/dipper/alisim/datasets/500000/len_10000_leaves_500000.unaligned.fa -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
-    cd ~/MAPLE
-    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/swalia/dipper/alisim/trees/nleaves500000.treefile  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
-    cat ~/temp.txt_RFdistances.txt 
-
-    # timeout 3600 /usr/bin/time -v  ~/placement/build/mash-placement-divide-and-conquer -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i r -o t -a 1 > /data/zec022/placement/dataset_$n/tree.nwk
+    # timeout 3600 /usr/bin/time -v  nsys profile -o profile_report ~/placement/build/mash-placement-divide-and-conquer -f /data/swalia/dipper/alisim/datasets/500000/len_10000_leaves_500000.unaligned.fa -i r -o t > /data/zec022/placement/dataset_$n/tree.nwk
+    # nsys stats profile_report.nsys-rep
     # cd ~/MAPLE
-    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    # ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/swalia/dipper/alisim/trees/nleaves500000.treefile  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
     # cat ~/temp.txt_RFdistances.txt 
+
+    rm stats profile_report.nsys-rep
+    rm profile_report.sqlite
+    timeout 3600 /usr/bin/time -v  nsys profile -o profile_report  ~/placement/build/mash-placement-divide-and-conquer -f /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.fasta -i m -o t -a 1 > /data/zec022/placement/dataset_$n/tree.nwk
+    nsys stats profile_report.nsys-rep
+    cd ~/MAPLE
+    ~/pypy3.10-v7.3.16-linux64/bin/pypy3 MAPLEv0.3.6.py --inputTree /data/zec022/phastsim_datasets/dataset_$n/sars-cov-2_simulation_output.tree  --inputRFtrees /data/zec022/placement/dataset_$n/tree.nwk --output ~/temp.txt --overwrite
+    cat ~/temp.txt_RFdistances.txt 
 
 done

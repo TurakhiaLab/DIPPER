@@ -59,6 +59,9 @@ namespace MashPlacement
         void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
         void deallocateDeviceArrays ();
         void distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const;
+        void distRangeConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int l, int r) const;
+        void distSpecialIDConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int numToConstruct, int* d_id) const;
+
 
     };
     static MSADeviceArrays msaDeviceArrays;

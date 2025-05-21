@@ -37,7 +37,7 @@ add_executable (mash-placement-divide-and-conquer
                 src/twoBitCompressor.cpp
                 src/fourBitCompressor.cpp
                 src/matrix_reader.cu
-                src/MSA.cu
+                src/divide_and_conquer/MSA.cu
                 src/neighborJoining.cu
                 src/divide_and_conquer/placement_close_k.cu)
 
