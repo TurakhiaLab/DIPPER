@@ -5,7 +5,7 @@
 # And leave the "phylo-accel" under home directory as well
 # And clone every baseline to the home directory
 # And clone "phastsim" and "MAPLE" to the home directory
-for n in 8000
+for n in 64000
 do
     echo "-------------------Calculating $n-------------------------------------------"
 

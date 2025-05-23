@@ -217,7 +217,7 @@ __global__ void MSADistConstructionRange(
 ){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int idx=tx+bs*bx;
-    if(idx>=ed-st) return;
+    if(idx>ed-st) return;
     idx+=st;
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
         int useful=0, match=0;
@@ -272,6 +272,7 @@ __global__ void MSADistConstructionSpecialID(
     int idx=tx+bs*bx;
     if(idx>=numToConstruct) return;
     idx = d_id[idx];
+    if(idx==-1) return;
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
         int useful=0, match=0;
         calculateParams(rowId, idx, seqLen, compressedSeqs, useful, match);
@@ -311,8 +312,8 @@ __global__ void MSADistConstructionSpecialID(
 }
 
 void MashPlacement::MSADeviceArrays::distRangeConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int l, int r) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
-    MSADistConstructionRange <<<threadNum, blockNum>>> (
+    int threadNum = 256, blockNum = (r-l+1+threadNum-1)/threadNum;
+    MSADistConstructionRange <<<blockNum, threadNum>>> (
         rowId, 
         d_compressedSeqs, 
         d_mashDist, 
@@ -325,8 +326,8 @@ void MashPlacement::MSADeviceArrays::distRangeConstructionOnGpu(Param& params, i
 }
 
 void MashPlacement::MSADeviceArrays::distSpecialIDConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int numToConstruct, int* d_id) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
-    MSADistConstructionSpecialID <<<threadNum, blockNum>>> (
+    int threadNum = 256, blockNum = (numToConstruct+threadNum-1)/threadNum;
+    MSADistConstructionSpecialID <<<blockNum, threadNum>>> (
         rowId, 
         d_compressedSeqs, 
         d_mashDist, 
@@ -340,7 +341,7 @@ void MashPlacement::MSADeviceArrays::distSpecialIDConstructionOnGpu(Param& param
 
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
     int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
-    MSADistConstruction <<<threadNum, blockNum>>> (
+    MSADistConstruction <<<blockNum, threadNum>>> (
         rowId, 
         d_compressedSeqs, 
         d_mashDist, 
