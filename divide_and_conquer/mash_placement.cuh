@@ -1,5 +1,5 @@
-#ifndef MASHPL_CUH
-#define MASHPL_CUH
+#ifndef MASHDC_CUH
+#define MASHDC_CUH
 
 #include <stdint.h>
 #include <iostream>
@@ -30,7 +30,7 @@ namespace MashPlacement
         };
     };
     
-    struct MashDeviceArrays{
+    struct MashDeviceArraysDC{
         uint64_t * d_compressedSeqs;
         uint64_t * d_prefixCompressed;
         uint64_t * d_aggseqLengths;
@@ -46,16 +46,16 @@ namespace MashPlacement
 
         int * d_leafID_map;
         
-        void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
-        void printSketchValues(int numValues);
-        void sketchConstructionOnGpu (Param& params, uint64_t** twoBitCompressedSeqs, uint64_t * h_seqLengths, uint64_t numSequences);
-        void deallocateDeviceArrays ();
-        void distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const;
+        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void printSketchValuesDC(int numValues);
+        void sketchConstructionOnGpuDC (Param& params, uint64_t** twoBitCompressedSeqs, uint64_t * h_seqLengths, uint64_t numSequences);
+        void deallocateDeviceArraysDC ();
+        void distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const;
         void distConstructionOnCpu(Param& params, int rowId, double* d_mashDist) const;
-        void distConstructionOnGpuForBackbone(Param& params, int rowId, double* d_mashDist) const;
-        void distRangeConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering = false) const;
+        void distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const;
+        void distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering = false) const;
         void distRangeConstructionOnCpu(Param& params, int rowId, double* d_mashDist, int l, int r) const;
-        void distSpecialIDConstructionOnGpu(Param& params, 
+        void distSpecialIDConstructionOnGpuDC(Param& params, 
                                             int rowId, 
                                             double* d_mashDist, 
                                             int numToConstruct, 
@@ -64,21 +64,30 @@ namespace MashPlacement
         void distSpecialIDConstructionOnCpu(Param& params, int rowId, std::vector<double> & h_mashDist, int numToConstruct, std::vector<int> & h_id) const;
 
     };
-    static MashDeviceArrays mashDeviceArrays;
+    static MashDeviceArraysDC mashDeviceArraysDC;
 
 
-    struct MSADeviceArrays{
-        uint64_t * d_compressedSeqs;
-        uint64_t * d_seqLengths;
-        size_t numSequences;
-        int seqLen;
+    struct MSADeviceArraysDC{
+        uint64_t * d_compressedSeqsBackBone;
+        uint64_t * d_compressedSeqsConst;
+        // uint64_t * d_seqLengths;
+        // size_t numSequences;
+        int d_seqLen;
 
-        void allocateDeviceArrays (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
-        void deallocateDeviceArrays ();
-        void distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const;
+        uint64_t * h_compressedSeqs;
+
+        size_t      totalNumSequences;
+        size_t      backboneSize;
+
+        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const;
+        void distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const;
+        void distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering = false) const;
+        void distSpecialIDConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int numToConstruct, int* d_id, int * d_leafMap) const;
+        void deallocateDeviceArraysDC ();
 
     };
-    static MSADeviceArrays msaDeviceArrays;
+    static MSADeviceArraysDC msaDeviceArraysDC;
 
 
     struct MatrixReader{
@@ -115,15 +124,15 @@ namespace MashPlacement
         void deallocateDeviceArrays ();
         void findPlacementTree(
             Param& params,
-            const MashDeviceArrays& mashDeviceArrays,
+            const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays
+            const MSADeviceArraysDC& msaDeviceArrays
         );
         void printTree(std::vector <std::string> name);
     };
     static PlacementDeviceArrays placementDeviceArrays;
 
-    struct KPlacementDeviceArraysHost{
+    struct KPlacementDeviceArraysHostDC{
         int idx, bd;
         int numSequences;
         int totalNumSequences;
@@ -139,17 +148,17 @@ namespace MashPlacement
         double * h_closest_dis_cluster;
         int * clusterID;
 
-        void allocateHostArrays (size_t num, size_t totalNum);
-        void deallocateHostArrays ();
-        void findClusterTree(
+        void allocateHostArraysDC (size_t num, size_t totalNum);
+        void deallocateHostArraysDC ();
+        void findClusterTreeDC(
             Param& params,
-            const MashDeviceArrays& mashDeviceArrays,
+            const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays
+            const MSADeviceArraysDC& msaDeviceArrays
         );
-        void printTreeCpu(std::vector <std::string> name);
+        void printTreeCpuDC(std::vector <std::string> name);
     };
-    static KPlacementDeviceArraysHost kplacementDeviceArraysHost;
+    static KPlacementDeviceArraysHostDC kplacementDeviceArraysHostDC;
 
     struct NJDeviceArrays
     {
@@ -160,15 +169,15 @@ namespace MashPlacement
         void getDismatrix(
             int numSequences,
             Param& params,
-            const MashDeviceArrays& mashDeviceArrays,
+            const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays
+            const MSADeviceArraysDC& msaDeviceArrays
         );
         void findNeighbourJoiningTree(std::vector <std::string> &name);
     };
     static NJDeviceArrays njDeviceArrays;
 
-    struct KPlacementDeviceArrays{
+    struct KPlacementDeviceArraysDC{
         int idx, bd;
         int numSequences;
         int totalNumSequences;
@@ -183,35 +192,35 @@ namespace MashPlacement
         double * d_closest_dis;
         double * d_closest_dis_cluster;
 
-        void allocateDeviceArrays (size_t num, size_t totalNum);
-        void deallocateDeviceArrays ();
+        void allocateDeviceArraysDC (size_t num, size_t totalNum);
+        void deallocateDeviceArraysDC ();
         
-        void findBackboneTree(
+        void findBackboneTreeDC(
             Param& params,
-            const MashDeviceArrays& mashDeviceArrays,
+            const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays,
+            const MSADeviceArraysDC& msaDeviceArrays,
             const KPlacementDeviceArraysHost& kplacementDeviceArraysHost
         );
 
-        void findClusters(
+        void findClustersDC(
             Param& params,
-            const MashDeviceArrays& mashDeviceArrays,
+            const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays,
+            const MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHost& kplacementDeviceArraysHost
         );
 
-        void findClusterTree(
+        void findClusterTreeDC(
             Param& params,
-            MashDeviceArrays& mashDeviceArrays,
+            MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
-            const MSADeviceArrays& msaDeviceArrays,
+            MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHost& kplacementDeviceArraysHost
         );
-        void printTree(std::vector <std::string> name);
+        void printTreeDC(std::vector <std::string> name);
     };
-    static KPlacementDeviceArrays kplacementDeviceArrays;
+    static KPlacementDeviceArraysDC kplacementDeviceArraysDC;
 
 };
 

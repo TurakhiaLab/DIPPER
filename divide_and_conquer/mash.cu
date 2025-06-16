@@ -1,4 +1,4 @@
-#include "mash_placement.cuh"
+#include "../mash_placement.cuh"
 
 #include <stdio.h>
 #include <queue>
@@ -11,7 +11,7 @@
 #include <iostream>
 #include <cub/cub.cuh>
 
-void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
+void MashPlacement::MashDeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
     cudaError_t err;
     this->totalNumSequences = num;
@@ -55,7 +55,7 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
         fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMalloc failed!\n");
         exit(1);
     }
-    std::cerr << "Allocated for d_hashListConst: "<< d_hashListConst << std::endl;
+    // std::cerr << "Allocated for d_hashListConst: "<< d_hashListConst << std::endl;
 
     err = cudaMalloc(&d_hashListBackbone, params.sketchSize*params.backboneSize*sizeof(uint64_t));
     if (err != cudaSuccess)
@@ -74,39 +74,39 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
     cudaDeviceSynchronize();
 }
 
-void MashPlacement::MashDeviceArrays::deallocateDeviceArrays(){
+void MashPlacement::MashDeviceArraysDC::deallocateDeviceArraysDC(){
     cudaFree(d_compressedSeqs);
     cudaFree(d_seqLengths);
     cudaFree(d_hashList);
 }
 
-#define BIG_CONSTANT(x) (x##LLU)
+#define BIG_CONSTANTDC(x) (x##LLU)
 
-__device__ inline uint64_t rotl64 ( uint64_t x, int8_t r )
+__device__ inline uint64_t rotl64DC ( uint64_t x, int8_t r )
 {
     return (x << r) | (x >> (64 - r));
 }
 
-#define ROTL64(x,y)    rotl64(x,y)
+#define ROTL64DC(x,y)    rotl64DC(x,y)
 
-__device__ uint64_t getblock64 ( const uint64_t * p, int i )
+__device__ uint64_t getblock64DC ( const uint64_t * p, int i )
 {
     return p[i];
 }
 
-__device__ uint64_t fmix64 ( uint64_t k )
+__device__ uint64_t fmix64DC ( uint64_t k )
 {
     k ^= k >> 33;
-    k *= BIG_CONSTANT(0xff51afd7ed558ccd);
+    k *= BIG_CONSTANTDC(0xff51afd7ed558ccd);
     k ^= k >> 33;
-    k *= BIG_CONSTANT(0xc4ceb9fe1a85ec53);
+    k *= BIG_CONSTANTDC(0xc4ceb9fe1a85ec53);
     k ^= k >> 33;
 
     return k;
 }
 
 // First hashing function using raw sequence
-__device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
+__device__ void MurmurHash3_x64_128_MASHDC ( void * key, const int len,
                            const uint32_t seed, void * out)
 {
     const uint8_t * data = (const uint8_t*)key;
@@ -115,8 +115,8 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
     uint64_t h1 = seed;
     uint64_t h2 = seed;
 
-    const uint64_t c1 = BIG_CONSTANT(0x87c37b91114253d5);
-    const uint64_t c2 = BIG_CONSTANT(0x4cf5ad432745937f);
+    const uint64_t c1 = BIG_CONSTANTDC(0x87c37b91114253d5);
+    const uint64_t c2 = BIG_CONSTANTDC(0x4cf5ad432745937f);
 
     //----------
     // body
@@ -125,16 +125,16 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
 
     for(int i = 0; i < nblocks; i++)
     {
-        uint64_t k1 = getblock64(blocks,i*2+0);
-        uint64_t k2 = getblock64(blocks,i*2+1);
+        uint64_t k1 = getblock64DC(blocks,i*2+0);
+        uint64_t k2 = getblock64DC(blocks,i*2+1);
 
-        k1 *= c1; k1  = ROTL64(k1,31); k1 *= c2; h1 ^= k1;
+        k1 *= c1; k1  = ROTL64DC(k1,31); k1 *= c2; h1 ^= k1;
 
-        h1 = ROTL64(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
+        h1 = ROTL64DC(h1,27); h1 += h2; h1 = h1*5+0x52dce729;
 
-        k2 *= c2; k2  = ROTL64(k2,33); k2 *= c1; h2 ^= k2;
+        k2 *= c2; k2  = ROTL64DC(k2,33); k2 *= c1; h2 ^= k2;
 
-        h2 = ROTL64(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
+        h2 = ROTL64DC(h2,31); h2 += h1; h2 = h2*5+0x38495ab5;
     }
 
     //----------
@@ -154,7 +154,7 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
         case 11: k2 ^= ((uint64_t)tail[10]) << 16;
         case 10: k2 ^= ((uint64_t)tail[ 9]) << 8;
         case  9: k2 ^= ((uint64_t)tail[ 8]) << 0;
-               k2 *= c2; k2  = ROTL64(k2,33); k2 *= c1; h2 ^= k2;
+               k2 *= c2; k2  = ROTL64DC(k2,33); k2 *= c1; h2 ^= k2;
 
         case  8: k1 ^= ((uint64_t)tail[ 7]) << 56;
         case  7: k1 ^= ((uint64_t)tail[ 6]) << 48;
@@ -164,7 +164,7 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
         case  3: k1 ^= ((uint64_t)tail[ 2]) << 16;
         case  2: k1 ^= ((uint64_t)tail[ 1]) << 8;
         case  1: k1 ^= ((uint64_t)tail[ 0]) << 0;
-               k1 *= c1; k1  = ROTL64(k1,31); k1 *= c2; h1 ^= k1;
+               k1 *= c1; k1  = ROTL64DC(k1,31); k1 *= c2; h1 ^= k1;
     };
 
     //----------
@@ -175,8 +175,8 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
     h1 += h2;
     h2 += h1;
 
-    h1 = fmix64(h1);
-    h2 = fmix64(h2);
+    h1 = fmix64DC(h1);
+    h2 = fmix64DC(h2);
 
     h1 += h2;
     h2 += h1;
@@ -186,7 +186,7 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
 }
 
 
-__device__ void decompress(uint64_t compressedSeq, uint64_t kmerSize, char * decompressedSeq_fwd, char * decompressedSeq_rev) {
+__device__ void decompressDC(uint64_t compressedSeq, uint64_t kmerSize, char * decompressedSeq_fwd, char * decompressedSeq_rev) {
     static const char lookupTable[4] = {'A', 'C', 'G', 'T'};
     for (int i = kmerSize - 1; i >= 0; i--) {
         uint64_t twoBitVal = (compressedSeq >> (2 * i)) & 0x3;
@@ -195,7 +195,7 @@ __device__ void decompress(uint64_t compressedSeq, uint64_t kmerSize, char * dec
     }
 }
 
-__device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kmerSize) {
+__device__ int memcmp_deviceDC(const char* kmer_fwd, const char* kmer_rev, int kmerSize) {
     for (int i = 0; i < kmerSize; i++) {
         if (kmer_fwd[i] < kmer_rev[i]) {
             return -1;
@@ -207,7 +207,7 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     return 0;
 }
 
-__global__ void sketchConstruction(
+__global__ void sketchConstructionDC(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,
     size_t maxLengthCompressed,
@@ -261,7 +261,7 @@ __global__ void sketchConstruction(
                     kmer = compressedSeqs[index];// & mask;
                 }
 
-                decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
+                decompressDC(kmer, kmerSize, kmer_fwd, kmer_rev);
 
                 // if ((i == 0) && (tx == 0)) {
                 //     for (char c : kmer_fwd) printf("%c", c);   
@@ -270,7 +270,7 @@ __global__ void sketchConstruction(
                 // }
 
                 // convert to char representation and call w/ original
-                MurmurHash3_x64_128_MASH( (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0) 
+                MurmurHash3_x64_128_MASHDC( (memcmp_deviceDC(kmer_fwd, kmer_rev, kmerSize) <= 0) 
                     ? kmer_fwd : kmer_rev, kmerSize, 42, out);
                 
                 uint64_t hash = *((uint64_t *)out);
@@ -325,7 +325,7 @@ __global__ void sketchConstruction(
 
 }
 
-__global__ void rearrangeHashList(
+__global__ void rearrangeHashListDC(
     int numSequences,
     int sketchSize,
     uint64_t * original,
@@ -340,7 +340,7 @@ __global__ void rearrangeHashList(
     }
 }
 
-void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params, uint64_t** h_compressedSeqs, uint64_t * seqLengths, uint64_t numSequences){
+void MashPlacement::MashDeviceArraysDC::sketchConstructionOnGpuDC(Param& params, uint64_t** h_compressedSeqs, uint64_t * seqLengths, uint64_t numSequences){
     
     cudaError_t err;
 
@@ -393,7 +393,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params, uin
         int threadsPerBlock = 512;
         int blocksPerGrid = 1024;
         size_t sharedMemorySize = sizeof(uint64_t) * (2000);
-        sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
+        sketchConstructionDC<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
             d_compressedSeqs, d_seqLengths, maxLengthCompressed, localBatchSize, d_hashList, kmerSize
         );
 
@@ -423,7 +423,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params, uin
     }
     int threadsPerBlock = 512;
     int blocksPerGrid = 1024;
-    rearrangeHashList <<<blocksPerGrid, threadsPerBlock >>>(
+    rearrangeHashListDC <<<blocksPerGrid, threadsPerBlock >>>(
         params.backboneSize,
         int(params.sketchSize),
         d_hashListBackbone,
@@ -450,7 +450,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params, uin
     // }
 }
 
-__global__ void mashDistConstruction(
+__global__ void mashDistConstructionDC(
     int rowId,
     uint64_t * d_hashList,
     double * d_mashDist,
@@ -460,26 +460,28 @@ __global__ void mashDistConstruction(
 ) {
     int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
     int idx = tx+bx*bs;
-    if(idx>=rowId) return;
-    int uni = 0, bPos = rowId, inter = 0;
-    uint64_t aval, bval;
-    for(int i=idx; uni < sketchSize; i+=numSequences, uni++){
-        aval = d_hashList[i];
-        while(uni < sketchSize && bPos < numSequences * sketchSize){
-            bval = d_hashList[bPos];
-            // printf("%ull %ull\n",aval,bval);
-            if(bval > aval) break;
-            if(bval < aval) uni++;
-            else inter++;
-            bPos += numSequences;
+    // if(idx>=rowId) return;
+    for (int idx_=idx; idx_<rowId; idx_+=bs*gridDim.x){
+        int uni = 0, bPos = rowId, inter = 0;
+        uint64_t aval, bval;
+        for(int i=idx_; uni < sketchSize; i+=numSequences, uni++){
+            aval = d_hashList[i];
+            while(uni < sketchSize && bPos < numSequences * sketchSize){
+                bval = d_hashList[bPos];
+                // printf("%ull %ull\n",aval,bval);
+                if(bval > aval) break;
+                if(bval < aval) uni++;
+                else inter++;
+                bPos += numSequences;
+            }
+            if(uni >= sketchSize) break;
         }
-        if(uni >= sketchSize) break;
+        double jaccardEstimate = max(double(inter),1.0)/uni;
+        d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
     }
-    double jaccardEstimate = max(double(inter),1.0)/uni;
-    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
 
-__global__ void mashDistConstructionRangeForClustering(
+__global__ void mashDistConstructionRangeForClusteringDC(
     int rowId,
     uint64_t * d_hashListBackbone,
     uint64_t * d_hashListConst,
@@ -490,29 +492,33 @@ __global__ void mashDistConstructionRangeForClustering(
     int st,
     int ed
 ) {
-    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x, gs= gridDim.x;
     int idx = tx+bx*bs;
-    if(idx>ed-st) return;
-    idx += st;
-    int uni = 0, bPos = rowId*sketchSize, inter = 0;
-    uint64_t aval, bval;
-    for(int i=idx; uni < sketchSize; i+=numSequences, uni++){
-        aval = d_hashListBackbone[i];
-        while(uni < sketchSize && bPos < rowId*sketchSize + sketchSize){
-            bval = d_hashListConst[bPos];
-            if(bval > aval) break;
-            if(bval < aval) uni++;
-            else inter++;
-            bPos += 1;
+    // if(idx>ed-st) return;
+    // idx += st;
+    for (int idx_=idx; idx_<=ed-st; idx_+=gs*bs){
+        if (idx_>ed-st) return;
+        idx_ += st;
+        int uni = 0, bPos = rowId*sketchSize, inter = 0;
+        uint64_t aval, bval;
+        for(int i=idx_; uni < sketchSize; i+=numSequences, uni++){
+            aval = d_hashListBackbone[i];
+            while(uni < sketchSize && bPos < rowId*sketchSize + sketchSize){
+                bval = d_hashListConst[bPos];
+                if(bval > aval) break;
+                if(bval < aval) uni++;
+                else inter++;
+                bPos += 1;
+            }
+            if(uni >= sketchSize) break;
         }
-        if(uni >= sketchSize) break;
+        double jaccardEstimate = max(double(inter),1.0)/uni;
+        d_mashDist[idx_] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
     }
-    double jaccardEstimate = max(double(inter),1.0)/uni;
-    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
 
 
-__global__ void mashDistConstructionRange(
+__global__ void mashDistConstructionRangeDC(
     int rowId,
     uint64_t * d_hashList,
     double * d_mashDist,
@@ -522,30 +528,35 @@ __global__ void mashDistConstructionRange(
     int st,
     int ed
 ) {
-    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x, gs = gridDim.x;
     int idx = tx+bx*bs;
-    if(idx>ed-st) return;
-    idx += st;
-    int uni = 0, bPos = rowId, inter = 0;
-    uint64_t aval, bval;
-    for(int i=idx; uni < sketchSize; i+=numSequences, uni++){
-        aval = d_hashList[i];
-        while(uni < sketchSize && bPos < numSequences * sketchSize){
-            bval = d_hashList[bPos];
-            // printf("%ull %ull\n",aval,bval);
-            if(bval > aval) break;
-            if(bval < aval) uni++;
-            else inter++;
-            bPos += numSequences;
+    // if(idx>ed-st) return;
+    // idx += st;
+    for (int idx_=idx; idx_<=ed-st; idx_+=gs*bs){
+        if (idx_>ed-st) return;
+        idx_+=st;
+        int uni = 0, bPos = rowId, inter = 0;
+        uint64_t aval, bval;
+        for(int i=idx_; uni < sketchSize; i+=numSequences, uni++){
+            aval = d_hashList[i];
+            while(uni < sketchSize && bPos < numSequences * sketchSize){
+                bval = d_hashList[bPos];
+                // printf("%ull %ull\n",aval,bval);
+                if(bval > aval) break;
+                if(bval < aval) uni++;
+                else inter++;
+                bPos += numSequences;
+            }
+            if(uni >= sketchSize) break;
         }
-        if(uni >= sketchSize) break;
+        double jaccardEstimate = max(double(inter),1.0)/uni;
+        d_mashDist[idx_] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
     }
-    double jaccardEstimate = max(double(inter),1.0)/uni;
-    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
+    
 }
 
 
-__global__ void mashDistConstructionSpecialID(
+__global__ void mashDistConstructionSpecialIDDC(
     int rowId,
     uint64_t * d_hashListBackbone,
     uint64_t * d_hashListConst,
@@ -557,56 +568,39 @@ __global__ void mashDistConstructionSpecialID(
     int * d_id,
     int * d_leafMap
 ) {
-    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x, gs = gridDim.x;
     int idx = tx+bx*bs;
-    if(idx>=numToConstruct) return;
+    // if(idx>=numToConstruct) return;
     
-    // if (idx == 0) {
-    //     printf("d_leafMask now: ");
-    //     for (int z=0;z<numToConstruct;z++){
-    //         printf("%d\t", d_id[z]);
-    //     }
-    //     printf("\n");
-    //     printf("leafMap now: ");
-    //     for (int z=0;z<numToConstruct;z++){
-    //         printf("%d\t", d_leafMap[z]);
-    //     }
-    //     printf("\n");
-    // }
-
-    int mapIdx = d_leafMap[idx];
-    idx = d_id[idx];
-    if(idx==-1) return;
-    int uni = 0, bPos = rowId, inter = 0;
-    uint64_t aval, bval;
-    int idx_const = idx;
-    if (idx > backboneSize) idx_const = mapIdx;
-    // if (idx == 618) {
-    //     for (int i=idx_const; i<sketchSize*backboneSize; i+=backboneSize) {
-    //         printf("%d %llu\n", i, d_hashListConst[i]);
-    //     }
-    //     for (int i=rowId; i<sketchSize*backboneSize; i+=backboneSize) {
-    //         printf("%d %llu\n", i, d_hashListConst[i]);
-    //     }
-    // }
-    for(int i=idx_const; uni < sketchSize; i+=backboneSize, uni++){
-        if (idx > backboneSize) aval = d_hashListConst[i];
-        else aval = d_hashListBackbone[i];
-        while(uni < sketchSize && bPos < backboneSize * sketchSize){
-            bval = d_hashListConst[bPos];
-            if(bval > aval) break;
-            if(bval < aval) uni++;
-            else inter++;
-            bPos += backboneSize;
+    for (int idx_=idx; idx_<numToConstruct; idx_+=bs*gs){
+        if (idx_>=numToConstruct) return;
+        
+        int mapIdx = d_leafMap[idx_];
+        idx_ = d_id[idx_];
+        if(idx_==-1) return;
+        int uni = 0, bPos = rowId, inter = 0;
+        uint64_t aval, bval;
+        int idx_const = idx_;
+        if (idx_ > backboneSize) idx_const = mapIdx;
+    
+        for(int i=idx_const; uni < sketchSize; i+=backboneSize, uni++){
+            if (idx_ > backboneSize) aval = d_hashListConst[i];
+            else aval = d_hashListBackbone[i];
+            while(uni < sketchSize && bPos < backboneSize * sketchSize){
+                bval = d_hashListConst[bPos];
+                if(bval > aval) break;
+                if(bval < aval) uni++;
+                else inter++;
+                bPos += backboneSize;
+            }
+            if(uni >= sketchSize) break;
         }
-        if(uni >= sketchSize) break;
+        double jaccardEstimate = max(double(inter),1.0)/uni;
+        d_mashDist[idx_] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
     }
-    double jaccardEstimate = max(double(inter),1.0)/uni;
-    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
-    // printf("idx: %d new idx: %d mapIdx: %d, rowID %d d_mashDist %lf backbone %d idx_const %d\n", idx, d_id[idx], mapIdx, rowId, d_mashDist[idx], backboneSize, idx_const);
 }
 
-__global__ void mashDistConstructionSpecialIDClustering(
+__global__ void mashDistConstructionSpecialIDClusteringDC(
     int rowId,
     uint64_t * d_hashListBackbone,
     uint64_t * d_hashListConst,
@@ -647,9 +641,10 @@ __global__ void mashDistConstructionSpecialIDClustering(
 
 
 
-void MashPlacement::MashDeviceArrays::distConstructionOnGpuForBackbone(Param& params, int rowId, double* d_mashDist) const{
-    int threadNum = 256, blockNum = (this->backboneSize+threadNum-1)/threadNum;
-    mashDistConstruction <<<blockNum, threadNum>>> (
+void MashPlacement::MashDeviceArraysDC::distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const{
+    // int threadNum = 256, blockNum = (this->backboneSize+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
+    mashDistConstructionDC <<<blockNum, threadNum>>> (
         rowId, 
         this->d_hashListBackbone, 
         d_mashDist, 
@@ -659,9 +654,9 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpuForBackbone(Param& pa
     );
 }
 
-void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
+void MashPlacement::MashDeviceArraysDC::distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const{
     int threadNum = 256, blockNum = (this->backboneSize+threadNum-1)/threadNum;
-    mashDistConstruction <<<blockNum, threadNum>>> (
+    mashDistConstructionDC <<<blockNum, threadNum>>> (
         rowId, 
         d_hashList, 
         d_mashDist, 
@@ -672,11 +667,12 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int r
 }
 
 
-void MashPlacement::MashDeviceArrays::distRangeConstructionOnGpu(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering) const{
+void MashPlacement::MashDeviceArraysDC::distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering) const{
     
-    int threadNum = 1024, blockNum = (r-l+1+threadNum-1)/threadNum;
-    if (!clustering) { 
-        mashDistConstructionRange <<<blockNum, threadNum>>> (
+    // int threadNum = 1024, blockNum = (r-l+1+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
+    if (!clustering) {
+        mashDistConstructionRangeDC <<<blockNum, threadNum>>> (
             rowId, 
             d_hashListBackbone, 
             d_mashDist, 
@@ -687,7 +683,7 @@ void MashPlacement::MashDeviceArrays::distRangeConstructionOnGpu(Param& params, 
             r
         );
     } else {
-        mashDistConstructionRangeForClustering <<<blockNum, threadNum>>> (
+        mashDistConstructionRangeForClusteringDC <<<blockNum, threadNum>>> (
             rowId, 
             d_hashListBackbone, 
             d_hashListConst,
@@ -704,7 +700,7 @@ void MashPlacement::MashDeviceArrays::distRangeConstructionOnGpu(Param& params, 
 
 
 void 
-MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnGpu(
+MashPlacement::MashDeviceArraysDC::distSpecialIDConstructionOnGpuDC(
         Param& params, 
         int rowId, 
         double* d_mashDist, 
@@ -713,8 +709,9 @@ MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnGpu(
         int * d_leafMap
     ) const {
     
-    int threadNum = 256, blockNum = (numToConstruct+threadNum-1)/threadNum;
-    mashDistConstructionSpecialID <<<blockNum, threadNum>>> (
+    // int threadNum = 256, blockNum = (numToConstruct+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
+    mashDistConstructionSpecialIDDC <<<blockNum, threadNum>>> (
         rowId, 
         d_hashListBackbone,
         d_hashListConst, 
@@ -730,7 +727,7 @@ MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnGpu(
 }
 
 
-void MashPlacement::MashDeviceArrays::printSketchValues(int numValues) 
+void MashPlacement::MashDeviceArraysDC::printSketchValuesDC(int numValues) 
 {
     uint64_t * h_hashList = new uint64_t[1000*totalNumSequences];
 
