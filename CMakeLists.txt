@@ -15,9 +15,9 @@ find_package(ZLIB REQUIRED)
 find_path(ZLIB_INCLUDE_DIR zlib.h)
 include_directories(${ZLIB_INCLUDE_DIR})
 
-include(${TBB_DIR}/cmake/TBBBuild.cmake)
-tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
-find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
+# include(${TBB_DIR}/cmake/TBBBuild.cmake)
+# tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
+# find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
 
 add_executable (dipper
                 src/tree_generation.cu
@@ -36,7 +36,8 @@ add_executable (dipper
                 src/divide_and_conquer/placement_close_k.cpp
                 src/divide_and_conquer/placement_close_k.cu)
 
+find_package(TBB REQUIRED CONFIG)
 set_target_properties(dipper PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(dipper PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
+target_link_libraries(dipper PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
 
 
