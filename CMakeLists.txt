@@ -40,4 +40,6 @@ find_package(TBB REQUIRED CONFIG)
 set_target_properties(dipper PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(dipper PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
 
+install(TARGETS dipper
+        RUNTIME DESTINATION bin)
 
