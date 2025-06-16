@@ -20,34 +20,23 @@ tbb_build(TBB_ROOT ${TBB_DIR} CONFIG_DIR TBB_DIR MAKE_ARGS tbb_cpf=1)
 find_package(TBB REQUIRED tbbmalloc tbbmalloc_proxy tbb_preview)
 
 add_executable (dipper
-                src/tree_generation.cpp
+                src/tree_generation.cu
                 src/placement.cu
                 src/mash.cu
                 src/twoBitCompressor.cpp
                 src/fourBitCompressor.cpp
                 src/matrix_reader.cu
                 src/MSA.cu
+		src/tree.cpp
                 src/neighborJoining.cu
-                src/placement_close_k.cu)
-
-add_executable (dipper-dc
-                src/divide_and_conquer/tree_generation_divide_and_conquer.cpp
-                src/placement.cu
+                src/placement_close_k.cu
                 src/divide_and_conquer/mash.cu
                 src/divide_and_conquer/mash.cpp
-                src/twoBitCompressor.cpp
-                src/fourBitCompressor.cpp
-                src/matrix_reader.cu
-                src/MSA.cu
-                src/neighborJoining.cu
-                src/divide_and_conquer/placement_close_k.cu
-                src/divide_and_conquer/placement_close_k.cpp)
+                src/divide_and_conquer/msa.cu
+                src/divide_and_conquer/placement_close_k.cpp
+                src/divide_and_conquer/placement_close_k.cu)
 
 set_target_properties(dipper PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-set_target_properties(dipper-dc PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-
-
 target_link_libraries(dipper PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
-target_link_libraries(dipper-dc	PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} ${TBB_IMPORTED_TARGETS})
 
 

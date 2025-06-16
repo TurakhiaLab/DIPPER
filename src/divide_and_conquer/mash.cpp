@@ -1,4 +1,4 @@
-#include "mash_placement.cuh"
+#include "../mash_placement.cuh"
 
 #include <stdio.h>
 #include <queue>
@@ -81,7 +81,7 @@ void mashDistConstructionSpecialIDCpu(
     }
 }
 
-void MashPlacement::MashDeviceArrays::distRangeConstructionOnCpu(Param& params, int rowId, double* h_mashDist, int l, int r) const{
+void MashPlacement::MashDeviceArraysDC::distRangeConstructionOnCpu(Param& params, int rowId, double* h_mashDist, int l, int r) const{
     mashDistConstructionRangeCpu(
         rowId, 
         h_hashList, 
@@ -95,7 +95,7 @@ void MashPlacement::MashDeviceArrays::distRangeConstructionOnCpu(Param& params, 
 }
 
 // void MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnCpu(Param& params, int rowId, double* h_mashDist, int numToConstruct, int * h_id) const{
-void MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnCpu(Param& params, int rowId, std::vector<double> & h_mashDist, int numToConstruct, std::vector<int> & h_id) const{
+void MashPlacement::MashDeviceArraysDC::distSpecialIDConstructionOnCpu(Param& params, int rowId, std::vector<double> & h_mashDist, int numToConstruct, std::vector<int> & h_id) const{
     
     mashDistConstructionSpecialIDCpu (
         rowId, 

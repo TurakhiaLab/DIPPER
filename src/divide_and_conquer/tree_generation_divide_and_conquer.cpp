@@ -73,6 +73,106 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
 }
 
 
+void readSequencesBatch(po::variables_map& vm, 
+                        std::vector<std::string>& seqs, 
+                        std::vector<std::string>& names)
+{
+    auto seqReadStart = std::chrono::high_resolution_clock::now();
+    std::string seqFileName = vm["input-file"].as<std::string>();
+
+    gzFile f_rd = gzopen(seqFileName.c_str(), "r");
+    if (!f_rd) {
+        fprintf(stderr, "ERROR: cant open file: %s\n", seqFileName.c_str());
+        exit(1);
+    }
+
+    kseq_t* kseq_rd = kseq_init(f_rd);
+
+    while (kseq_read(kseq_rd) >= 0) {
+        size_t seqLen = kseq_rd->seq.l;
+        seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
+        names.push_back(std::string(kseq_rd->name.s, kseq_rd->name.l));
+    }
+    
+    auto seqReadEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds seqReadTime = seqReadEnd - seqReadStart;
+    // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
+}
+
+void readSequencesPhylip(po::variables_map& vm, 
+                        std::vector<std::string>& seqs, 
+                        std::vector<std::string>& names,
+                        uint64_t ** fourBitCompressedSeqs,
+                        uint64_t * seqLengths)
+{
+    auto seqReadStart = std::chrono::high_resolution_clock::now();
+    std::string seqFileName = vm["input-file"].as<std::string>();
+
+    std::ifstream file(seqFileName);
+    if (!file) throw std::runtime_error("Could not open file: " + seqFileName);
+
+    int nseq, seqlen;
+    file >> nseq >> seqlen;
+    std::cerr << "Number of sequences: " << nseq << ", Length of sequences: " << seqlen << std::endl;
+    file.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // skip rest of line
+
+    fourBitCompressedSeqs = new uint64_t*[nseq];
+    seqLengths = new uint64_t[nseq];
+
+    std::string line;
+
+    for (int i = 0; i < nseq; ++i) {
+        if (!std::getline(file, line)) {
+            throw std::runtime_error("Unexpected end of file while reading sequences.");
+        }
+
+        if ((int)line.size() < 10) {
+            throw std::runtime_error("Line too short for name and sequence: " + line);
+        }
+
+        std::string name = line.substr(0, 10);
+        std::string seq = line.substr(10);
+
+        // Trim whitespace
+        name.erase(name.find_last_not_of(" \t\r\n") + 1);
+        seq.erase(std::remove_if(seq.begin(), seq.end(), ::isspace), seq.end());
+
+        if ((int)seq.size() != seqlen) {
+            throw std::runtime_error("Sequence length mismatch for " + name + ": found " + std::to_string(seq.size()) + ", expected " + std::to_string(seqlen));
+        }
+
+
+        // seqs.push_back(seq);
+        names.push_back(name);
+
+        uint64_t fourBitCompressedSize = (seq.size()+15)/16;
+        uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+        fourBitCompressor(seq, seq.size(), fourBitCompressed);
+
+        seqLengths[i] = seq.size();
+        fourBitCompressedSeqs[i] = fourBitCompressed;
+    }
+
+    // gzFile f_rd = gzopen(seqFileName.c_str(), "r");
+    // if (!f_rd) {
+    //     fprintf(stderr, "ERROR: cant open file: %s\n", seqFileName.c_str());
+    //     exit(1);
+    // }
+
+    // kseq_t* kseq_rd = kseq_init(f_rd);
+
+    // while (kseq_read(kseq_rd) >= 0) {
+    //     size_t seqLen = kseq_rd->seq.l;
+    //     seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
+    //     names.push_back(std::string(kseq_rd->name.s, kseq_rd->name.l));
+    // }
+    
+    auto seqReadEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds seqReadTime = seqReadEnd - seqReadStart;
+    // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
+}
+
+
 
 
 int main(int argc, char** argv) {
@@ -110,7 +210,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     uint64_t distanceType = 1;
-    try {threshold= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
+    try {distanceType= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
     catch(std::exception &e){}
 
     std::string in = "r";
@@ -142,35 +242,94 @@ int main(int argc, char** argv) {
 
     if (in == "m" && out == "t"){
         std::vector<std::string> seqs,names;
+        
+        uint64_t ** fourBitCompressedSeqs;
+        uint64_t * seqLengths;
+        
+        // readSequencesPhylip(vm, seqs, names, fourBitCompressedSeqs, seqLengths);
+        std::string seqFileName = vm["input-file"].as<std::string>();
 
-        // Read Input Sequences (Fasta format)
-        readSequences(vm, seqs, names);
-        size_t numSequences = seqs.size();
-        std::vector<int> ids(numSequences);
-        std::vector<std::string> temp1(numSequences),temp2(numSequences);
-        for(int i=0;i<numSequences;i++) ids[i]=i;
+        std::ifstream file(seqFileName);
+        if (!file) throw std::runtime_error("Could not open file: " + seqFileName);
+
+        int nseq, seqlen;
+        file >> nseq >> seqlen;
+        std::cerr << "Number of sequences: " << nseq << ", Length of sequences: " << seqlen << std::endl;
+        file.ignore(std::numeric_limits<std::streamsize>::max(), '\n'); // skip rest of line
+
+        std::vector<int> ids(nseq);
+        for(int i=0;i<nseq;i++) ids[i]=i;
         std::mt19937 rnd(time(NULL));
         std::shuffle(ids.begin(),ids.end(),rnd);
-        for(int i=0;i<numSequences;i++){
-            temp1[i]=seqs[ids[i]];
-            temp2[i]=names[ids[i]];
+
+        names.resize(nseq);
+
+        fourBitCompressedSeqs = new uint64_t*[nseq];
+        seqLengths = new uint64_t[nseq];
+
+        std::string line;
+
+        for (int i = 0; i < nseq; ++i) {
+            if (!std::getline(file, line)) {
+                throw std::runtime_error("Unexpected end of file while reading sequences.");
+            }
+
+            if ((int)line.size() < 10) {
+                throw std::runtime_error("Line too short for name and sequence: " + line);
+            }
+
+            std::string name = line.substr(0, 10);
+            std::string seq = line.substr(10);
+
+            // Trim whitespace
+            name.erase(name.find_last_not_of(" \t\r\n") + 1);
+            seq.erase(std::remove_if(seq.begin(), seq.end(), ::isspace), seq.end());
+
+            if ((int)seq.size() != seqlen) {
+                throw std::runtime_error("Sequence length mismatch for " + name + ": found " + std::to_string(seq.size()) + ", expected " + std::to_string(seqlen));
+            }
+
+
+            // seqs.push_back(seq);
+            names[ids[i]] = name;
+
+            uint64_t fourBitCompressedSize = (seq.size()+15)/16;
+            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+            fourBitCompressor(seq, seq.size(), fourBitCompressed);
+
+            seqLengths[ids[i]] = seq.size();
+            fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
         }
-        seqs=temp1,names=temp2;
+        
+        std::cerr << "Sequences read successfully\n";
+
+        size_t numSequences = names.size();
+        // std::vector<int> ids(numSequences);
+        // std::vector<std::string> temp2(numSequences);
+        // // ,temp1(numSequences);
+        // for(int i=0;i<numSequences;i++) ids[i]=i;
+        // std::mt19937 rnd(time(NULL));
+        // std::shuffle(ids.begin(),ids.end(),rnd);
+
+        // for(int i=0;i<numSequences;i++){
+        //     // temp1[i]=seqs[ids[i]];
+        //     temp2[i]=names[ids[i]];
+        // }
+        // // seqs=temp1;
+        // names=temp2;
+
+        // // write the shuffled sequences to a file
+        // std::ofstream outfile("shuffled_sequences.fasta");
+        // for (size_t i = 0; i < seqs.size(); ++i) {
+        //     outfile << ">" << names[i] << "\n" << seqs[i] << "\n";
+        // }
+        // outfile.close();
+
+
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
-        uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
-        uint64_t * seqLengths = new uint64_t[numSequences];
-        for (size_t i=0; i<numSequences; i++)
-        {   
-            uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
-            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
-
-            seqLengths[i] = seqs[i].size();
-            fourBitCompressedSeqs[i] = fourBitCompressed;
-
-        }
+        
         auto compressEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds compressTime = compressEnd - compressStart;
         // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
@@ -182,14 +341,14 @@ int main(int argc, char** argv) {
         auto createArrayStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
         // std::cerr<<"########\n";
-        MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
-
+        
         totalNumSequences = numSequences;
         backboneSize = numSequences/20;
         params.batchSize = backboneSize;
         params.backboneSize = backboneSize;
 
-        // std::cerr<<"########\n";
+        MashPlacement::msaDeviceArraysDC.allocateDeviceArraysDC(fourBitCompressedSeqs, seqLengths, numSequences, params);
+        std::cerr << "Allocated Device Arrays" << std::endl;
         if(algo=="1"||algo=="0"&&numSequences>=defau_thre){
             if(placemode=="0"){
                 std::cerr<<"Using exact placement mode\n";
@@ -201,7 +360,7 @@ int main(int argc, char** argv) {
 
                 //Build Tree on Gpu
                 auto createTreeStart = std::chrono::high_resolution_clock::now();
-                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC);
                 auto createTreeEnd = std::chrono::high_resolution_clock::now();
                 std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
                 MashPlacement::placementDeviceArrays.printTree(names);
@@ -209,30 +368,31 @@ int main(int argc, char** argv) {
 
                 // Print first 10 hash values corresponding to each sequence
                 // MashPlacement::mashDeviceArrays.printSketchValues(10);
-                MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
                 MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
             }
             else{
                 std::cerr<<"Using k-closest placement mode\n";
-                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(backboneSize, totalNumSequences);
-                MashPlacement::kplacementDeviceArraysHost.allocateHostArrays(backboneSize, totalNumSequences);
+                MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
                 auto createArrayEnd = std::chrono::high_resolution_clock::now();
                 std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
                 std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
-
                 //Build Tree on Gpu
                 auto createTreeStart = std::chrono::high_resolution_clock::now();
-                MashPlacement::kplacementDeviceArrays.findBackboneTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+
                 auto createTreeEnd = std::chrono::high_resolution_clock::now();
                 std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-                MashPlacement::kplacementDeviceArrays.printTree(names);
+                MashPlacement::kplacementDeviceArraysDC.printTreeDC(names);
                 std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
 
                 // Print first 10 hash values corresponding to each sequence
                 // MashPlacement::mashDeviceArrays.printSketchValues(10);
-                MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
-                MashPlacement::kplacementDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
+                MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             }
         }
         else{
@@ -241,54 +401,44 @@ int main(int argc, char** argv) {
                 std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
             }
             MashPlacement::njDeviceArrays.getDismatrix(
-                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+                numSequences,params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC
             );
             MashPlacement::njDeviceArrays.findNeighbourJoiningTree(names);
-            MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+            MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::njDeviceArrays.deallocateDeviceArrays();
         }
     }
     else if (in == "r" && out == "t"){
-        std::vector<std::string> seqs,names;
+        std::vector<std::string> seqs,names_, names;
 
         // Read Input Sequences (Fasta format)
-        readSequences(vm, seqs, names);
+        readSequences(vm, seqs, names_);
         size_t numSequences = seqs.size();
         std::vector<int> ids(numSequences);
         std::vector<std::string> temp1(numSequences),temp2(numSequences);
         for(int i=0;i<numSequences;i++) ids[i]=i;
         std::mt19937 rnd(time(NULL));
         std::shuffle(ids.begin(),ids.end(),rnd);
-        for(int i=0;i<numSequences;i++){
-            temp1[i]=seqs[ids[i]];
-            temp2[i]=names[ids[i]];
-        }
-        seqs=temp1,names=temp2;
-        std::cerr << "Shuffling done\n";
-        temp1.clear(); 
-        temp2.clear();
-
-        // std::ofstream outFile("seqs.fa");
-        // for (int i=0; i<numSequences; i++){
-        //     outFile << ">" << names[i] << "\n" << seqs[i] << "\n";
-        // }
-        // outFile.close();
+        names.resize(numSequences);
 
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
         uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
-        for (size_t i=0; i<numSequences; i++)
+        tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+        for (int idx_= range.begin(); idx_ < range.end(); ++idx_) 
         {   
+            int i = idx_;
             uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
             twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
 
-            seqLengths[i] = seqs[i].size();
-            twoBitCompressedSeqs[i] = twoBitCompressed;
+            seqLengths[ids[i]] = seqs[i].size();
+            twoBitCompressedSeqs[ids[i]] = twoBitCompressed;
+            names[ids[i]] = names_[i];
 
-        }
+        }});
         // delete seqs
         std::vector<std::string>().swap(seqs);
 
@@ -300,19 +450,19 @@ int main(int argc, char** argv) {
         std::cerr << "Input in: " <<  inputTime.count()/1000000 << " ms\n";
 
         totalNumSequences = numSequences;
-        backboneSize = numSequences/100;
+        backboneSize = numSequences/20;
         params.batchSize = backboneSize;
         params.backboneSize = backboneSize;
 
         // Create arrays
         auto createArrayStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        MashPlacement::mashDeviceArraysDC.allocateDeviceArraysDC(twoBitCompressedSeqs, seqLengths, numSequences, params);
         auto createArrayEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
         std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
         auto createSketchStart = std::chrono::high_resolution_clock::now();
-        MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params, twoBitCompressedSeqs, seqLengths, numSequences);
+        MashPlacement::mashDeviceArraysDC.sketchConstructionOnGpuDC(params, twoBitCompressedSeqs, seqLengths, numSequences);
         auto createSketchEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
         std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
@@ -324,29 +474,29 @@ int main(int argc, char** argv) {
                 std::cerr<<"Using exact placement mode\n";
                 MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
                 auto createTreeStart = std::chrono::high_resolution_clock::now();
-                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC);
                 auto createTreeEnd = std::chrono::high_resolution_clock::now();
                 std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
                 MashPlacement::placementDeviceArrays.printTree(names);
                 std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
-                MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+                MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();
                 MashPlacement::placementDeviceArrays.deallocateDeviceArrays();
             }
             else{
                 std::cerr<<"Using k-closest placement mode\n";
-                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(backboneSize, totalNumSequences);
+                MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
                 MashPlacement::kplacementDeviceArraysHost.allocateHostArrays(backboneSize, totalNumSequences);
                 auto createTreeStart = std::chrono::high_resolution_clock::now();
                 
-                MashPlacement::kplacementDeviceArrays.findBackboneTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, MashPlacement::kplacementDeviceArraysHost);
-                MashPlacement::kplacementDeviceArrays.findClusters(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
                 auto createTreeEnd = std::chrono::high_resolution_clock::now();
-                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
-                
-                MashPlacement::kplacementDeviceArrays.findClusterTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, MashPlacement::kplacementDeviceArraysHost);
-                MashPlacement::kplacementDeviceArrays.printTree(names);
-                MashPlacement::kplacementDeviceArrays.deallocateDeviceArrays();
-                MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+                std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart;
+
+                MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.printTreeDC(names);
+                MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
+                MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();
                 std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
                 
             }
@@ -357,10 +507,10 @@ int main(int argc, char** argv) {
                 std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
             }
             MashPlacement::njDeviceArrays.getDismatrix(
-                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+                numSequences,params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC
             );
             MashPlacement::njDeviceArrays.findNeighbourJoiningTree(names);
-            MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+            MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::njDeviceArrays.deallocateDeviceArrays();
         }
 
@@ -398,15 +548,15 @@ int main(int argc, char** argv) {
             if(placemode=="0"){
                 std::cerr<<"Using exact placement mode\n";
                 MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
-                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+                MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC);
                 MashPlacement::placementDeviceArrays.printTree(MashPlacement::matrixReader.name);
             }
             else{
                 std::cerr<<"Using k-closest placement mode\n";
-                MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(backboneSize, totalNumSequences);
+                MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
                 MashPlacement::kplacementDeviceArraysHost.allocateHostArrays(backboneSize, totalNumSequences);
-                MashPlacement::kplacementDeviceArrays.findBackboneTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, MashPlacement::kplacementDeviceArraysHost);
-                MashPlacement::kplacementDeviceArrays.printTree(MashPlacement::matrixReader.name);
+                MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHost);
+                MashPlacement::kplacementDeviceArraysDC.printTreeDC(MashPlacement::matrixReader.name);
             }
         }
         else{
@@ -415,7 +565,7 @@ int main(int argc, char** argv) {
                 std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
             }
             MashPlacement::njDeviceArrays.getDismatrix(
-                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+                numSequences,params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC
             );
             MashPlacement::njDeviceArrays.findNeighbourJoiningTree(MashPlacement::matrixReader.name);
             MashPlacement::njDeviceArrays.deallocateDeviceArrays();

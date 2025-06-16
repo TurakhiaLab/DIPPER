@@ -6,7 +6,9 @@
 #include <boost/program_options.hpp> 
 #include "../src/kseq.h"
 #include "zlib.h"
-
+#include <cuda_runtime.h>
+#include <tbb/tbb.h>
+#include <tbb/parallel_for.h>
 
 #ifndef TWOBITCOMPRESSOR_HPP
 #include "../src/twoBitCompressor.hpp"
@@ -19,6 +21,7 @@
 #ifndef MASHPL_CUH
 #include "../src/mash_placement.cuh"
 #endif
+
 
 namespace po = boost::program_options;
 
@@ -41,10 +44,42 @@ void parseArguments(int argc, char** argv)
         ("output-format,o", po::value<std::string>()->required(), "Output format (d - distance matrix, t - phylogenetic tree), required")
         ("algorithm,a", po::value<std::string>(), "Algorithm selection (0 - default mode, 1 - force placement, 2 - force conventional NJ)")
         ("placement-mode,p", po::value<std::string>(), "Placement mode selection (0 - exact mode, 1 - k-closest mode), default is k-closest")
+        ("add,d", po::value<bool>(), "Add query to a backbone tree using k-closest placement approach")
+        ("input-tree,n", po::value<std::string>(), "Input backbone tree in newick format")
         ("help,h", "Print help messages");
 
 }
 
+void readAllSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names, std::unordered_map<std::string, int>& nameToIdx)
+{
+    auto seqReadStart = std::chrono::high_resolution_clock::now();
+    std::string seqFileName = vm["input-file"].as<std::string>();
+
+    gzFile f_rd = gzopen(seqFileName.c_str(), "r");
+    if (!f_rd) {
+        fprintf(stderr, "ERROR: cant open file: %s\n", seqFileName.c_str());
+        exit(1);
+    }
+
+    kseq_t* kseq_rd = kseq_init(f_rd);
+
+    seqs.resize(names.size());
+
+    while (kseq_read(kseq_rd) >= 0) {
+        size_t seqLen = kseq_rd->seq.l;
+        if (nameToIdx.find(std::string(kseq_rd->name.s, kseq_rd->name.l)) == nameToIdx.end()) {
+            seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
+            names.push_back(std::string(kseq_rd->name.s, kseq_rd->name.l));
+        } else {
+            int id = nameToIdx[std::string(kseq_rd->name.s, kseq_rd->name.l)];
+            seqs[id] = std::string(kseq_rd->seq.s, seqLen);
+        }
+    }
+
+    auto seqReadEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds seqReadTime = seqReadEnd - seqReadStart;
+    // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
+}
 
 void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names)
 {
@@ -108,7 +143,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     uint64_t distanceType = 1;
-    try {threshold= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
+    try {distanceType= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
     catch(std::exception &e){}
 
     std::string in = "r";
@@ -127,40 +162,130 @@ int main(int argc, char** argv) {
     try {placemode = vm["algorithm"].as<std::string>();}
     catch(std::exception &e){}
 
+    bool add = false;
+    try {add = vm["add"].as<bool>();}
+    catch(std::exception &e){}
+
+    std::string treeFile = "";
+    try {treeFile = vm["input-tree"].as<std::string>();}
+    catch(std::exception &e){}
+    if (add && treeFile == "") {
+        std::cerr << "ERROR: Input tree file is required for adding query to a backbone tree.\n";
+        return 1;
+    }
+
+    int device_id = 1;  // Use GPU 1 (second GPU)
+    cudaError_t err = cudaSetDevice(device_id);
+    if (err != cudaSuccess) {
+        std::cerr << "Failed to set CUDA device: " << cudaGetErrorString(err) << std::endl;
+        return -1;
+    }
+
     int defau_thre = 10000; // Default threshold between conventional NJ and placement
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+
+    if (add) {
+        // Load the tree from the file
+        std::ifstream treeFileStream(treeFile);
+        if (!treeFileStream) {
+            std::cerr << "ERROR: Unable to open input tree file: " << treeFile << "\n";
+            return 1;
+        }
+        std::vector<std::string> seqs, names, namesDump;
+        readSequences(vm, seqs, namesDump);
+        std::cerr << "Read " << seqs.size() << " sequences from input file.\n";
+        assert(seqs.size() > 0 && "No sequences found in the input file.");
+
+        std::string newickTree;
+        std::getline(treeFileStream, newickTree);
+        Tree *t = new Tree(newickTree, namesDump.size());
+        std::cerr << "Tree loaded successfully with "<< t->allNodes.size()<<" nodes and root " << t->root->name << ".\n";
+        size_t backboneSize = t->m_numLeaves;
+        size_t numSequences = seqs.size();
+
+        std::unordered_map<int, int> idMap;
+
+        names.resize(backboneSize);
+        for (int i=0; i<numSequences;i++){
+            if (t->allNodes.find(namesDump[i]) == t->allNodes.end()) {
+                names.push_back(namesDump[i]);
+                idMap[i] = names.size()-1;
+            } else {
+                names[t->allNodes[namesDump[i]]->idx] = namesDump[i];
+                idMap[i]=t->allNodes[namesDump[i]]->idx;
+            }
+        }
+
+        if (in == "r" && out == "t") {
+            uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
+            uint64_t * seqLengths = new uint64_t[numSequences];
+            tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+            for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
+                uint64_t i = static_cast<uint64_t>(idx_);
+                uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+                uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
+                twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+
+                int newId = idMap[i];
+                seqLengths[newId] = seqs[i].size();
+                twoBitCompressedSeqs[newId] = twoBitCompressed;
+            }});
+            std::cerr << "Allocating Mash Device Arrays" << std::endl;
+            MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+            
+            std::cerr << "Sketch Construction in Progress" << std::endl;
+            MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+
+            MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences, backboneSize);
+            MashPlacement::kplacementDeviceArrays.initializeDeviceArrays(t);
+            MashPlacement::kplacementDeviceArrays.addQuery(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
+            MashPlacement::kplacementDeviceArrays.printTree(names);
+        }
+        return;
+    }
+
     if (in == "m" && out == "t"){
         std::vector<std::string> seqs,names;
 
         // Read Input Sequences (Fasta format)
         readSequences(vm, seqs, names);
         size_t numSequences = seqs.size();
-        std::vector<int> ids(numSequences);
-        std::vector<std::string> temp1(numSequences),temp2(numSequences);
-        for(int i=0;i<numSequences;i++) ids[i]=i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
-        for(int i=0;i<numSequences;i++){
-            temp1[i]=seqs[ids[i]];
-            temp2[i]=names[ids[i]];
-        }
-        seqs=temp1,names=temp2;
+        // std::vector<int> ids(numSequences);
+        // std::vector<std::string> temp1(numSequences),temp2(numSequences);
+        // for(int i=0;i<numSequences;i++) ids[i]=i;
+        // std::mt19937 rnd(time(NULL));
+        // std::shuffle(ids.begin(),ids.end(),rnd);
+        // for(int i=0;i<numSequences;i++){
+        //     temp1[i]=seqs[ids[i]];
+        //     temp2[i]=names[ids[i]];
+        // }
+        // seqs=temp1,names=temp2;
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
         uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
-        for (size_t i=0; i<numSequences; i++)
-        {   
+        tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+        for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
+            uint64_t i = static_cast<uint64_t>(idx_);
             uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
             uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
             fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
 
             seqLengths[i] = seqs[i].size();
             fourBitCompressedSeqs[i] = fourBitCompressed;
+        }});
+        // for (size_t i=0; i<numSequences; i++)
+        // {   
+        //     uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
+        //     uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+        //     fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
 
-        }
+        //     seqLengths[i] = seqs[i].size();
+        //     fourBitCompressedSeqs[i] = fourBitCompressed;
+
+        // }
         auto compressEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds compressTime = compressEnd - compressStart;
         // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";
@@ -237,31 +362,41 @@ int main(int argc, char** argv) {
         // Read Input Sequences (Fasta format)
         readSequences(vm, seqs, names);
         size_t numSequences = seqs.size();
-        std::vector<int> ids(numSequences);
-        std::vector<std::string> temp1(numSequences),temp2(numSequences);
-        for(int i=0;i<numSequences;i++) ids[i]=i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
-        for(int i=0;i<numSequences;i++){
-            temp1[i]=seqs[ids[i]];
-            temp2[i]=names[ids[i]];
-        }
-        seqs=temp1,names=temp2;
+        // std::vector<int> ids(numSequences);
+        // std::vector<std::string> temp1(numSequences),temp2(numSequences);
+        // for(int i=0;i<numSequences;i++) ids[i]=i;
+        // std::mt19937 rnd(time(NULL));
+        // std::shuffle(ids.begin(),ids.end(),rnd);
+        // for(int i=0;i<numSequences;i++){
+        //     temp1[i]=seqs[ids[i]];
+        //     temp2[i]=names[ids[i]];
+        // }
+        // seqs=temp1,names=temp2;
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
         uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
-        for (size_t i=0; i<numSequences; i++)
-        {   
+        tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+        for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
+            uint64_t i = static_cast<uint64_t>(idx_);
             uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
             twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
 
             seqLengths[i] = seqs[i].size();
             twoBitCompressedSeqs[i] = twoBitCompressed;
+        }});
+        // for (size_t i=0; i<numSequences; i++)
+        // {   
+        //     uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+        //     uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
+        //     twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
 
-        }
+        //     seqLengths[i] = seqs[i].size();
+        //     twoBitCompressedSeqs[i] = twoBitCompressed;
+
+        // }
         auto compressEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds compressTime = compressEnd - compressStart;
         // std::cout << "Compressed in: " <<  compressTime.count() << " ns\n";

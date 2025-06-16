@@ -390,7 +390,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
     int threadsPerBlock = 512;
     int blocksPerGrid = (numSequences + threadsPerBlock - 1) / threadsPerBlock;
     size_t sharedMemorySize = sizeof(uint64_t) * (2000);
-    sketchConstruction<<<1, threadsPerBlock, sharedMemorySize>>>(
+    sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
         d_compressedSeqs, d_seqLengths, d_prefixCompressed, numSequences, d_hashList, kmerSize
     );
 
@@ -449,15 +449,14 @@ __global__ void mashDistConstruction(
         if(uni >= sketchSize) break;
     }
     assert(uni==1000);
-    assert(inter!=0);
-    assert(0);
+    // assert(inter!=0);
     double jaccardEstimate = max(double(inter),1.0)/uni;
     d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
 
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
     int threadNum = 256, blockNum = (numSequences+threadNum-1)/threadNum;
-    mashDistConstruction <<<threadNum, blockNum>>> (
+    mashDistConstruction <<<blockNum, threadNum>>> (
         rowId, 
         d_hashList, 
         d_mashDist, 

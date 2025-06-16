@@ -1,4 +1,4 @@
-#include "mash_placement.cuh"
+#include "../mash_placement.cuh"
 
 #include <stdio.h>
 #include <queue>
@@ -10,7 +10,7 @@
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
 
-void MashPlacement::KPlacementDeviceArraysHost::allocateHostArrays(size_t num, size_t totalNum){
+void MashPlacement::KPlacementDeviceArraysHostDC::allocateHostArraysDC(size_t num, size_t totalNum){
     numSequences = int(num);
     totalNumSequences = int(totalNum);
     bd = 2, idx = 0;
@@ -576,7 +576,7 @@ void initializeClusterCpu (
 
 
 
-void MashPlacement::KPlacementDeviceArraysHost::deallocateHostArrays(){
+void MashPlacement::KPlacementDeviceArraysHostDC::deallocateHostArraysDC(){
     
     free(h_head);
     free(h_e);
@@ -592,7 +592,7 @@ void MashPlacement::KPlacementDeviceArraysHost::deallocateHostArrays(){
 }
 
 
-void MashPlacement::KPlacementDeviceArraysHost::printTreeCpu(std::vector <std::string> name){
+void MashPlacement::KPlacementDeviceArraysHostDC::printTreeCpuDC(std::vector <std::string> name){
     
     auto print=[&](int node, int from, auto&& print)->void {
         if(h_nxt[h_head[node]]!=-1){
@@ -684,11 +684,11 @@ void MashPlacement::KPlacementDeviceArraysHost::findCluster(
 } 
 */
 
-void MashPlacement::KPlacementDeviceArraysHost::findClusterTree(
+void MashPlacement::KPlacementDeviceArraysHostDC::findClusterTreeDC(
     Param& params,
-    const MashDeviceArrays& mashDeviceArrays,
+    const MashDeviceArraysDC& mashDeviceArrays,
     MatrixReader& matrixReader,
-    const MSADeviceArrays& msaDeviceArrays
+    const MSADeviceArraysDC& msaDeviceArrays
 ){ 
     // tbb::global_control c(tbb::global_control::max_allowed_parallelism, 32);
     int idx=params.backboneSize*4-4;
