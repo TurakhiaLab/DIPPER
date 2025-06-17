@@ -58,7 +58,6 @@ theme:
   font:
     text: Roboto
     code: Roboto Mono
-  custom_dir: overrides
 
 extra_css:
   - styles/extra.css
