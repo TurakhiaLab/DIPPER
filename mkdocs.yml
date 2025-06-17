@@ -26,22 +26,44 @@ theme:
     - navigation.expand
     - search.highlight
     - search.suggest
-  palette:
-    # Dark Mode
-    - scheme: slate
-      toggle:
-        icon: material/weather-sunny
-        name: Light mode
-      primary: white
-      accent: light green
+  # palette:
+  #   # Light Mode
+  #   - scheme: default
+  #     toggle:
+  #       icon: material/weather-night
+  #       name: Dark mode
+  #     primary: green
+  #     accent: white
 
-    # Light Mode
+  #   # Dark Mode
+  #   - scheme: slate
+  #     toggle:
+  #       icon: material/weather-sunny
+  #       name: Light mode
+  #     primary: white
+  #     accent: light green
+  palette:
     - scheme: default
+      primary: custom
+      accent: custom
       toggle:
         icon: material/weather-night
-        name: Dark mode
-      primary: green
-      accent: black
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  custom_dir: overrides
+
+extra_css:
+  - styles/extra.css
+
+    
 
 plugins:
   - search

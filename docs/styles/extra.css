@@ -1,0 +1,21 @@
+/* LIGHT MODE */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: #2E7D32;   /* Forest Green */
+  --md-primary-bg-color: #F7F9F7;   /* Soft greenish white */
+  --md-accent-fg-color: #2E7D32;
+  --md-default-bg-color: #FFFFFF;
+  --md-typeset-color: #222222;
+  --md-code-bg-color: #C8E6C9;      /* Light green for code blocks */
+  --md-code-fg-color: #1B5E20;      /* Darker green text in code */
+}
+
+/* DARK MODE */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #81C784;   /* Soft leafy green */
+  --md-primary-bg-color: #121212;
+  --md-accent-fg-color: #81C784;
+  --md-default-bg-color: #121212;
+  --md-typeset-color: #E0E0E0;
+  --md-code-bg-color: #2E7D32;      /* Green background for code */
+  --md-code-fg-color: #C8E6C9;      /* Light green code text */
+}
