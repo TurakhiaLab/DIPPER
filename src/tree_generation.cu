@@ -39,7 +39,7 @@ void parseArguments(int argc, char** argv)
         "Input format:\n"
         "  d - distance matrix in PHYLIP format\n"
         "  r - unaligned sequences in FASTA format\n"
-        "  m - alinged sequences in FASTA format")
+        "  m - aligned sequences in FASTA format")
 
         ("input-file,I",       po::value<std::string>()->required(),
         "Input file path:\n"
