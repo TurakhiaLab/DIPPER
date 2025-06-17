@@ -1,6 +1,6 @@
 # <b>Welcome to DIPPER Wiki</b>
 <div align="center">
-    <img src="images/logo.png"/>
+    <img src="images/logo.svg"/>
 </div>
 
 ## <b>Introduction</b> 
