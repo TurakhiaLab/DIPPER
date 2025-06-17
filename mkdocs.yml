@@ -1,0 +1,89 @@
+site_name: DIPPER
+repo_name: TurakhiaLab/DIPPER
+repo_url: https://github.com/TurakhiaLab/DIPPER
+
+theme:
+  name: material
+
+  logo: images/logo.png
+  favicon: images/logo.png
+  features:
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+    - content.action.edit
+    - content.action.view
+    - content.tooltips
+    - toc.follow
+    - toc.integrate
+    - navigation.tabs
+    - navigation.sections
+    - navigation.path
+    - navigation.tabs.sticky
+    - navigation.instant.prefetch
+    - navigation.tracking
+    - navigation.footer
+    - navigation.expand
+    - search.highlight
+    - search.suggest
+  # palette:
+  #   # Light Mode
+  #   - scheme: default
+  #     toggle:
+  #       icon: material/weather-night
+  #       name: Dark mode
+  #     primary: green
+  #     accent: white
+
+  #   # Dark Mode
+  #   - scheme: slate
+  #     toggle:
+  #       icon: material/weather-sunny
+  #       name: Light mode
+  #     primary: white
+  #     accent: light green
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+extra_css:
+  - styles/extra.css
+
+    
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/TurakhiaLab/DIPPER
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+
+use_directory_urls: false
+nav:
+  - Home: index.md
