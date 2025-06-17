@@ -9,6 +9,7 @@
 #include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
+#include <fstream>
 #include <cub/cub.cuh>
 
 void MashPlacement::KPlacementDeviceArrays::allocateDeviceArrays(size_t num, int backboneSize) {
@@ -564,7 +565,7 @@ void MashPlacement::KPlacementDeviceArrays::deallocateDeviceArrays(){
 }
 
 
-void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> name){
+void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[numSequences*2];
     int * h_e = new int[numSequences*8];
     int * h_nxt = new int[numSequences*8];
@@ -573,18 +574,23 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     int * h_closest_id = new int[numSequences*20];
     std::function<void(int,int)>  print=[&](int node, int from){
         if(h_nxt[h_head[node]]!=-1){
-            printf("(");
+            // printf("(");
+            output_ << "(";
             std::vector <int> pos;
             for(int i=h_head[node];i!=-1;i=h_nxt[i])
                 if(h_e[i]!=from)
                     pos.push_back(i);
             for(size_t i=0;i<pos.size();i++){
                 print(h_e[pos[i]],node);
-                printf(":");
-                printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                // output_ << "%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',';
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
             }
         }
-        else std::cout<<name[node];
+        // else std::cout<<name[node];
+        else output_<<name[node];
     };
     auto err = cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
@@ -632,7 +638,8 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
 
 
     print(numSequences+bd-2,-1);
-    std::cout<<";\n";
+    // std::cout<<";\n";
+    output_<<";\n";
 }
 
 

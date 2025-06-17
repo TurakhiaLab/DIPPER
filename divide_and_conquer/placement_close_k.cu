@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <queue>
+#include <fstream>
 #include <unordered_map>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
@@ -647,7 +648,7 @@ void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
 }
 
 
-void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name){
+void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[totalNumSequences*2];
     int * h_e = new int[totalNumSequences*8];
     int * h_nxt = new int[totalNumSequences*8];
@@ -656,18 +657,22 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
     int * h_closest_id = new int[totalNumSequences*20];
     std::function<void(int,int)>  print=[&](int node, int from){
         if(h_nxt[h_head[node]]!=-1){
-            printf("(");
+            // printf("(");
+            output_ << "(";
             std::vector <int> pos;
             for(int i=h_head[node];i!=-1;i=h_nxt[i])
                 if(h_e[i]!=from)
                     pos.push_back(i);
             for(size_t i=0;i<pos.size();i++){
                 print(h_e[pos[i]],node);
-                printf(":");
-                printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
             }
         }
-        else std::cout<<name[node];
+        // else std::cout<<name[node];
+        else output_<<name[node];
     };
     auto err = cudaMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
@@ -701,7 +706,8 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
     // std::cerr << "\n";
 
     print(totalNumSequences+bd-2,-1);
-    std::cout<<";\n";
+    // std::cout<<";\n";
+    output_<<";\n";
 }
 
 /*

@@ -160,7 +160,7 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
-        void printTree(std::vector <std::string> name);
+        void printTree(std::vector <std::string> name, std::ofstream& output_);
     };
     static PlacementDeviceArrays placementDeviceArrays;
 
@@ -192,7 +192,7 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
-        void printTree(std::vector <std::string> name);
+        void printTree(std::vector <std::string> name, std::ofstream& output_);
     };
     static KPlacementDeviceArrays kplacementDeviceArrays;
 
@@ -209,7 +209,7 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
-        void findNeighbourJoiningTree(std::vector <std::string> &name);
+        void findNeighbourJoiningTree(std::vector <std::string> &name, std::ofstream& output_);
     };
     static NJDeviceArrays njDeviceArrays;
 
@@ -282,7 +282,7 @@ namespace MashPlacement
             MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
         );
-        void printTreeDC(std::vector <std::string> name);
+        void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
     };
     static KPlacementDeviceArraysDC kplacementDeviceArraysDC;
 
