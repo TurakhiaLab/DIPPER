@@ -22,6 +22,11 @@
   - [Using Dockerfile](#dockerfile)
   - [Using Installation Script](#script)
 - [Run DIPPER](#run)
+  - [De-novo](#denovo)
+    - [Using default mode](#default)
+    - [Using placement technique](#place)
+    - [Using divide-and-conquer technique](#dc)
+  - [Adding tips to a backbone tree](#add)
 - [Contributions](#contribution)
 - [Citing DIPPER](#cite)
 
@@ -30,7 +35,7 @@
 DIPPER (**DI**stance-based **P**hylogenetic **P**lac**ER**) is an ultrafast tool designed to reconstruct ultralarge phylogenies. 
 
 ## <a name="install"></a> Installation
-NOTE: DIPPER is currently supported on systems with <b>NVIDIA GPUs only</b>. Support for other platforms including AMD GPUs, CPU-only for x86-64 and ARM64 architecture will be added soon, stay tuned!
+NOTE: DIPPER is currently supported on systems with <b>NVIDIA GPUs only</b>. Support for additional platforms, including AMD GPUs and CPU-only options for x86-64 and ARM64 architecture, will be added soon. Stay tuned!
 
 ### 1. <a name="dockerimage"></a> Using Docker Image
 To use DIPPER in a docker container, users can create a docker container from a docker image, by following these steps
@@ -38,7 +43,7 @@ To use DIPPER in a docker container, users can create a docker container from a 
 1. [Docker](https://docs.docker.com/engine/install/)
 #### ii. Pull and build the DIPPER docker image from DockerHub
 ```bash
-## Note: If the Docker image already exist locally, make sure to pull the latest version using 
+## Note: If the Docker image already exists locally, make sure to pull the latest version using 
 ## docker pull swalia14/dipper:latest
 
 ## If the Docker image does not exist locally, the following command will pull and run the latest version
@@ -51,7 +56,7 @@ dipper --help
 ```
 
 ### 2. Using DockerFile <a name="dockerfile"></a>
-Docker container with preinstalled DIPPER program can also be built from a Dockerfile by following these steps.
+Docker container with the preinstalled DIPPER program can also be built from a Dockerfile by following these steps.
 
 #### i. Dependencies
 1. [Docker](https://docs.docker.com/engine/install/)
@@ -115,34 +120,77 @@ cd bin
 ## <a name="run"></a> Run DIPPER
 For more information about DIPPER's options and instructions, see [wiki](https://turakhia.ucsd.edu/DIPPER/) for more details. 
 
-### Construct phylogeny from raw sequences
+### De-novo phylogeny construction <a name="denovo"></a>
+DIPPER supports de-novo construction of phylogenies from unaligned/aligned sequences in FASTA format and distance matrix in PHYLIP format. 
+
+#### Default mode <a name="default"></a>
+In default mode, DIPPER constructs phylogeny using:
+1. Conventional NJ for sequences/tips < 30,000
+2. Placement technique for sequences/tips >= 30,000 and < 1,000,000
+3. Divide-and-conquer technique for sequences/tips >= 1,000,000
+
+##### From unaligned sequences
 Usage syntax
 ```bash
 ./dipper -i r -o t -I <path to unaligned sequences FASTA file> -O <path to output file>
 ```
 Example
 ```bash
-./dipper -i r -o t -I ../dataset/input.unaligned.fa -O tree.nwk
+./dipper -i r -o t -I ../dataset/t2.unaligned.fa -O tree.nwk
 ```
 
-### Construct phylogeny from aligned sequences
+##### From aligned sequences
 Usage syntax (using JC model)
 ```bash
 ./dipper -i m -o t -d 2 -I <path to aligned sequences FASTA file> -O <path to output file>
 ```
 Example
 ```bash
-./dipper -i m -o t -d 2 -I ../dataset/input.aligned.fa -O tree.nwk
+./dipper -i m -o t -d 2 -I ../dataset/t1.aligned.fa -O tree.nwk
 ```
 
-### Construct phylogeny from distance matrix
+##### From distance matrix
 Usage syntax 
 ```bash
 ./dipper -i d -o t -I <path to distance matrix PHYLIP file> -O <path to output file>
 ```
 Example
 ```bash
-./dipper -i d -o t -I ../dataset/input.phy -O tree.nwk
+./dipper -i d -o t -I ../dataset/t2.phy -O tree.nwk
+```
+
+#### Construct phylogeny using placement technique <a name="place"></a>
+DIPPER allows users to construct phylogeny using the forced placement technique by setting the `-m` option to `1`. Below we provide a syntax and an example for input unaligned sequences, but DIPPER also supports aligned sequences and distance matrix as input.
+Usage syntax
+```bash
+./dipper -i r -o t -m 1 -I <path to unaligned sequences FASTA file> -O <path to output file>
+```
+Example
+```bash
+./dipper -i r -o t -m 1 -I ../dataset/t2.unaligned.fa -O tree.nwk
+```
+
+#### Construct phylogeny using divide-and-conquer technique <a name="dc"></a>
+DIPPER allows users to construct phylogeny using the forced divide-and-conquer technique by setting the `-m` option to `3`. Below we provide a syntax and an example for input unaligned sequences, but DIPPER also supports aligned sequences and distance matrix as input.
+Usage syntax
+```bash
+./dipper -i r -o t -m 3 -I <path to unaligned sequences FASTA file> -O <path to output file>
+```
+Example
+```bash
+./dipper -i r -o t -m 3 -I ../dataset/t2.unaligned.fa -O tree.nwk
+```
+
+### Adding tips (sequences) to a backbone tree <a name="add"></a>
+DIPPER allows users to add tips to an existing backbone tree using the placement technique. It requires tip sequences from the backbone tree and input query sequences to be provided in a single file (FASTA format), along with the input tree in Newick format.
+
+Usage syntax 
+```bash
+./dipper -i r -o t -m 1 --add -I <path to unaligned/aligned sequences FASTA file (containing backbone tree tip sequences and query sequences)> -O <path to output file> -t <path to input tree>
+```
+Example
+```bash
+./dipper -i r -o t -m 1 --add -I ../dataset/t2.unaligned.fa -O tree.nwk -t ../dataset/backbone.nwk
 ```
 
 ##  <a name="contribution"></a> Contributions
