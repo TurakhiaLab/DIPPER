@@ -120,6 +120,13 @@ cd bin
 ## <a name="run"></a> Run DIPPER
 For more information about DIPPER's options and instructions, see [wiki](https://turakhia.ucsd.edu/DIPPER/) for more details. 
 
+<b>Note:</b> All the files in the examples below can be found in the `DIPPER/dataset`.
+
+Enter into the bin directory (assuming `$DIPPER_HOME` directs to the DIPPER repository directory). For the docker container `$DIPPER_HOME` is `/home/DIPPER`   
+```bash
+cd $DIPPER_HOME/bin
+./dipper -h
+```
 ### De-novo phylogeny construction <a name="denovo"></a>
 DIPPER supports de-novo construction of phylogenies from unaligned/aligned sequences in FASTA format and distance matrix in PHYLIP format. 
 
