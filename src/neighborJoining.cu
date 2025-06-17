@@ -3,6 +3,8 @@
 #endif
 
 #include <stdio.h>
+#include <ostream>
+#include <fstream>
 #include <queue>
 #include <vector>
 #include <thrust/sort.h>
@@ -79,7 +81,7 @@ void MashPlacement::NJDeviceArrays::getDismatrix(
             );
         }
     }
-    fillDismatrix <<<256,256>>> (d_numSequences, d_mashDist);
+    fillDismatrix <<<1024,1024>>> (d_numSequences, d_mashDist);
 }
 
 void MashPlacement::NJDeviceArrays::deallocateDeviceArrays(){
@@ -192,7 +194,7 @@ __global__ void updateDisMatrix(int d_numSequences, double *d_mashDist, double d
 }
 
 
-void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::string> &name){
+void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::string> &name, std::ofstream& output_){
     std::vector <std::vector<std::pair<int,double>>> tree(d_numSequences*2);
     // Store the tree in a vector of vectors, while each small vector consists of several pairs
     // First element in the pair is the index of its child
@@ -249,17 +251,22 @@ void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::s
     // Output the tree recursively
     std::function<void(int)>  print=[&](int node){
         if(tree[node].size()){
-            printf("(");
+            // printf("(");
+            output_ << "(";
             for(size_t i=0;i<tree[node].size();i++){
                 print(tree[node][i].first);
-                printf(":");
-                printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
+                // printf(":");
+                // printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
+                output_ << ":";
+                output_ << tree[node][i].second << (i+1==tree[node].size()?')':',');
             }
         }
-        else std::cout<<name[node];
+        else output_ << name[node];
+        // else std::cout<<name[node];
     };
     // Root of the tree has an index of d_numSequneces*2-2
     print(d_numSequences*2-2);
-    std::cout<<";\n";
+    // std::cout<<";\n";
+    output_<<";\n";
 }
 
