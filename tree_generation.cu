@@ -224,8 +224,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     bool add = false;
-    try {add = vm["add"].as<bool>();}
-    catch(std::exception &e){}
+    if (vm.count("add")) add = true;
 
     std::string treeFile = "";
     try {treeFile = vm["input-tree"].as<std::string>();}
