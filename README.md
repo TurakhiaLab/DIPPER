@@ -8,7 +8,7 @@
 [![License][license-badge]][license-link] [<img src="https://img.shields.io/badge/Build with-CMake-green.svg?logo=snakemake">](https://cmake.org)
 
 <div align="center">
-  <img src="docs/images/logo.png"/>
+  <img src="docs/images/logo.png"/ width="300">
 </div>
 
 </div>
