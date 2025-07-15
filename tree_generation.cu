@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
     catch(std::exception &e){}
 
     std::string placemode = "1";
-    try {placemode = vm["algorithm"].as<std::string>();}
+    try {placemode = vm["placement-mode"].as<std::string>();}
     catch(std::exception &e){}
 
     bool add = false;
@@ -237,12 +237,12 @@ int main(int argc, char** argv) {
     std::string outputFile = vm["output-file"].as<std::string>();
     std::ofstream output_(outputFile.c_str());
 
-    int device_id = 1;  // Use GPU 1 (second GPU)
-    cudaError_t err = cudaSetDevice(device_id);
-    if (err != cudaSuccess) {
-        std::cerr << "Failed to set CUDA device: " << cudaGetErrorString(err) << std::endl;
-        return -1;
-    }
+    // int device_id = 1;  // Use GPU 1 (second GPU)
+    // cudaError_t err = cudaSetDevice(device_id);
+    // if (err != cudaSuccess) {
+    //     std::cerr << "Failed to set CUDA device: " << cudaGetErrorString(err) << std::endl;
+    //     return -1;
+    // }
 
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
@@ -542,7 +542,7 @@ int main(int argc, char** argv) {
             std::cerr<<"Using divide-and-conquer mode\n";
             
             int totalNumSequences = numSequences;
-            int backboneSize = numSequences/20;
+            int backboneSize = numSequences/100;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
 
