@@ -64,10 +64,10 @@ void parseArguments(int argc, char** argv)
         "  2 - force conventional NJ\n"
         "  3 - force divide-and-conquer")
 
-        ("placement-mode,p",   po::value<std::string>(),
+        ("--K-closest,K",   po::value<std::string>(),
         "Placement mode:\n"
-        "  0 - exact mode\n"
-        "  1 - k-closest mode (default)")
+        "  -1 - exact mode\n"
+        "  10 - default")
 
         ("kmer-size,k",        po::value<std::string>(),
         "K-mer size:\n"
@@ -219,8 +219,8 @@ int main(int argc, char** argv) {
     try {algo = vm["algorithm"].as<std::string>();}
     catch(std::exception &e){}
 
-    std::string placemode = "1";
-    try {placemode = vm["placement-mode"].as<std::string>();}
+    std::string placemode = "10";
+    try {placemode = vm["K-closest"].as<std::string>();}
     catch(std::exception &e){}
 
     bool add = false;
@@ -376,7 +376,7 @@ int main(int argc, char** argv) {
         MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
         if(algo=="1"||algo=="0"&&numSequences>=placement_thr&&numSequences<dc_thr){
             std::cerr<<"Using ";
-            if(placemode=="0"){
+            if(placemode=="-1"){
                 std::cerr<<" exact placement mode\n";
                 MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
                 auto createArrayEnd = std::chrono::high_resolution_clock::now();
@@ -513,7 +513,7 @@ int main(int argc, char** argv) {
             auto createSketchEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
             std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
-            if(placemode=="0"){
+            if(placemode=="-1"){
                 std::cerr<<"Using exact placement mode\n";
                 MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
                 auto createTreeStart = std::chrono::high_resolution_clock::now();
@@ -611,7 +611,7 @@ int main(int argc, char** argv) {
         fgets(temp, 20, filePtr);
         MashPlacement::matrixReader.allocateDeviceArrays(numSequences, filePtr);
         if(algo=="1"||algo=="0"&&numSequences>=placement_thr&&numSequences<dc_thr){
-            if(placemode=="0"){
+            if(placemode=="-1"){
                 std::cerr<<"Using exact placement mode\n";
                 MashPlacement::placementDeviceArrays.allocateDeviceArrays(numSequences);
                 MashPlacement::placementDeviceArrays.findPlacementTree(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays);
