@@ -64,7 +64,7 @@ void parseArguments(int argc, char** argv)
         "  2 - force conventional NJ\n"
         "  3 - force divide-and-conquer")
 
-        ("--K-closest,K",   po::value<std::string>(),
+        ("K-closest,K",   po::value<std::string>(),
         "Placement mode:\n"
         "  -1 - exact mode\n"
         "  10 - default")
