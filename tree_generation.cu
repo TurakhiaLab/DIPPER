@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
+#include "version.hpp"
 
 #ifndef TWOBITCOMPRESSOR_HPP
 #include "../src/twoBitCompressor.hpp"
@@ -92,7 +93,9 @@ void parseArguments(int argc, char** argv)
         "Input backbone tree (Newick format), required with --add option")
 
         ("help,h",
-        "Print this help message");
+        "Print this help message")
+        
+        ("version,v", "Print DIPPER version");
 
     mainDesc.add(requiredDesc).add(optionalDesc);
 
@@ -173,10 +176,16 @@ int main(int argc, char** argv) {
             std::cerr << mainDesc << std::endl;
             return 0;
         }
+        else if (vm.count("version")) {
+            std::cout << "DIPPER Version " << PROJECT_VERSION << std::endl;
+            return;
+        } 
         std::cerr << "\033[31m" << e.what() << "\033[0m"  << std::endl;
         std::cerr << mainDesc << std::endl;
         return 1;
     }
+
+    
 
     
     if (vm.count("add")) {
