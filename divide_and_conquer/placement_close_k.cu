@@ -1,8 +1,10 @@
 #include "../mash_placement.cuh"
 
 #include <stdio.h>
+#include <zlib.h>
 #include <queue>
 #include <fstream>
+#include <sstream>
 #include <unordered_map>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
@@ -672,7 +674,9 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
             }
         }
         // else std::cout<<name[node];
-        else output_<<name[node];
+        else {
+            output_<<name[node];
+        }
     };
     auto err = cudaMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
@@ -699,14 +703,14 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
         exit(1);
     }
 
+    
     // print len
-    // for (int i=0;i<totalNumSequences;i++){
-    //     std::cerr << h_len[i] << std::endl;
+    // for (int i=0; i<totalNumSequences*2;i++){
+    //     std::cout << h_head[i] << "\t";
     // }
-    // std::cerr << "\n";
-
+    // std::cout << std::endl;
+ 
     print(totalNumSequences+bd-2,-1);
-    // std::cout<<";\n";
     output_<<";\n";
 }
 
@@ -953,7 +957,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     uint64_t localBatchSize = params.batchSize;
     for(int i=numSequences;i<totalNumSequences;i+=localBatchSize){
         if (i+localBatchSize>totalNumSequences) localBatchSize=totalNumSequences-i;
-        std::cerr << "Processing batch: "<< i << " to " << i+localBatchSize << "\n";
+        // std::cerr << "Processing batch: "<< i << " to " << i+localBatchSize << "\n";
         
         /* copy data to d_hashListConst or d_compressedSeqsConst */
         if (params.in == "r") 
@@ -1027,7 +1031,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
             auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
             thrust::tuple<int,double,double> smallest=*iter;
             kplacementDeviceArraysHost.clusterID[j] = thrust::get<0>(smallest);
-            // std::cerr << "Cluster ID: " << kplacementDeviceArraysHost.clusterID[j] << "\n";
+            // std::cerr << "Sequence " << j << " assigned to cluster " << kplacementDeviceArraysHost.clusterID[j] << "\n";
         }
     }
     auto clusterEnd = std::chrono::high_resolution_clock::now();
@@ -1109,6 +1113,79 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     cudaDeviceSynchronize();
 
     std::cerr << "Finished data transfer\n";
+    return;
+}
+
+void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
+    Param& params,
+    const MashDeviceArraysDC& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    const MSADeviceArraysDC& msaDeviceArrays,
+    KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
+    const int clusteringBatchIdx
+){ 
+    cudaError err;
+    
+    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
+    int threadNum = 1024, blockNum = 1024;
+
+    auto clusterStart = std::chrono::high_resolution_clock::now();
+
+    for(int i=0;i<params.batchSize;i++){
+        
+        if(params.in == "r"){
+            mashDeviceArrays.distRangeConstructionOnGpuDC(
+                params,
+                i,
+                d_dist,
+                0,
+                numSequences-1,
+                true
+            );
+        }
+        else if(params.in == "d"){
+            matrixReader.distConstructionOnGpu(
+                params,
+                i,
+                d_dist
+            );
+        }
+        else if(params.in == "m"){
+            msaDeviceArrays.distRangeConstructionOnGpuDC(
+                params,
+                i,
+                d_dist,
+                0,
+                numSequences-1,
+                true
+            );
+        }
+
+
+        auto disEnd = std::chrono::high_resolution_clock::now();
+        auto treeStart = std::chrono::high_resolution_clock::now();
+        
+        calculateBranchLengthDC <<<blockNum,threadNum>>> (
+            clusteringBatchIdx*params.batchSize + i,
+            d_head,
+            d_nxt,
+            d_dist,
+            d_e,
+            d_len,
+            d_belong,
+            thrust::raw_pointer_cast(minPos.data()),
+            numSequences*4-4,
+            d_closest_dis,
+            d_closest_id
+        );
+        auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
+        thrust::tuple<int,double,double> smallest=*iter;
+        kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] = thrust::get<0>(smallest);
+
+        // std::cerr << "Seq idx: " << clusteringBatchIdx*params.batchSize + i << " Cluster ID: " << kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] << "\n";
+    }
+    cudaDeviceSynchronize();
+
     return;
 }
 
@@ -1205,6 +1282,8 @@ void transferMsaClusterInfoDC(
     delete[] compressedSeqs_local;
     return;
 }
+
+
 
 
 __global__ 
@@ -1325,6 +1404,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     std::unordered_map <int,int> h_leafMap;
     
     // for(int i=0;i<numSequences*4-4;i++){ 
+    int actual_placement=0;
     int i=0;
     while (i<numSequences*4-4) {
         std::cerr << "Processing batch "<< i << " out of " << numSequences*4-4 <<  std::endl;
@@ -1373,6 +1453,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
             );
             int edgeCount=2, leafCount=10;
             for(auto &leaf:contains[j]) {
+                actual_placement++;
                 // std::cerr << "Processing leaf: "<< leaf << std::endl;
                 // copy d_leafMask to host and print
                 // if (j == 544) {
@@ -1527,10 +1608,332 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
         }
         // exit(0);
         assert(localCount_==batchSize);
+        
     }
 
     cudaDeviceSynchronize();
 
-
 }
+
+bool read_line(gzFile file, std::string& line, int maxLength) {
+    char buffer[maxLength];
+    if (gzgets(file, buffer, maxLength) == Z_NULL) {
+        return false;
+    }
+    line = buffer;
+    if (!line.empty() && line.back() == '\n') line.pop_back();
+    return true;
+}
+
+bool read_binary_blob(gzFile file, size_t n, uint64_t* out_data) {
+    size_t total_bytes = n * sizeof(uint64_t);
+    char* raw_ptr = reinterpret_cast<char*>(out_data);
+
+    size_t bytes_read = 0;
+    while (bytes_read < total_bytes) {
+        int chunk = gzread(file, raw_ptr + bytes_read, total_bytes - bytes_read);
+        if (chunk <= 0) {
+            std::cerr << "Error: Unexpected end of file while reading binary data." << std::endl;
+            delete[] out_data;
+            out_data = nullptr;
+            return false;
+        }
+        bytes_read += chunk;
+    }
+    return true;
+}
+
+void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
+    Param& params,
+    MashDeviceArraysDC& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    MSADeviceArraysDC& msaDeviceArrays,
+    KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
+    const std::string dir,
+    std::vector<bool>& isCluster
+){ 
+    int idx=params.backboneSize*4-4;
+    int threadNum = 1024, blockNum = 1024;
+    int * d_id;
+    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+    int * d_from;
+    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+    double * d_dis;
+    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    auto * cluster_id = kplacementDeviceArraysHost.clusterID;
+    std::vector<std::vector <int>> contains(numSequences*4-4);
+
+    for(int i=numSequences;i<totalNumSequences;i++) contains[cluster_id[i]].push_back(i);
     
+   
+    int * d_edgeMask;
+    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    int * d_edgeMaskIndex;
+    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    int * d_leafMask;
+    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    int * d_leafMap;
+    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    int insertLeafCount=numSequences;
+    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
+    
+    
+    std::vector<int> leafList (params.backboneSize);
+    std::unordered_map <int,int> h_leafMap;
+    
+    int test_var = 0;
+    int actual_placement = 0;
+    int clustersPerBatchFile = 1000;
+    int clusterFiles = (numSequences*4-4)/clustersPerBatchFile + ((numSequences*4-4)%clustersPerBatchFile != 0);
+    
+    for (int bc=0; bc<clusterFiles;bc++){
+        /* Find number of sequences in the file*/
+        int seqInFile=0;
+        std::unordered_map<int, std::vector<int>> clusterToCompressSeqIdxMap;
+        std::unordered_map<int, int> localIdxToOriginalIdxMap;
+        for (int i=bc*clustersPerBatchFile;i<(bc+1)*clustersPerBatchFile && i<numSequences*4-4;i++){
+            if (!isCluster[i]) continue;
+            clusterToCompressSeqIdxMap[i] = std::vector<int>();
+            seqInFile+=contains[i].size();
+        }
+
+        if (seqInFile == 0) continue;
+
+
+        /* Read all sequences in the file*/
+        std::string path = dir + "/" + std::to_string(bc) + ".gz";
+        std::cerr << "Reading file: " << path << " with " << seqInFile << " sequences\n";
+        size_t maxLengthCompressed = (msaDeviceArrays.d_seqLen + 15) / 16;
+        uint64_t * compressedSeqs_local = new uint64_t[seqInFile*maxLengthCompressed];
+
+        gzFile file = gzopen(path.c_str(), "rb");
+        if (!file) {
+            std::cerr << "gzopen failed: " << path << " " << strerror(errno) << "\n";
+            exit(0);
+        }
+        std::string line;
+        uint64_t counter=0;
+        while (read_line(file, line, maxLengthCompressed)) {
+            if (line.empty() || line[0] != '>') continue;
+
+            std::string name, id;
+            std::istringstream ss(line.substr(1));
+            std::getline(ss, name, '\t');
+            std::getline(ss, id, '\t');
+            localIdxToOriginalIdxMap[counter] = std::stoi(id);
+
+            if (!read_binary_blob(file, maxLengthCompressed, compressedSeqs_local+1ll*counter*maxLengthCompressed)) {
+                std::cerr << "Failed to read binary data for sequence: " << name << std::endl;
+                break;
+            }
+
+            if (clusterToCompressSeqIdxMap.find(cluster_id[std::stoi(id)]) != clusterToCompressSeqIdxMap.end()) {
+                clusterToCompressSeqIdxMap[cluster_id[std::stoi(id)]].push_back(counter);
+            }
+            counter++;
+        }
+        gzclose(file);
+
+
+        for(int i=bc*clustersPerBatchFile;i<(bc+1)*clustersPerBatchFile && i<numSequences*4-4;i++){
+            if (!isCluster[i]) continue;
+            std::cerr << "Handling cluster " << i << " with size " << contains[i].size() << "\n";
+            
+            // open file
+            uint64_t * compressedSeqs_local_per_cluster = new uint64_t[params.backboneSize*maxLengthCompressed];
+
+            int counter=0;
+            for (auto &compressIdx: clusterToCompressSeqIdxMap[i]){
+                if (counter + 1> numSequences) {
+                    std::cerr << "Cluster " << i << " size is larger than backbone size\n";
+                    exit(0);
+                }
+                
+                memcpy(compressedSeqs_local_per_cluster+1ll*counter*maxLengthCompressed, compressedSeqs_local+1ll*compressIdx*maxLengthCompressed, 1ll*maxLengthCompressed*sizeof(uint64_t));
+                
+                h_leafMap[localIdxToOriginalIdxMap[compressIdx]] = counter;
+                leafList[counter] = localIdxToOriginalIdxMap[compressIdx];
+                counter++;
+                
+            }
+
+            if(params.in == "m") {
+                auto err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
+                if (err != cudaSuccess)
+                {
+                    fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
+                    exit(1);
+                }
+                cudaDeviceSynchronize();
+            }
+            
+
+            if (contains[i].size() == 0) continue;
+            int localCount_=0;
+
+            resetEdgeMaskIndexDC<<<blockNum,threadNum>>>(d_edgeMaskIndex, totalNumSequences*4);
+            cudaDeviceSynchronize();
+            initializeClusterDC <<<1,1>>>(
+                i,
+                d_e,
+                d_belong,
+                d_head,
+                d_nxt,
+                d_closest_id,
+                d_edgeMask,
+                d_leafMask,
+                d_edgeMaskIndex,
+                d_leafMap
+            );
+            int edgeCount=2, leafCount=10;
+            for(auto &leaf:contains[i]) {
+                actual_placement++;
+                int leaf_idx_in_cluster = h_leafMap[leaf];
+                if(params.in == "m"){
+                    msaDeviceArrays.distSpecialIDConstructionOnGpuDC(
+                        params,
+                        localCount_,
+                        d_dist,
+                        leafCount,
+                        d_leafMask,
+                        d_leafMap
+                    );
+                } 
+                localCount_++;
+
+                calculateBranchLengthSpecialIDDC <<<blockNum,threadNum>>> (
+                    i,
+                    d_head,
+                    d_nxt,
+                    d_dist,
+                    d_e,
+                    d_len,
+                    d_belong,
+                    thrust::raw_pointer_cast(minPos.data()),
+                    numSequences*4-4,
+                    d_closest_dis,
+                    d_closest_id,
+                    edgeCount,
+                    d_edgeMask
+                );
+                auto iter=thrust::min_element(minPos.begin(),minPos.begin()+edgeCount,compare_tupleDC());
+                thrust::tuple<int,double,double> smallest=*iter;
+
+                /*
+                Update Tree Structure
+                */
+
+                int eid=thrust::get<0>(smallest);
+                double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
+                // std::cerr << "eid: " << eid << " Cluster ID: " << j << " dist " << addLen << " dist2 " << fracLen << "\n";
+                updateTreeStructureInClusterDC <<<1,1>>>(
+                    d_head,
+                    d_nxt,
+                    d_e,
+                    d_len,
+                    d_closest_dis,
+                    d_closest_id,
+                    d_belong,
+                    eid,
+                    fracLen,
+                    addLen,
+                    leaf,
+                    idx,
+                    totalNumSequences,
+                    insertLeafCount
+                );
+                idx+=4, insertLeafCount++;
+
+                /*
+                Update edgeMask and leafMask
+                */
+
+                updateClusterInfoDC<<<1,1>>> (
+                    leaf,
+                    idx,
+                    d_leafMask,
+                    d_edgeMask,
+                    d_edgeMaskIndex,
+                    edgeCount,
+                    leafCount,
+                    d_leafMap,
+                    leaf_idx_in_cluster
+                );
+
+                /*
+                Update closest nodes
+                */
+
+                updateClosestNodesInClusterDC <<<1,1>>> (
+                    d_head,
+                    d_nxt,
+                    d_e,
+                    d_len,
+                    d_closest_dis,
+                    d_closest_id,
+                    leaf,
+                    d_id,
+                    d_from,
+                    d_dis,
+                    i,
+                    d_belong,
+                    d_edgeMaskIndex
+                );
+
+                edgeCount+=4, leafCount++;
+                // std::cerr << "leaf: " << leaf << " Cluster ID: " << j << " eid " << eid << " dist " << addLen << " dist2 " << fracLen << "\n";
+                // if (leaf == 879) exit(0);
+                // exit(0);
+            }
+            delete[] compressedSeqs_local_per_cluster;
+
+        }
+
+        delete[] compressedSeqs_local;
+    }
+    cudaDeviceSynchronize();
+
+
+    return;
+}
+

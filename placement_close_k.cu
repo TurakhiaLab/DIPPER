@@ -276,16 +276,18 @@ __global__ void initialize(
     int tx=threadIdx.x,bs=blockDim.x;
     int bx=blockIdx.x,gs=gridDim.x;
     int idx=tx+bs*bx;
-    if(idx<lim){
-        for(int i=0;i<5;i++){
-            d_closest_dis[idx*5+i]=2;
-            d_closest_id[idx*5+i]=-1;
+    for (int t=idx; t<lim; t+=bs*gs){
+        if(t<lim){
+            for(int i=0;i<5;i++){
+                d_closest_dis[t*5+i]=2;
+                d_closest_id[t*5+i]=-1;
+            }
+            nxt[t] = -1;
+            e[t] = -1;
+            belong[t] = -1;
         }
-        nxt[idx] = -1;
-        e[idx] = -1;
-        belong[idx] = -1;
+        if(t<nodes) head[t] = -1;
     }
-    if(idx<nodes) head[idx] = -1;
 }
 
 
@@ -321,40 +323,42 @@ __global__ void calculateBranchLength(
     int totSeqNum
 ){
     int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
-    int idx=tx+bs*bx;
-    if(idx>=lim) return;
-    if(idx>=num*4-4||belong[idx]<e[idx]){
-        thrust::tuple <int,double,double> minTuple(0,0,2);
+    int idx_=tx+bs*bx;
+    for (int idx=idx_; idx<lim; idx+=bs*gs){
+        if(idx>=lim) return;
+        if(idx>=num*4-4||belong[idx]<e[idx]){
+            thrust::tuple <int,double,double> minTuple(0,0,2);
+            minPos[bx*bs+tx]=minTuple;
+            return;
+        }
+        int x=belong[idx],oth=e[idx];
+        int eid=idx,otheid;
+        double dis1=0, dis2=0, val;
+        for(int i=0;i<5;i++)
+            if(closest_id[eid*5+i]!=-1){
+                val = dis[closest_id[eid*5+i]]-closest_dis[eid*5+i];
+                if(val>dis1) dis1=val;
+            }
+        otheid=head[oth];
+        while(e[otheid]!=x) assert(otheid!=-1),otheid=nxt[otheid];
+        for(int i=0;i<5;i++)
+            if(closest_id[otheid*5+i]!=-1){
+                val = dis[closest_id[otheid*5+i]]-closest_dis[otheid*5+i];
+                if(val>dis2) dis2=val;
+            }
+        double additional_dis=(dis1+dis2-len[eid])/2;
+        if(additional_dis<0) additional_dis=0;
+        dis1-=additional_dis,dis2-=additional_dis;
+        if(dis1<0) dis1=0;
+        if(dis2<0) dis2=0;
+        if(dis1>len[eid]) additional_dis+=dis1-len[eid],dis1=len[eid];
+        if(dis2>len[eid]) additional_dis+=dis2-len[eid],dis2=len[eid];
+        // assert(dis1+dis2-1e-6<=len[eid]);
+        double rest=len[eid]-dis1-dis2;
+        dis1+=rest/2,dis2+=rest/2;
+        thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
         minPos[bx*bs+tx]=minTuple;
-        return;
     }
-    int x=belong[idx],oth=e[idx];
-    int eid=idx,otheid;
-    double dis1=0, dis2=0, val;
-    for(int i=0;i<5;i++)
-        if(closest_id[eid*5+i]!=-1){
-            val = dis[closest_id[eid*5+i]]-closest_dis[eid*5+i];
-            if(val>dis1) dis1=val;
-        }
-    otheid=head[oth];
-    while(e[otheid]!=x) assert(otheid!=-1),otheid=nxt[otheid];
-    for(int i=0;i<5;i++)
-        if(closest_id[otheid*5+i]!=-1){
-            val = dis[closest_id[otheid*5+i]]-closest_dis[otheid*5+i];
-            if(val>dis2) dis2=val;
-        }
-    double additional_dis=(dis1+dis2-len[eid])/2;
-    if(additional_dis<0) additional_dis=0;
-    dis1-=additional_dis,dis2-=additional_dis;
-    if(dis1<0) dis1=0;
-    if(dis2<0) dis2=0;
-    if(dis1>len[eid]) additional_dis+=dis1-len[eid],dis1=len[eid];
-    if(dis2>len[eid]) additional_dis+=dis2-len[eid],dis2=len[eid];
-    // assert(dis1+dis2-1e-6<=len[eid]);
-    double rest=len[eid]-dis1-dis2;
-    dis1+=rest/2,dis2+=rest/2;
-    thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
-    minPos[bx*bs+tx]=minTuple;
 }
 
 __global__ void updateTreeStructuretoAddQuery(
@@ -678,8 +682,8 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     /*
     Initialize closest nodes by inifinite
     */
-    int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
-    // int threadNum = 1024, blockNum = 8096;
+    // int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     initialize <<<blockNum, threadNum>>> (
         numSequences*4-4,
         numSequences*2,
@@ -755,7 +759,7 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     std::chrono::nanoseconds disTime(0), treeTime(0);
     for(int i=bd;i<numSequences;i++){
         auto disStart = std::chrono::high_resolution_clock::now();
-        blockNum = (i + 255) / 256;
+        // blockNum = (i + 255) / 256;
         // blockNum = 1024;
         if(params.in == "r"){
             mashDeviceArrays.distConstructionOnGpu(
@@ -788,7 +792,7 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-        blockNum = (numSequences*4-4 + 255) / 256;
+        // blockNum = (numSequences*4-4 + 255) / 256;
         // blockNum = 1024;
         calculateBranchLength <<<blockNum,threadNum>>> (
             i,

@@ -11,10 +11,46 @@
 #include <iostream>
 #include <cub/cub.cuh>
 
+void MashPlacement::MSADeviceArraysDC::transferToDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, int gpuCluster, Param& params)
+{
+    cudaError_t err;
+    
+    size_t maxLengthCompressed = (this->d_seqLen + 15) / 16;
+
+    /* Flatten complete data */
+    
+    int start = gpuCluster*params.backboneSize;
+    int end = (start + params.backboneSize <= num) ? (start + params.backboneSize) : num;
+    uint64_t flatStringLength= maxLengthCompressed*(end-start);
+    if (gpuCluster == 0)
+        this->h_compressedSeqs = new uint64_t[flatStringLength];
+    
+    for (size_t i = start; i < end; i++) 
+    {
+        for (size_t j=0; j<maxLengthCompressed;j++)  
+        {
+            this->h_compressedSeqs[j] = h_compressedSeqs[i][j];
+        }
+        this->h_compressedSeqs += maxLengthCompressed;
+    }
+    this->h_compressedSeqs -= flatStringLength;
+
+
+    /* Transfer only the backbone data */
+    err = cudaMemcpy(d_compressedSeqsConst, this->h_compressedSeqs, 1ll*(flatStringLength)*sizeof(uint64_t), cudaMemcpyHostToDevice);
+    if (err != cudaSuccess) 
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
+        exit(1);
+    }
+
+    cudaDeviceSynchronize();
+}
+
+
 void MashPlacement::MSADeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
     cudaError_t err;
-    std::cerr << "num of sequences: " << num << std::endl;
     this->totalNumSequences = int(num);
     this->backboneSize = params.backboneSize;
     

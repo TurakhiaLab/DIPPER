@@ -112,6 +112,7 @@ namespace MashPlacement
         size_t      backboneSize;
 
         void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void transferToDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, int gpuCluster, Param& params);
         void distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const;
         void distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const;
         void distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering = false) const;
@@ -274,6 +275,15 @@ namespace MashPlacement
             const MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
         );
+        
+        void findClustersDC_batch(
+            Param& params,
+            const MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArraysDC& msaDeviceArrays,
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            const int clusteringBatchIdx
+        );
 
         void findClusterTreeDC(
             Param& params,
@@ -281,6 +291,15 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+        );
+        void findClusterTreeDC_batch(
+            Param& params,
+            MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            MSADeviceArraysDC& msaDeviceArrays,
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            const std::string dir,
+            std::vector<bool>& isCluster
         );
         void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
     };
