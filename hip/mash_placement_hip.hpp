@@ -6,7 +6,7 @@
 #include <vector>
 #include <cstdio>
 #include <string>
-#include "tree.hpp"
+#include "../tree.hpp"
 
 // typedef uint64_t hash_t;
 

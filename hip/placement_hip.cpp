@@ -1,6 +1,6 @@
 
 #include <hip/hip_runtime.h>
-#include "mash_placement.cuh"
+#include "mash_placement_hip.hpp"
 
 #include <stdio.h>
 #include <queue>

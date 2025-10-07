@@ -1,6 +1,6 @@
 
 #include <hip/hip_runtime.h>
-#include "../mash_placement.cuh"
+#include "../mash_placement_hip.hpp"
 
 #include <stdio.h>
 #include <queue>
@@ -313,15 +313,6 @@ __global__ void sketchConstructionDC(
             hashList[tx] = stored[tx];
             hashList[tx + 500] = stored[tx + 500];
         }
-
-        hipError_t err = hipGetLastError();
-        if (err != hipSuccess) {
-            // printf("hashList Pointer: %p\n", d_hashList);
-            // printf("Sequence length: %lu\n", d_seqLengths[i]);
-            // printf("compressedSeqs Pointer: %p\n", d_compressedSeqs);
-            // printf("maxLengthCompressed: %lu\n", maxLengthCompressed);
-            printf("CUDA Error: %s\n", hipGetErrorString(err));
-        }
        
     }
 
@@ -434,10 +425,6 @@ void MashPlacement::MashDeviceArraysDC::sketchConstructionOnGpuDC(Param& params,
     std::swap(d_hashListBackbone, temp_hashList);
     hipFree(temp_hashList);
     
-    err = hipGetLastError();
-    if (err != hipSuccess) {
-        printf("CUDA Error: %s\n", hipGetErrorString(err));
-    }
     hipDeviceSynchronize();
 
     auto timerEnd = std::chrono::high_resolution_clock::now();

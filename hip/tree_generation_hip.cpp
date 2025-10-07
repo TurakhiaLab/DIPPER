@@ -5,23 +5,23 @@
 #include <chrono>
 #include <bits/stdc++.h>
 #include <boost/program_options.hpp> 
-#include "../src/kseq.h"
+#include "../kseq.h"
 #include "zlib.h"
 #include <hip/hip_runtime.h>
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
-#include "version.hpp"
+#include "../version.hpp"
 
 #ifndef TWOBITCOMPRESSOR_HPP
-#include "../src/twoBitCompressor.hpp"
+#include "../twoBitCompressor.hpp"
 #endif
 
 #ifndef FOURBITCOMPRESSOR_HPP
-#include "../src/fourBitCompressor.hpp"
+#include "../fourBitCompressor.hpp"
 #endif
 
 #ifndef MASHPL_CUH
-#include "../src/mash_placement.cuh"
+#include "mash_placement_hip.hpp"
 #endif
 
 namespace po = boost::program_options;

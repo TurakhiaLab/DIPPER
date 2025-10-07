@@ -1,5 +1,6 @@
 #ifndef NJ_CUH
-#include "mash_placement.cuh"
+#include "mash_placement_hip.hpp"
+
 #endif
 #include <chrono>
 #include <stdio.h>

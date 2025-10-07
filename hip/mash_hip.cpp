@@ -1,6 +1,6 @@
 
 #include <hip/hip_runtime.h>
-#include "mash_placement.cuh"
+#include "mash_placement_hip.cpp"
 
 #include <stdio.h>
 #include <queue>
@@ -360,11 +360,6 @@ __global__ void sketchConstruction(
             hashList[tx] = stored[tx];
             hashList[tx + 500] = stored[tx + 500];
         }
-
-        hipError_t err = hipGetLastError();
-        if (err != hipSuccess) {
-            printf("CUDA Error: %s\n", hipGetErrorString(err));
-        }
        
     }
 
@@ -466,11 +461,6 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int r
         params.sketchSize, 
         numSequences
     );
-
-    hipError_t err = hipDeviceSynchronize();
-    if (err != hipSuccess) {
-        printf("CUDA Error: %s\n", hipGetErrorString(err));
-    }
 
     // double * h_dist = new double[numSequences];
     // auto err = cudaMemcpy(h_dist, d_mashDist, numSequences*sizeof(double), cudaMemcpyDeviceToHost);
