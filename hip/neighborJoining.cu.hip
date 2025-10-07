@@ -1,8 +1,7 @@
 #ifndef NJ_CUH
-#include "mash_placement_hip.hpp"
-
+#include "mash_placement.cuh.hip"
 #endif
-#include <chrono>
+
 #include <stdio.h>
 #include <ostream>
 #include <fstream>
@@ -59,7 +58,6 @@ void MashPlacement::NJDeviceArrays::getDismatrix(
         matrixReader.distConstructionOnGpu(params, 0, d_mashDist);
     }
     for(int i=1;i<numSequences;i++){
-        auto disStart = std::chrono::high_resolution_clock::now();
         if(params.in == "r"){
             mashDeviceArrays.distConstructionOnGpu(
                 params,

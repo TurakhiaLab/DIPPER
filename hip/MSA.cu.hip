@@ -1,6 +1,6 @@
 
 #include <hip/hip_runtime.h>
-#include "mash_placement_hip.hpp"
+#include "mash_placement.cuh.hip"
 
 #include <stdio.h>
 #include <queue>
@@ -271,7 +271,7 @@ __global__ void MSADistConstruction(
 
 
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
-    int threadNum = 1024, blockNum = 8096; // dont change threadNUM, interally it is used to calculate the distance
+    int threadNum = 1024, blockNum = 1024; // dont change threadNUM, interally it is used to calculate the distance
     // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
     MSADistConstruction <<<blockNum, threadNum>>> (
         rowId, 
