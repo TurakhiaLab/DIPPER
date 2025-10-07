@@ -431,31 +431,33 @@ __global__ void mashDistConstruction(
     uint64_t sketchSize,
     int numSequences
 ) {
-    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x;
+    int tx = threadIdx.x, bx = blockIdx.x, bs = blockDim.x, gs = gridDim.x;
     int idx = tx+bx*bs;
-    if(idx>=rowId) return;
-    int uni = 0, bPos = rowId, inter = 0;
-    uint64_t aval, bval;
-    for(int i=idx; uni < sketchSize; i+=numSequences, uni++){
-        aval = d_hashList[i];
-        while(uni < sketchSize && bPos < numSequences * sketchSize){
-            bval = d_hashList[bPos];
-            // printf("%ull %ull\n",aval,bval);
-            if(bval > aval) break;
-            if(bval < aval) uni++;
-            else inter++;
-            bPos += numSequences;
+    for (int idx_=idx; idx_<rowId;idx_+=bs*gs){
+        if(idx_>=rowId) return;
+        int uni = 0, bPos = rowId, inter = 0;
+        uint64_t aval, bval;
+        for(int i=idx_; uni < sketchSize; i+=numSequences, uni++){
+            aval = d_hashList[i];
+            while(uni < sketchSize && bPos < numSequences * sketchSize){
+                bval = d_hashList[bPos];
+                // printf("%ull %ull\n",aval,bval);
+                if(bval > aval) break;
+                if(bval < aval) uni++;
+                else inter++;
+                bPos += numSequences;
+            }
+            if(uni >= sketchSize) break;
         }
-        if(uni >= sketchSize) break;
+        assert(uni==1000);
+        // assert(inter!=0);
+        double jaccardEstimate = max(double(inter),1.0)/uni;
+        d_mashDist[idx_] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
     }
-    assert(uni==1000);
-    // assert(inter!=0);
-    double jaccardEstimate = max(double(inter),1.0)/uni;
-    d_mashDist[idx] = min(1.0, abs(log(2.0*jaccardEstimate/(1.0+jaccardEstimate))/kmerSize));
 }
 
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
-    int threadNum = 256, blockNum = (numSequences+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     mashDistConstruction <<<blockNum, threadNum>>> (
         rowId, 
         d_hashList, 
