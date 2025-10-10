@@ -587,6 +587,21 @@ int main(int argc, char** argv) {
             if(numSequences>=40000){
                 std::cerr<<"Warning: forcing conventional NJ on large datasets might result in unexpected behavior\n";
             }
+            // Create arrays
+            auto createArrayStart = std::chrono::high_resolution_clock::now();
+            MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+            auto createArrayEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart; 
+            std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
+
+            // Build sketch on Gpu
+            auto createSketchStart = std::chrono::high_resolution_clock::now();
+            MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+            auto createSketchEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
+            std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
+
+            
             MashPlacement::njDeviceArrays.getDismatrix(
                 numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
             );
