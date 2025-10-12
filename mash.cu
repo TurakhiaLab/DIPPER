@@ -376,10 +376,13 @@ __global__ void rearrangeHashList(
 ){
     int tx = threadIdx.x, bx = blockIdx.x;
     int bs = blockDim.x;
+    int gs = gridDim.x;
     int idx = tx+bs*bx;
-    if(idx>=numSequences) return;
-    for(int i=0;i<sketchSize;i++){
-        target[i*numSequences+idx] = original[idx*sketchSize + i];
+    for (int idx_=idx; idx_<numSequences; idx_+=bs*gs){
+        if(idx_>=numSequences) return;
+        for(int i=0;i<sketchSize;i++){
+            target[i*numSequences+idx_] = original[idx_*sketchSize + i];
+        }
     }
 }
 
@@ -388,7 +391,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
     auto timerStart = std::chrono::high_resolution_clock::now();
 
     int threadsPerBlock = 512;
-    int blocksPerGrid = (numSequences + threadsPerBlock - 1) / threadsPerBlock;
+    int blocksPerGrid = 1024;
     size_t sharedMemorySize = sizeof(uint64_t) * (2000);
     sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
         d_compressedSeqs, d_seqLengths, d_prefixCompressed, numSequences, d_hashList, kmerSize
@@ -400,6 +403,9 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
+
+    threadsPerBlock = 1024;
+    blocksPerGrid = 1024;
     rearrangeHashList <<<blocksPerGrid, threadsPerBlock >>>(
         numSequences,
         int(params.sketchSize),

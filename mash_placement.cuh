@@ -23,6 +23,7 @@ namespace MashPlacement
         std::string out;
         uint64_t batchSize;
         uint64_t backboneSize;
+        uint64_t totalNumSeqs;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {
