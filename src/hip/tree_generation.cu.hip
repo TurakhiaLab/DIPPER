@@ -5,23 +5,23 @@
 #include <chrono>
 #include <bits/stdc++.h>
 #include <boost/program_options.hpp> 
-#include "../src/kseq.h"
+#include "../kseq.h"
 #include "zlib.h"
-#include <cuda_runtime.h>
+#include <hip/hip_runtime.h>
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
-#include "version.hpp"
+#include "../version.hpp"
 
 #ifndef TWOBITCOMPRESSOR_HPP
-#include "../src/twoBitCompressor.hpp"
+#include "../twoBitCompressor.hpp"
 #endif
 
 #ifndef FOURBITCOMPRESSOR_HPP
-#include "../src/fourBitCompressor.hpp"
+#include "../fourBitCompressor.hpp"
 #endif
 
 #ifndef MASHPL_CUH
-#include "../src/mash_placement.cuh"
+#include "mash_placement.cuh.hip"
 #endif
 
 namespace po = boost::program_options;
@@ -178,7 +178,7 @@ int main(int argc, char** argv) {
         }
         else if (vm.count("version")) {
             std::cout << "DIPPER Version " << PROJECT_VERSION << std::endl;
-            return;
+            return 0;
         } 
         std::cerr << "\033[31m" << e.what() << "\033[0m"  << std::endl;
         std::cerr << mainDesc << std::endl;
@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
             std::cerr << "Adding new sequnces only supported with input aligned and unaligned sequences\n";
             exit(1);
         }
-        return;
+        return 0;
     }
 
     if (in == "m" && out == "t"){
@@ -601,6 +601,7 @@ int main(int argc, char** argv) {
             std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
             std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
 
+            
             MashPlacement::njDeviceArrays.getDismatrix(
                 numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
             );

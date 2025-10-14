@@ -1,4 +1,6 @@
-#include "mash_placement.cuh"
+
+#include <hip/hip_runtime.h>
+#include "mash_placement.cuh.hip"
 
 #include <stdio.h>
 #include <queue>
@@ -9,19 +11,19 @@
 #include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
-    cudaError_t err;
+    hipError_t err;
 
     numSequences = int(num);
     seqLen = h_seqLengths[0];
     // Allocate memory
-    err = cudaMalloc(&d_seqLengths, 1ll*numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_seqLengths, 1ll*numSequences*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     // std::cerr<<"????????\n";
@@ -44,36 +46,36 @@ void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compress
     h_flattenCompressSeqs -= flatStringLength;
     // std::cerr<<"?????????\n";
 
-    err = cudaMalloc(&d_compressedSeqs, 1ll*flatStringLength*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_compressedSeqs, 1ll*flatStringLength*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
 
     // Transfer data
 
-    err = cudaMemcpy(d_seqLengths, h_seqLengths, 1ll*numSequences*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
+    err = hipMemcpy(d_seqLengths, h_seqLengths, 1ll*numSequences*sizeof(uint64_t), hipMemcpyHostToDevice);
+    if (err != hipSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }
 
-    err = cudaMemcpy(d_compressedSeqs, h_flattenCompressSeqs, 1ll*flatStringLength*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
+    err = hipMemcpy(d_compressedSeqs, h_flattenCompressSeqs, 1ll*flatStringLength*sizeof(uint64_t), hipMemcpyHostToDevice);
+    if (err != hipSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }
 
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 }
 
 void MashPlacement::MSADeviceArrays::deallocateDeviceArrays(){
-    cudaFree(d_compressedSeqs);
-    cudaFree(d_seqLengths);
+    hipFree(d_compressedSeqs);
+    hipFree(d_seqLengths);
     // cudaFree(d_hashList);
     // cudaFree(d_mashDist);
 }

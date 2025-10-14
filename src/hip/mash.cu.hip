@@ -1,4 +1,6 @@
-#include "mash_placement.cuh"
+
+#include <hip/hip_runtime.h>
+#include "mash_placement.cuh.hip"
 
 #include <stdio.h>
 #include <queue>
@@ -9,11 +11,11 @@
 #include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
-    cudaError_t err;
+    hipError_t err;
 
     numSequences = int(num);
 
@@ -21,16 +23,16 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
     size_t hashListLength = 0;   
 
     // Allocate memory
-    err = cudaMalloc(&d_aggseqLengths, numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_aggseqLengths, numSequences*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_seqLengths, numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_seqLengths, numSequences*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
@@ -58,48 +60,48 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
     //printf("%d", flatStringLength);
 
     // err = cudaMalloc(&d_hashList, hashListLength*sizeof(uint64_t));
-    err = cudaMalloc(&d_hashList, 1000*numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_hashList, 1000*numSequences*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     // printf("%p", d_hashList);
 
 
-    err = cudaMalloc(&d_compressedSeqs, flatStringLength*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_compressedSeqs, flatStringLength*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
-    err = cudaMalloc(&d_prefixCompressed, numSequences*sizeof(uint64_t));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_prefixCompressed, numSequences*sizeof(uint64_t));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
 
     // Transfer data
-    err = cudaMemcpy(d_aggseqLengths, h_aggseqLengths, numSequences*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
+    err = hipMemcpy(d_aggseqLengths, h_aggseqLengths, numSequences*sizeof(uint64_t), hipMemcpyHostToDevice);
+    if (err != hipSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }
 
-    err = cudaMemcpy(d_seqLengths, h_seqLengths, numSequences*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
+    err = hipMemcpy(d_seqLengths, h_seqLengths, numSequences*sizeof(uint64_t), hipMemcpyHostToDevice);
+    if (err != hipSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }
 
-    err = cudaMemcpy(d_compressedSeqs, h_flattenCompressSeqs, flatStringLength*sizeof(uint64_t), cudaMemcpyHostToDevice);
-    if (err != cudaSuccess) 
+    err = hipMemcpy(d_compressedSeqs, h_flattenCompressSeqs, flatStringLength*sizeof(uint64_t), hipMemcpyHostToDevice);
+    if (err != hipSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
@@ -118,14 +120,14 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
 
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + numSequences, dev_prefixComp);
 
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 }
 
 void MashPlacement::MashDeviceArrays::deallocateDeviceArrays(){
-    cudaFree(d_compressedSeqs);
-    cudaFree(d_aggseqLengths);
-    cudaFree(d_seqLengths);
-    cudaFree(d_prefixCompressed);
+    hipFree(d_compressedSeqs);
+    hipFree(d_aggseqLengths);
+    hipFree(d_seqLengths);
+    hipFree(d_prefixCompressed);
     // cudaFree(d_hashList);
     // cudaFree(d_mashDist);
 }
@@ -267,7 +269,7 @@ __global__ void sketchConstruction(
 ) {
     extern __shared__ uint64_t stored[];
 
-    typedef cub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
+    typedef hipcub::BlockRadixSort<uint64_t, 512, 3> BlockRadixSort;
     __shared__ typename BlockRadixSort::TempStorage temp_storage;
 
     int tx = threadIdx.x;
@@ -358,11 +360,6 @@ __global__ void sketchConstruction(
             hashList[tx] = stored[tx];
             hashList[tx + 500] = stored[tx + 500];
         }
-
-        cudaError_t err = cudaGetLastError();
-        if (err != cudaSuccess) {
-            printf("CUDA Error: %s\n", cudaGetErrorString(err));
-        }
        
     }
 
@@ -376,13 +373,10 @@ __global__ void rearrangeHashList(
 ){
     int tx = threadIdx.x, bx = blockIdx.x;
     int bs = blockDim.x;
-    int gs = gridDim.x;
     int idx = tx+bs*bx;
-    for (int idx_=idx; idx_<numSequences; idx_+=bs*gs){
-        if(idx_>=numSequences) return;
-        for(int i=0;i<sketchSize;i++){
-            target[i*numSequences+idx_] = original[idx_*sketchSize + i];
-        }
+    if(idx>=numSequences) return;
+    for(int i=0;i<sketchSize;i++){
+        target[i*numSequences+idx] = original[idx*sketchSize + i];
     }
 }
 
@@ -391,21 +385,18 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
     auto timerStart = std::chrono::high_resolution_clock::now();
 
     int threadsPerBlock = 512;
-    int blocksPerGrid = 1024;
+    int blocksPerGrid = (numSequences + threadsPerBlock - 1) / threadsPerBlock;
     size_t sharedMemorySize = sizeof(uint64_t) * (2000);
     sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
         d_compressedSeqs, d_seqLengths, d_prefixCompressed, numSequences, d_hashList, kmerSize
     );
 
     uint64_t * temp_hashList;
-    auto err = cudaMalloc(&temp_hashList, numSequences*int(params.sketchSize)*sizeof(uint64_t));
-    if (err != cudaSuccess){
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+    auto err = hipMalloc(&temp_hashList, numSequences*int(params.sketchSize)*sizeof(uint64_t));
+    if (err != hipSuccess){
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-
-    threadsPerBlock = 1024;
-    blocksPerGrid = 1024;
     rearrangeHashList <<<blocksPerGrid, threadsPerBlock >>>(
         numSequences,
         int(params.sketchSize),
@@ -413,16 +404,16 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
         temp_hashList
     );
     std::swap(d_hashList, temp_hashList);
-    cudaFree(temp_hashList);
+    hipFree(temp_hashList);
 
     
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    err = hipGetLastError();
+    if (err != hipSuccess) {
+        printf("CUDA Error: %s\n", hipGetErrorString(err));
     }
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     h_hashList = new uint64_t[1000*numSequences];
-    cudaMemcpy(h_hashList,d_hashList,1000*numSequences*sizeof(uint64_t),cudaMemcpyDeviceToHost);
+    hipMemcpy(h_hashList,d_hashList,1000*numSequences*sizeof(uint64_t),hipMemcpyDeviceToHost);
     auto timerEnd = std::chrono::high_resolution_clock::now();
     auto time = timerEnd - timerStart;
     // std::cout << "Time to generate hashes: " << time.count() << "ns\n";
@@ -473,9 +464,9 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int r
         numSequences
     );
 
-    cudaError_t err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    hipError_t err = hipDeviceSynchronize();
+    if (err != hipSuccess) {
+        printf("CUDA Error: %s\n", hipGetErrorString(err));
     }
 
     // double * h_dist = new double[numSequences];
@@ -498,12 +489,12 @@ void MashPlacement::MashDeviceArrays::printSketchValues(int numValues)
 
     uint64_t * hashList = d_hashList;
 
-    cudaError_t err;
+    hipError_t err;
 
     //printf("Total Hashes: %d", numSequences*1000);
 
-    err = cudaMemcpy(h_hashList, hashList, numSequences*1000*sizeof(uint64_t), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
+    err = hipMemcpy(h_hashList, hashList, numSequences*1000*sizeof(uint64_t), hipMemcpyDeviceToHost);
+    if (err != hipSuccess) {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }

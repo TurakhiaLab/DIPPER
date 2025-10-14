@@ -1,4 +1,4 @@
-#include "../mash_placement.cuh"
+#include "../mash_placement.cuh.hip"
 
 #include <stdio.h>
 #include <zlib.h>
@@ -13,74 +13,74 @@
 #include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
-#include <cub/cub.cuh>
-#include <cuda_runtime.h>
+#include <hipcub/hipcub.hpp>
+#include <hip/hip_runtime.h>
 
 void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum){
-    cudaError_t err;
+    hipError_t err;
     numSequences = int(num);
     totalNumSequences = int(totalNum);
     bd = 2, idx = 0;
 
-    err = cudaMalloc(&d_dist, totalNumSequences*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_dist, totalNumSequences*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_head, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_head, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_e, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_e, totalNumSequences*8*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_len, totalNumSequences*8*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_len, totalNumSequences*8*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_nxt, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_nxt, totalNumSequences*8*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_belong, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_belong, totalNumSequences*8*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_dis, totalNumSequences*20*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_closest_dis, totalNumSequences*20*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_id, totalNumSequences*20*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_closest_id, totalNumSequences*20*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
-    err = cudaMalloc(&d_closest_dis_cluster, totalNumSequences*20*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_closest_dis_cluster, totalNumSequences*20*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_id_cluster, totalNumSequences*20*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_closest_id_cluster, totalNumSequences*20*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 }
@@ -639,14 +639,14 @@ __global__ void initializeClusterDC (
 
 
 void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
-    cudaFree(d_head);
-    cudaFree(d_e);
-    cudaFree(d_nxt);
-    cudaFree(d_belong);
-    cudaFree(d_closest_id);
-    cudaFree(d_dist);
-    cudaFree(d_len);
-    cudaFree(d_closest_dis);
+    hipFree(d_head);
+    hipFree(d_e);
+    hipFree(d_nxt);
+    hipFree(d_belong);
+    hipFree(d_closest_id);
+    hipFree(d_dist);
+    hipFree(d_len);
+    hipFree(d_closest_dis);
 }
 
 
@@ -678,28 +678,28 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
             output_<<name[node];
         }
     };
-    auto err = cudaMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
+    auto err = hipMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),hipMemcpyDeviceToHost);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMemcpy failed!\n");
         exit(1);
     }
-    err = cudaMemcpy(h_e, d_e, totalNumSequences*8*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
+    err = hipMemcpy(h_e, d_e, totalNumSequences*8*sizeof(int),hipMemcpyDeviceToHost);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMemcpy failed!\n");
         exit(1);
     }
-    err = cudaMemcpy(h_nxt, d_nxt, totalNumSequences*8*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
+    err = hipMemcpy(h_nxt, d_nxt, totalNumSequences*8*sizeof(int),hipMemcpyDeviceToHost);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMemcpy failed!\n");
         exit(1);
     }
-    err = cudaMemcpy(h_len, d_len, totalNumSequences*8*sizeof(double),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
+    err = hipMemcpy(h_len, d_len, totalNumSequences*8*sizeof(double),hipMemcpyDeviceToHost);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMemcpy failed!\n");
         exit(1);
     }
 
@@ -743,24 +743,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
     }
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    auto err = hipMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_from, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_dis, totalNumSequences*2*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     
@@ -930,7 +930,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         // if (i==10) return;
     }
     
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     auto backboneEnd = std::chrono::high_resolution_clock::now();
     auto backboneTime = backboneEnd - backboneStart;
     std::cerr << "Finished backbone construction in: "<< backboneTime.count()/1000000 << " ms\n";
@@ -945,7 +945,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     const MSADeviceArraysDC& msaDeviceArrays,
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost
 ){ 
-    cudaError err;
+    hipError_t err;
     int idx=params.backboneSize*4-4;
     
     kplacementDeviceArraysHost.clusterID = new int[totalNumSequences];
@@ -961,17 +961,17 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
         
         /* copy data to d_hashListConst or d_compressedSeqsConst */
         if (params.in == "r") 
-            err = cudaMemcpy(mashDeviceArrays.d_hashListConst, mashDeviceArrays.h_hashList+i*params.sketchSize, localBatchSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
+            err = hipMemcpy(mashDeviceArrays.d_hashListConst, mashDeviceArrays.h_hashList+i*params.sketchSize, localBatchSize*params.sketchSize*sizeof(uint64_t),hipMemcpyHostToDevice);
         else if (params.in == "m"){
             size_t maxLengthCompressed = (msaDeviceArrays.d_seqLen + 15) / 16;
-            err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, msaDeviceArrays.h_compressedSeqs+i*maxLengthCompressed, 1ll*localBatchSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
+            err = hipMemcpy(msaDeviceArrays.d_compressedSeqsConst, msaDeviceArrays.h_compressedSeqs+i*maxLengthCompressed, 1ll*localBatchSize*maxLengthCompressed*sizeof(uint64_t),hipMemcpyHostToDevice);
         }
         else {
             std::cerr << "Error: Input type must be unaligned or aligned for clustering based approach\n";
             exit(1);
         }
-        if (err != cudaSuccess) {
-            fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
+        if (err != hipSuccess) {
+            fprintf(stderr, "Gpu_ERROR: d_hashListConst hipMemcpy failed!\n");
             exit(1);
         }
 
@@ -1110,7 +1110,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     //     exit(1);
     // }
 
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
     std::cerr << "Finished data transfer\n";
     return;
@@ -1124,7 +1124,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
     const int clusteringBatchIdx
 ){ 
-    cudaError err;
+    hipError_t err;
     
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
@@ -1184,7 +1184,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
 
         // std::cerr << "Seq idx: " << clusteringBatchIdx*params.batchSize + i << " Cluster ID: " << kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] << "\n";
     }
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
     return;
 }
@@ -1223,18 +1223,18 @@ void transferMashClusterInfoDC(
         l++;
     }
 
-    auto err = cudaMemcpy(mashDeviceArrays.d_hashListConst, hashListLocal, params.backboneSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
+    auto err = hipMemcpy(mashDeviceArrays.d_hashListConst, hashListLocal, params.backboneSize*params.sketchSize*sizeof(uint64_t),hipMemcpyHostToDevice);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: d_hashListConst hipMemcpy failed!\n");
         exit(1);
     }
 
     /* Rearrange only for backbone tree */
     uint64_t * temp_hashList;
-    err = cudaMalloc(&temp_hashList, params.sketchSize*params.backboneSize*sizeof(uint64_t));
-    if (err != cudaSuccess){
-        fprintf(stderr, "Gpu_ERROR: temp_hashList cudaMalloc failed!\n");
+    err = hipMalloc(&temp_hashList, params.sketchSize*params.backboneSize*sizeof(uint64_t));
+    if (err != hipSuccess){
+        fprintf(stderr, "Gpu_ERROR: temp_hashList hipMalloc failed!\n");
         exit(1);
     }
     int threadsPerBlock = 1024;
@@ -1246,13 +1246,13 @@ void transferMashClusterInfoDC(
         temp_hashList
     );
     std::swap(mashDeviceArrays.d_hashListConst, temp_hashList);
-    cudaFree(temp_hashList);
+    hipFree(temp_hashList);
     
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
+    err = hipGetLastError();
+    if (err != hipSuccess) {
+        printf("CUDA Error: %s\n", hipGetErrorString(err));
     }
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     delete[] hashListLocal;
     return;
 }
@@ -1272,13 +1272,13 @@ void transferMsaClusterInfoDC(
         memcpy(compressedSeqs_local+1ll*l*maxLengthCompressed, compressedSeqs+1ll*leaf*maxLengthCompressed, 1ll*maxLengthCompressed*sizeof(uint64_t));
         l++;
     }
-    auto err = cudaMemcpy(mashDeviceArrays.d_compressedSeqsConst, compressedSeqs_local, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
+    auto err = hipMemcpy(mashDeviceArrays.d_compressedSeqsConst, compressedSeqs_local, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),hipMemcpyHostToDevice);
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
+        fprintf(stderr, "Gpu_ERROR: d_hashListConst hipMemcpy failed!\n");
         exit(1);
     }
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
     delete[] compressedSeqs_local;
     return;
 }
@@ -1337,24 +1337,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     int idx=params.backboneSize*4-4;
     int threadNum = 1024, blockNum = 1024;
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    auto err = hipMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_from, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_dis, totalNumSequences*2*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
@@ -1365,34 +1365,34 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     
    
     int * d_edgeMask;
-    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_edgeMaskIndex;
-    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_leafMask;
-    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_leafMap;
-    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_leafMap, params.backboneSize*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
@@ -1438,7 +1438,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
 
             if (contains[j].size() == 0) continue;
             resetEdgeMaskIndexDC<<<blockNum,threadNum>>>(d_edgeMaskIndex, totalNumSequences*4);
-            cudaDeviceSynchronize();
+            hipDeviceSynchronize();
             initializeClusterDC <<<1,1>>>(
                 j,
                 d_e,
@@ -1611,7 +1611,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
         
     }
 
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
 }
 
@@ -1655,24 +1655,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     int idx=params.backboneSize*4-4;
     int threadNum = 1024, blockNum = 1024;
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    auto err = hipMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_from, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
     double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_dis, totalNumSequences*2*sizeof(double));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
@@ -1683,34 +1683,34 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     
    
     int * d_edgeMask;
-    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_edgeMaskIndex;
-    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_leafMask;
-    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
     int * d_leafMap;
-    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
-    if (err != cudaSuccess)
+    err = hipMalloc(&d_leafMap, params.backboneSize*sizeof(int));
+    if (err != hipSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: hipMalloc failed!\n");
         exit(1);
     }
 
@@ -1798,13 +1798,13 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
             }
 
             if(params.in == "m") {
-                auto err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
-                if (err != cudaSuccess)
+                auto err = hipMemcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),hipMemcpyHostToDevice);
+                if (err != hipSuccess)
                 {
-                    fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
+                    fprintf(stderr, "Gpu_ERROR: d_hashListConst hipMemcpy failed!\n");
                     exit(1);
                 }
-                cudaDeviceSynchronize();
+                hipDeviceSynchronize();
             }
             
 
@@ -1812,7 +1812,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
             int localCount_=0;
 
             resetEdgeMaskIndexDC<<<blockNum,threadNum>>>(d_edgeMaskIndex, totalNumSequences*4);
-            cudaDeviceSynchronize();
+            hipDeviceSynchronize();
             initializeClusterDC <<<1,1>>>(
                 i,
                 d_e,
@@ -1931,7 +1931,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
 
         delete[] compressedSeqs_local;
     }
-    cudaDeviceSynchronize();
+    hipDeviceSynchronize();
 
 
     return;

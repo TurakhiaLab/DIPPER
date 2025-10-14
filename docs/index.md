@@ -19,7 +19,31 @@ DIPPER (**DI**stance-based **P**hylogenetic **P**lac**ER**) is a tool for ultraf
 
 NOTE: DIPPER is currently supported on systems with <b>NVIDIA GPUs only</b>. Support for additional platforms, including AMD GPUs and CPU-only options for x86-64 and ARM64 architecture, will be added soon. Stay tuned!
 
-### 1. <a name="dockerimage"></a> Using Docker Image
+### 1. <a name="conda"></a> Using Conda
+DIPPER is available on platforms with NVIDIA GPUs via Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
+#### i. Dependencies
+1. [Conda](https://docs.conda.io/en/latest/)
+
+#### ii. Create and activate a Conda environment
+```bash
+conda create -n dipper python=3.11 -y
+conda activate dipper
+# Set up channels
+conda config --add channels defaults
+conda config --add channels bioconda
+conda config --add channels conda-forge
+conda config --set channel_priority strict
+# Install DIPPER
+conda install bioconda::dipper
+```
+
+#### iii. Run DIPPER
+```bash
+# Insider conda environment
+dipper --help
+```
+
+### 2. <a name="dockerimage"></a> Using Docker Image
 To use DIPPER in a docker container, users can create a docker container from a docker image, by following these steps
 #### i. Dependencies
 1. [Docker](https://docs.docker.com/engine/install/)
@@ -33,11 +57,11 @@ docker run -it --gpus all swalia14/dipper:latest
 ```
 #### iii. Run DIPPER
 ```bash
-# Insider docker container
-dipper --help
+# Insider docker container (path: /home/Dipper/bin)
+./dipper --help
 ```
 
-### 2. Using DockerFile <a name="dockerfile"></a>
+### 3. Using DockerFile <a name="dockerfile"></a>
 Docker container with the preinstalled DIPPER program can also be built from a Dockerfile by following these steps.
 
 #### i. Dependencies
@@ -56,11 +80,11 @@ docker run -it --gpus all dipper
 ```
 #### iv. Run DIPPER
 ```bash
-# Insider docker container
-dipper --help
+# Insider docker container (path: /home/Dipper/bin)
+./dipper --help
 ```
 
-### 3. <a name="script"></a> Using installation script (requires sudo access)  
+### 4. <a name="script"></a> Using installation script (requires sudo access)  
 
 Users without sudo access are advised to install DIPPER via [Docker Image](#dockerimage) or [Dockerfile](#dockerfile).
 
