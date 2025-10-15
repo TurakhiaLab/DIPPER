@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
+#include <tbb/global_control.h>
 #include "version.hpp"
 
 #ifndef TWOBITCOMPRESSOR_HPP
@@ -21,7 +22,7 @@
 #endif
 
 #ifndef MASHPL_CUH
-#include "../src/mash_placement.cuh"
+#include "../cpu/mash_placement.cuh"
 #endif
 
 namespace po = boost::program_options;
@@ -91,6 +92,9 @@ void parseArguments(int argc, char** argv)
 
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
+
+        ("threads,T", po::value<int>(),
+         "Number of CPU threads. Default: all available threads.")
 
         ("help,h",
         "Print this help message")
@@ -256,7 +260,11 @@ int main(int argc, char** argv) {
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
 
-    MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+    int cpuThreads = (vm.count("threads")) ? vm["threads"].as<int>() : tbb::this_task_arena::max_concurrency();
+    tbb::global_control init(tbb::global_control::max_allowed_parallelism, cpuThreads);
+    printf("Maximum available CPU cores: %d. Using %d CPU cores.\n", tbb::this_task_arena::max_concurrency(), cpuThreads);
+
+    MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out, cpuThreads);
 
     if (add) {
         // Load the tree from the file
@@ -349,8 +357,8 @@ int main(int argc, char** argv) {
         names.resize(numSequences);
         std::vector<int> ids(numSequences);
         for(int i=0;i<numSequences;i++) ids[i]=i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
+        // std::mt19937 rnd(time(NULL));
+        // std::shuffle(ids.begin(),ids.end(),rnd);
 
     
         // Compress Sequences (2-bit compressor)
@@ -478,8 +486,9 @@ int main(int argc, char** argv) {
         names.resize(numSequences);
         std::vector<int> ids(numSequences);
         for(int i=0;i<numSequences;i++) ids[i]=i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
+        // std::mt19937 rnd(time(NULL));
+        // std::shuffle(ids.begin(),ids.end(),rnd);
+        std::cout << "No Random Shuffle\n";
         
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
@@ -601,12 +610,23 @@ int main(int argc, char** argv) {
             std::chrono::nanoseconds createSketchTime = createSketchEnd - createSketchStart; 
             std::cerr << "Sketch Created in: " <<  createSketchTime.count()/1000000 << " ms\n";
 
+            auto getDismatrixStart = std::chrono::high_resolution_clock::now();
             MashPlacement::njDeviceArrays.getDismatrix(
                 numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
             );
+            auto getDismatrixEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds getDismatrixTime = getDismatrixEnd - getDismatrixStart; 
+            std::cerr << "Distance Matrix Computed in: " << getDismatrixTime.count()/1000000 << " ms\n";
+            
+            auto treeStart = std::chrono::high_resolution_clock::now();
             MashPlacement::njDeviceArrays.findNeighbourJoiningTree(names, output_);
+            auto treeEnd = std::chrono::high_resolution_clock::now();
+            std::chrono::nanoseconds treeTime = treeEnd - treeStart; 
+            std::cerr << "Tree Created in: " << treeTime.count()/1000000 << " ms\n";
+            
             MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
             MashPlacement::njDeviceArrays.deallocateDeviceArrays();
+            std::cerr << "Deallocated Arrays\n";
         }
 
         // Print first 10 hash values corresponding to each sequence
@@ -667,5 +687,9 @@ int main(int argc, char** argv) {
         printf("Invalid input-output combinations!!!!!\n");
         exit(1);
     }
+    auto mainEnd = std::chrono::high_resolution_clock::now();
+    std::chrono::nanoseconds mainTime = mainEnd - inputStart;
+    std::cout << "Total Execution in " << std::fixed << std::setprecision(6) << static_cast<float>(mainTime.count()) / 1000000000.0 << " s\n";
+    
     return 0;
 }
