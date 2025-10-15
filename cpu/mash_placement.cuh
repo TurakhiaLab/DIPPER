@@ -25,11 +25,13 @@ namespace MashPlacement
         uint64_t backboneSize;
         // Added
         uint64_t flatStringLength;
+        int threads;
 
-        Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
+        Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out, int t_threads)
         {
             kmerSize = t_kmerSize; sketchSize = t_sketchSize; threshold = t_threshold, distanceType=t_distanceType;
             in = t_in, out = t_out; 
+            threads = t_threads;
         };
     };
     
