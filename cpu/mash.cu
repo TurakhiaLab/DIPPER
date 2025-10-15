@@ -448,6 +448,7 @@ void mashDistConstruction(
 }
 
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
+    
     mashDistConstruction (
         rowId, 
         d_hashList, 
@@ -456,4 +457,5 @@ void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param& params, int r
         params.sketchSize, 
         numSequences
     );
+            
 }

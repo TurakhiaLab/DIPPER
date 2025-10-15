@@ -108,22 +108,23 @@ elseif(USE_HIP)
 else()
         message(FATAL_ERROR "Either USE_CUDA or USE_HIP must be enabled. e.g. cmake -DUSE_CUDA=ON ..")
 endif()
-# add_executable (dipper_cpu
-#         src/tree_generation.cu
-#         src/placement.cu
-#         cpu/mash.cu
-#         src/twoBitCompressor.cpp
-#         src/fourBitCompressor.cpp
-#         cpu/matrix_reader.cu
-#         src/MSA.cu
-#         src/tree.cpp
-#         src/neighborJoining.cu
-#         cpu/placement_close_k.cu
-#         src/divide_and_conquer/mash.cu
-#         src/divide_and_conquer/mash.cpp
-#         src/divide_and_conquer/msa.cu
-#         src/divide_and_conquer/placement_close_k.cpp
-#         src/divide_and_conquer/placement_close_k.cu)
+
+add_executable (dipper_cpu
+                src/tree_generation.cu
+                src/placement.cu
+                cpu/mash.cu
+                src/twoBitCompressor.cpp
+                src/fourBitCompressor.cpp
+                cpu/matrix_reader.cu
+                cpu/MSA.cu
+                src/tree.cpp
+                cpu/neighborJoining.cu
+                cpu/placement_close_k.cu
+                src/divide_and_conquer/mash.cu
+                src/divide_and_conquer/mash.cpp
+                src/divide_and_conquer/msa.cu
+                src/divide_and_conquer/placement_close_k.cpp
+                src/divide_and_conquer/placement_close_k.cu)
 
 add_compile_options(-w)
 find_package(Boost COMPONENTS program_options REQUIRED)
@@ -140,5 +141,9 @@ if (STDCXXFS)
   target_link_libraries(dipper PRIVATE ${STDCXXFS}) #   target_link_libraries(dipper_cpu PRIVATE ${STDCXXFS})
 endif()
 target_link_libraries(dipper PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb) # target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
+
+set_target_properties(dipper_cpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
+
 
 install(TARGETS dipper RUNTIME DESTINATION bin)
