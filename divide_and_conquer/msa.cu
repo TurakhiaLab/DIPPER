@@ -22,33 +22,40 @@ void MashPlacement::MSADeviceArraysDC::transferToDeviceArraysDC(uint64_t ** h_co
     int start = gpuCluster*params.backboneSize;
     int end = (start + params.backboneSize <= num) ? (start + params.backboneSize) : num;
     uint64_t flatStringLength= maxLengthCompressed*(end-start);
-    if (gpuCluster == 0)
-        this->h_compressedSeqs = new uint64_t[flatStringLength];
+
+    uint64_t* compressedSeqs = new uint64_t[flatStringLength];
+    // if (gpuCluster == 0 || this->h_compressedSeqs == nullptr)
+    //     this->h_compressedSeqs = new uint64_t[flatStringLength];
+    std::cout << "Initializing for " << gpuCluster << std::endl;
     
     for (size_t i = start; i < end; i++) 
     {
         for (size_t j=0; j<maxLengthCompressed;j++)  
         {
-            this->h_compressedSeqs[j] = h_compressedSeqs[i][j];
+            // this->h_compressedSeqs[j] = h_compressedSeqs[i][j];
+            compressedSeqs[j] = h_compressedSeqs[i][j];
         }
-        this->h_compressedSeqs += maxLengthCompressed;
+        // this->h_compressedSeqs += maxLengthCompressed;
+        compressedSeqs += maxLengthCompressed;
     }
-    this->h_compressedSeqs -= flatStringLength;
+    // this->h_compressedSeqs -= flatStringLength;
+    compressedSeqs -= flatStringLength;
 
 
     /* Transfer only the backbone data */
-    err = cudaMemcpy(d_compressedSeqsConst, this->h_compressedSeqs, 1ll*(flatStringLength)*sizeof(uint64_t), cudaMemcpyHostToDevice);
+    err = cudaMemcpy(d_compressedSeqsConst, compressedSeqs, 1ll*(flatStringLength)*sizeof(uint64_t), cudaMemcpyHostToDevice);
     if (err != cudaSuccess) 
     {
         fprintf(stderr, "Gpu_ERROR: cudaMemCpy failed!\n");
         exit(1);
     }
+    delete[] compressedSeqs;
 
     cudaDeviceSynchronize();
 }
 
 
-void MashPlacement::MSADeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
+void MashPlacement::MSADeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params, int gpuNum)
 {
     cudaError_t err;
     this->totalNumSequences = int(num);
@@ -471,7 +478,7 @@ __global__ void MSADistConstructionSpecialIDDC(
 }
 
 void MashPlacement::MSADeviceArraysDC::distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     if (!clustering) {
         MSADistConstructionRangeDC <<<1024, 1024>>>  (
             rowId, 
@@ -499,7 +506,7 @@ void MashPlacement::MSADeviceArraysDC::distRangeConstructionOnGpuDC(Param& param
 }
 
 void MashPlacement::MSADeviceArraysDC::distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     MSADistConstructionDC<<<1024, 1024>>>  (
         rowId, 
         d_compressedSeqsBackBone, 
@@ -511,7 +518,7 @@ void MashPlacement::MSADeviceArraysDC::distConstructionOnGpuForBackboneDC(Param&
 }
 
 void MashPlacement::MSADeviceArraysDC::distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     MSADistConstructionDC<<<1024, 1024>>> (
         rowId, 
         d_compressedSeqsBackBone, 
@@ -523,7 +530,7 @@ void MashPlacement::MSADeviceArraysDC::distConstructionOnGpuDC(Param& params, in
 }
 
 void MashPlacement::MSADeviceArraysDC::distSpecialIDConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int numToConstruct, int* d_id, int * d_leafMap) const{
-    int threadNum = 256, blockNum = (rowId+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     // std::cerr << "rowId: " << rowId << ", params.distanceType: " << params.distanceType << ", numToConstruct: " << numToConstruct << std::endl;
     MSADistConstructionSpecialIDDC <<<1024, 1024>>> (
         rowId, 
