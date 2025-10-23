@@ -177,6 +177,90 @@ __device__ void calculateParams_TJ(int tarRowId, int curRowId, int seqLen, uint6
     }
 }
 
+__device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int * frac, int &tot, int &match, int * pr){
+    int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+
+    __shared__ int sharedP0[512];
+    __shared__ int sharedP1[512];
+    __shared__ int sharedP2[512];
+    __shared__ int sharedP3[512];
+    __shared__ int sharedFrac0[512];
+    __shared__ int sharedFrac1[512];
+    __shared__ int sharedFrac2[512];
+    __shared__ int sharedFrac3[512];
+    __shared__ int sharedMatch[512];
+    __shared__ int sharedTotal[512];
+    sharedMatch[tx] = 0;
+    sharedTotal[tx] = 0;
+    sharedP0[tx] = 0;
+    sharedP1[tx] = 0;
+    sharedP2[tx] = 0;
+    sharedP3[tx] = 0;
+    sharedFrac0[tx] = 0;
+    sharedFrac1[tx] = 0;
+    sharedFrac2[tx] = 0;
+    sharedFrac3[tx] = 0;
+
+    if (tx >= compLen) {
+        return; // If thread index is out of bounds, exit early
+    }
+    for (int i=tx; i<compLen; i+=1024) {
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            if (ec == 0) sharedFrac0[tx]++;
+            else if (ec == 1) sharedFrac1[tx]++;
+            else if (ec == 2) sharedFrac2[tx]++;
+            else if (ec == 3) sharedFrac3[tx]++;
+            if (et == 0) sharedFrac0[tx]++;
+            else if (et == 1) sharedFrac1[tx]++;
+            else if (et == 2) sharedFrac2[tx]++;
+            else if (et == 3) sharedFrac3[tx]++;
+            sharedTotal[tx]++;
+            if(ec>et){
+                int temp=ec;
+                ec=et,et=temp;
+            }
+            if(ec==et){
+                sharedMatch[tx]++;
+            }
+        }
+    }
+
+    // reduction
+    for(int stride=bs/2; stride>0; stride/=2){
+        __syncthreads();
+        if(tx<stride){
+            sharedP0[tx] += sharedP0[tx + stride];
+            sharedP1[tx] += sharedP1[tx + stride];
+            sharedP2[tx] += sharedP2[tx + stride];
+            sharedP3[tx] += sharedP3[tx + stride];
+            sharedFrac0[tx] += sharedFrac0[tx + stride];
+            sharedFrac1[tx] += sharedFrac1[tx + stride];
+            sharedFrac2[tx] += sharedFrac2[tx + stride];
+            sharedFrac3[tx] += sharedFrac3[tx + stride];
+            sharedMatch[tx] += sharedMatch[tx + stride];
+            sharedTotal[tx] += sharedTotal[tx + stride];
+        }
+    }
+
+    // write the final results to the first thread
+    if (tx == 0) {
+        for(int i=0;i<4;i++){
+            frac[i] = sharedFrac0[0];
+        }
+        match = sharedMatch[0];
+        tot = sharedTotal[0];
+        pr[0] = sharedP0[0];
+        pr[1] = sharedP1[0];
+        pr[2] = sharedP2[0];
+        pr[3] = sharedP3[0];
+    }
+}
+
 __device__ void calculateParams_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -239,16 +323,20 @@ __global__ void MSADistConstruction(
         else if(distanceType==DIST_TAJIMANEI){
             int frac[4]={},pr[4]={},tot=0,match=0;
             double fr[4]={};
-            calculateParams_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
-            for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
-            double h=0;
-            h+=0.5*pr[0]*fr[0]*fr[2];
-            h+=0.5*pr[1]*fr[0]*fr[3];
-            h+=0.5*pr[2]*fr[1]*fr[2];
-            h+=0.5*pr[3]*fr[1]*fr[3];
-            double D=double(tot-match)/tot;
-            double b=0.5*(1.0-fr[0]*fr[0]-fr[2]*fr[2]+D*D/h);
-            dist[idx]=-b*log(1.0-D/b);
+            // calculateParams_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
+            calculateParamsParallel_TJ(rowId, blockID, seqLen, compressedSeqs, frac, tot, match, pr);
+
+            if (tx == 0) {
+                for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
+                double h=0;
+                h+=0.5*pr[0]*fr[0]*fr[2];
+                h+=0.5*pr[1]*fr[0]*fr[3];
+                h+=0.5*pr[2]*fr[1]*fr[2];
+                h+=0.5*pr[3]*fr[1]*fr[3];
+                double D=double(tot-match)/tot;
+                double b=0.5*(1.0-fr[0]*fr[0]-fr[2]*fr[2]+D*D/h);
+                dist[blockID]=-b*log(1.0-D/b);
+            }
         }
         else if(distanceType==DIST_KIMURA2P||distanceType==DIST_JINNEI){
             int p=0,q=0,tot=0;
