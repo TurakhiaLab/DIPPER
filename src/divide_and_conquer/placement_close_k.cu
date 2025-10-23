@@ -16,8 +16,9 @@
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
-void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum){
+void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum, int gpuNum){
     cudaError_t err;
+
     numSequences = int(num);
     totalNumSequences = int(totalNum);
     bd = 2, idx = 0;
@@ -83,6 +84,7 @@ void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num,
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
+    cudaDeviceSynchronize();
 }
 
 __global__ void initializeDC(
@@ -737,33 +739,37 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     const MashDeviceArraysDC& mashDeviceArrays,
     MatrixReader& matrixReader,
     const MSADeviceArraysDC& msaDeviceArrays,
-    const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost
+    const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
+    int gpuNum
 ){ 
+    cudaError_t err;
     if(params.in == "d"){
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
     }
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 1!\n");
         exit(1);
     }
     int * d_from;
     err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 2 !\n");
         exit(1);
     }
     double * d_dis;
     err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 3!\n");
         exit(1);
     }
     
+    
+
     /*
     Initialize closest nodes by inifinite
     */
@@ -815,6 +821,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         idx
     );
     idx += 4;
+
     /*
     Initialize closest nodes by inital tree
     */
@@ -833,15 +840,14 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         );
     }
  
-    std::cerr << "Finished initial tree construction\n";
+    std::cerr << "Finished initial tree construction" << std::endl;
     auto backboneStart = std::chrono::high_resolution_clock::now();
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
+
 
     std::chrono::nanoseconds disTime(0), treeTime(0);
     for(int i=bd;i<numSequences;i++){
         auto disStart = std::chrono::high_resolution_clock::now();
-        // blockNum = (i + 255) / 256;
-        // blockNum = 1024;
         if(params.in == "r"){
             mashDeviceArrays.distRangeConstructionOnGpuDC(
                 params,
@@ -867,11 +873,9 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
                 i-1
             );
         }
-        // cudaDeviceSynchronize();
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-        // blockNum = (numSequences*4-4 + 255) / 256;
         calculateBranchLengthDC <<<blockNum,threadNum>>> (
             i,
             d_head,
@@ -885,6 +889,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
             d_closest_dis,
             d_closest_id
         );
+
         auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
         thrust::tuple<int,double,double> smallest=*iter;
         /*
@@ -908,6 +913,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
             totalNumSequences
         );
         idx+=4;
+
         /*
         Update closest nodes
         */
@@ -926,10 +932,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         auto treeEnd = std::chrono::high_resolution_clock::now();
         disTime += disEnd - disStart;
         treeTime += treeEnd - treeStart;
-        // std::cerr << "eid: " << eid << " dis1: " << fracLen << " dis2: " << addLen << "\n";
-        // if (i==10) return;
     }
-    
+
     cudaDeviceSynchronize();
     auto backboneEnd = std::chrono::high_resolution_clock::now();
     auto backboneTime = backboneEnd - backboneStart;
@@ -1125,13 +1129,12 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     const int clusteringBatchIdx
 ){ 
     cudaError err;
-    
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
 
     auto clusterStart = std::chrono::high_resolution_clock::now();
 
-    for(int i=0;i<params.batchSize;i++){
+    for(int i=0;i<params.batchSize && i<params.totalNumSeqs-clusteringBatchIdx*params.batchSize;i++){
         
         if(params.in == "r"){
             mashDeviceArrays.distRangeConstructionOnGpuDC(
@@ -1182,7 +1185,6 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
         thrust::tuple<int,double,double> smallest=*iter;
         kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] = thrust::get<0>(smallest);
 
-        // std::cerr << "Seq idx: " << clusteringBatchIdx*params.batchSize + i << " Cluster ID: " << kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] << "\n";
     }
     cudaDeviceSynchronize();
 

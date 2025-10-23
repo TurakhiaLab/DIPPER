@@ -107,12 +107,12 @@ namespace MashPlacement
         // size_t numSequences;
         int d_seqLen;
 
-        uint64_t * h_compressedSeqs;
+        uint64_t * h_compressedSeqs=nullptr;
 
         size_t      totalNumSequences;
         size_t      backboneSize;
 
-        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params, int gpuNum=0);
         void transferToDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, int gpuCluster, Param& params);
         void distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const;
         void distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const;
@@ -258,7 +258,7 @@ namespace MashPlacement
         double * d_closest_dis;
         double * d_closest_dis_cluster;
 
-        void allocateDeviceArraysDC (size_t num, size_t totalNum);
+        void allocateDeviceArraysDC (size_t num, size_t totalNum, int gpuNum=0);
         void deallocateDeviceArraysDC ();
         
         void findBackboneTreeDC(
@@ -266,7 +266,8 @@ namespace MashPlacement
             const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
             const MSADeviceArraysDC& msaDeviceArrays,
-            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            int gpuNum=0
         );
 
         void findClustersDC(
