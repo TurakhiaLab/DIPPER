@@ -224,15 +224,17 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
                 int temp=ec;
                 ec=et,et=temp;
             }
-            if(ec==et){
-                sharedMatch[tx]++;
-            }
+            if(ec==et) sharedMatch[tx]++;
+            if(ec==0&&et==2) sharedP0[tx]++;
+            else if(ec==0&&et==3) sharedP1[tx]++;
+            else if(ec==1&&et==2) sharedP2[tx]++;
+            else if(ec==1&&et==3) sharedP3[tx]++;
         }
     }
+    __syncthreads();
 
     // reduction
     for(int stride=bs/2; stride>0; stride/=2){
-        __syncthreads();
         if(tx<stride){
             sharedP0[tx] += sharedP0[tx + stride];
             sharedP1[tx] += sharedP1[tx + stride];
@@ -245,7 +247,10 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
             sharedMatch[tx] += sharedMatch[tx + stride];
             sharedTotal[tx] += sharedTotal[tx + stride];
         }
+        __syncthreads();
     }
+
+    
 
     // write the final results to the first thread
     if (tx == 0) {
@@ -260,6 +265,7 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
         pr[2] = sharedP2[0];
         pr[3] = sharedP3[0];
     }
+    __syncthreads();
 }
 
 __device__ void calculateParams_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
@@ -428,7 +434,7 @@ __global__ void MSADistConstruction(
             double fr[4]={};
             // calculateParams_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
             calculateParamsParallel_TJ(rowId, blockID, seqLen, compressedSeqs, frac, tot, match, pr);
-
+            // __syncthreads();
             if (tx == 0) {
                 for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
                 double h=0;
