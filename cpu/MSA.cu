@@ -279,11 +279,6 @@ void MSADistConstruction(
             double fr[4]={};
             calculateParamsParallel_TJ(rowId, blockID, seqLen, compressedSeqs, frac, tot, match, pr);
             // calculateParams_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
-            if (blockID == 0) {
-                std::cout << "tot: " << tot << " match: " << match << "\n";
-                std::cout << "pr: " << pr[0] << " " << pr[1] << " " << pr[2] << " " << pr[3] << "\n";
-                std::cout << "frac: " << frac[0] << " " << frac[1] << " " << frac[2] << " " << frac[3] << "\n";
-            }
             for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
             double h=0;
             h+=0.5*pr[0]*fr[0]*fr[2];
@@ -293,7 +288,6 @@ void MSADistConstruction(
             double D=double(tot-match)/tot;
             double b=0.5*(1.0-fr[0]*fr[0]-fr[2]*fr[2]+D*D/h);
             dist[blockID]=-b*log(1.0-D/b);
-            if (blockID == 0) std::cout << "dist[" << blockID << "] = " << dist[blockID] << "\n";
         }
         });
     }
