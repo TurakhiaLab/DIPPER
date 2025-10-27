@@ -234,7 +234,7 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
     __syncthreads();
 
     // reduction
-    for(int stride=bs/2; stride>0; stride/=2){
+    for(int stride=128/2; stride>0; stride/=2){
         if(tx<stride){
             sharedP0[tx] += sharedP0[tx + stride];
             sharedP1[tx] += sharedP1[tx + stride];
@@ -313,7 +313,7 @@ __device__ void calculateParamsParallel_K2P(int tarRowId, int curRowId, int seqL
     }
     __syncthreads();
     // reduce the results in shared memory
-    for (int stride = bs / 2; stride > 0; stride /= 2) {
+    for (int stride = 1024 / 2; stride > 0; stride /= 2) {
         if (tx < stride) {
             sharedP[tx] += sharedP[tx + stride];
             sharedQ[tx] += sharedQ[tx + stride];
@@ -382,7 +382,7 @@ __device__ void calculateParamsParallel_TAMURA(int tarRowId, int curRowId, int s
     }
     __syncthreads();
     // reduce the results in shared memory
-    for (int stride = bs / 2; stride > 0; stride /= 2) {
+    for (int stride = 512 / 2; stride > 0; stride /= 2) {
         if (tx < stride) {
             sharedP[tx] += sharedP[tx + stride];
             sharedQ[tx] += sharedQ[tx + stride];
