@@ -111,7 +111,7 @@ endif()
 
 add_executable (dipper_cpu
                 src/tree_generation.cu
-                src/placement.cu
+                cpu/placement.cu
                 cpu/mash.cu
                 src/twoBitCompressor.cpp
                 src/fourBitCompressor.cpp

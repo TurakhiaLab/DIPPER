@@ -252,7 +252,7 @@ void MSADistConstruction(
 
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
     int threadNum = 1024, blockNum = 1024; // dont change threadNUM, interally it is used to calculate the distance
-    printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
+    // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
     MSADistConstruction (
         rowId, 
         d_compressedSeqs, 
