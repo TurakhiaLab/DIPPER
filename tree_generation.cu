@@ -199,8 +199,8 @@ int main(int argc, char** argv) {
 
     // Kmer Size
     uint64_t k = 15;
-    // try {k= (uint64_t)std::stoi(vm["kmer-size"].as<std::string>());}
-    // catch(std::exception &e){}
+    try {k= (uint64_t)std::stoi(vm["kmer-size"].as<std::string>());}
+    catch(std::exception &e){}
 
     // Sketch Size
     uint64_t sketchSize = 1000;
