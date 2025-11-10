@@ -340,21 +340,18 @@ __global__ void calculateBranchLength(
     int *belong,
     thrust::tuple<int, double, double> *minPos,
     int lim,
-    double *closest_dis,
-    int *closest_id,
-    int totSeqNum)
-{
-    int tx = threadIdx.x, bs = blockDim.x, bx = blockIdx.x, gs = gridDim.x;
-    int idx_ = tx + bs * bx;
-    for (int idx = idx_; idx < lim; idx += bs * gs)
-    {
-        if (idx >= lim)
-            return;
-        if (idx >= num * 4 - 4 || belong[idx] < e[idx])
-        {
-            thrust::tuple<int, double, double> minTuple(0, 0, 2);
-            minPos[bx * bs + tx] = minTuple;
-            return;
+    double * closest_dis,
+    int * closest_id,
+    int totSeqNum
+){
+    int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
+    int idx_=tx+bs*bx;
+    for (int idx=idx_; idx<lim; idx+=bs*gs){
+        if(idx>=lim) return;
+        if(idx>=num*4-4||belong[idx]<e[idx]){
+            thrust::tuple <int,double,double> minTuple(0,0,2);
+            minPos[idx]=minTuple;
+            continue;
         }
         int x = belong[idx], oth = e[idx];
         int eid = idx, otheid;
@@ -389,10 +386,12 @@ __global__ void calculateBranchLength(
         if (dis2 > len[eid])
             additional_dis += dis2 - len[eid], dis2 = len[eid];
         // assert(dis1+dis2-1e-6<=len[eid]);
-        double rest = len[eid] - dis1 - dis2;
-        dis1 += rest / 2, dis2 += rest / 2;
-        thrust::tuple<int, double, double> minTuple(eid, dis1, additional_dis);
-        minPos[bx * bs + tx] = minTuple;
+        double rest=len[eid]-dis1-dis2;
+        dis1+=rest/2,dis2+=rest/2;
+        // print eif, dis1, and additional_dis
+        // printf("eid %d (nodes %d-%d): dis1=%.8lf, dis2=%.8lf, len=%.8lf, add=%.8lf\n", eid, x, oth, dis1, dis2, len[eid], additional_dis);
+        thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
+        minPos[idx]=minTuple;
     }
 }
 
@@ -782,9 +781,9 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     // return;
     // double * h_dis = new double[numSequences];
     // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
-    // fprintf(stderr, "%d\n",1);
     // for(int j=0;j<1;j++) fprintf(stderr,"%.8lf ",h_dis[j]);std::cerr<<'\n';
-    buildInitialTree<<<1, 1>>>(
+
+    buildInitialTree <<<1,1>>> (
         numSequences,
         d_head,
         d_e,
@@ -850,9 +849,8 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-        // blockNum = (numSequences*4-4 + 255) / 256;
-        // blockNum = 1024;
-        calculateBranchLength<<<blockNum, threadNum>>>(
+        
+        calculateBranchLength <<<blockNum,threadNum>>> (
             i,
             d_head,
             d_nxt,
@@ -864,9 +862,18 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
             numSequences * 4 - 4,
             d_closest_dis,
             d_closest_id,
-            numSequences);
-        auto iter = thrust::min_element(minPos.begin(), minPos.end(), compare_tuple());
-        thrust::tuple<int, double, double> smallest = *iter;
+            numSequences
+        );
+        
+        auto iter=thrust::min_element(minPos.begin(),minPos.end(),compare_tuple());
+        thrust::tuple<int,double,double> smallest=*iter;
+        // /* print top 5 sorted elements */
+        // for(int j=0;j<5;j++){
+        //     thrust::tuple<int,double,double> s=*iter;
+        //     std::cerr<<thrust::get<0>(s)<<" "<<thrust::get<1>(s)<<" "<<thrust::get<2>(s)<<'\n';
+        //     iter++;
+        // } 
+        
         /*
         Update Tree (and assign closest nodes to newly added nodes)
         */
@@ -905,8 +912,8 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
         auto treeEnd = std::chrono::high_resolution_clock::now();
         disTime += disEnd - disStart;
         treeTime += treeEnd - treeStart;
-        // std::cerr << "Added seq " << i << "at " << eid << " with fracLen " << fracLen
-        //           << " and addLen " << addLen << "\n";
+        // std::cerr << "Seq " << i << " at " << eid << " with fracLen " << fracLen 
+        //           << " and addLen " << addLen << std::endl;
     }
     std::cerr << "Distance Operation Time " << disTime.count() / 1000000 << " ms\n";
     std::cerr << "Tree Operation Time " << treeTime.count() / 1000000 << " ms\n";

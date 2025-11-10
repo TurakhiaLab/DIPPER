@@ -102,10 +102,37 @@ void calculateParamsDC(int tarRowId, int curRowId, int seqLen, uint64_t * compre
     }
 }
 
+void calculateParamsDCParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for (int i = 0; i < compLen; ++i) {
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et<4||ec<4) useful++;
+            if(et<4&&et==ec) match++;
+        }
+    }
+}
+
+
 void calculateParamsBatchDC(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int & useful, int & match){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     // printf("px: %lld, py: %lld\n", px, py);
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et<4||ec<4) useful++;
+            if(et<4&&et==ec) match++;
+        }
+    }
+}
+
+void calculateParamsBatchDCParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int & useful, int & match){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     for(int i=0;i<compLen;i++){
         long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
@@ -138,6 +165,28 @@ void calculateParamsDC_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * com
     }
 }
 
+void calculateParamsDCParallel_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int * frac, int &tot, int &match, int * pr){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            frac[ec]++, frac[et]++, tot++;
+            if(ec>et){
+                int temp=ec;
+                ec=et,et=temp;
+            }
+            if(ec==et) match++;
+            if(ec==0&&et==2)      pr[0]++;
+            else if(ec==0&&et==3) pr[1]++;
+            else if(ec==1&&et==2) pr[2]++;
+            else if(ec==1&&et==3) pr[3]++;
+        }
+    }
+}
+
 void calculateParamsBatchDC_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int * frac, int &tot, int &match, int * pr){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -153,6 +202,29 @@ void calculateParamsBatchDC_TJ(int tarRowId, int curRowId, int seqLen, uint64_t 
             }
             if(ec==et) match++;
             if(ec==0&&et==2) pr[0]++;
+            else if(ec==0&&et==3) pr[1]++;
+            else if(ec==1&&et==2) pr[2]++;
+            else if(ec==1&&et==3) pr[3]++;
+        }
+    }
+}
+
+void calculateParamsBatchDCParallel_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int * frac, int &tot, int &match, int * pr){
+    
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            frac[ec]++, frac[et]++, tot++;
+            if(ec>et){
+                int temp=ec;
+                ec=et,et=temp;
+            }
+            if(ec==et) match++;
+            if(ec==0&&et==2)      pr[0]++;
             else if(ec==0&&et==3) pr[1]++;
             else if(ec==1&&et==2) pr[2]++;
             else if(ec==1&&et==3) pr[3]++;
@@ -176,7 +248,39 @@ void calculateParamsDC_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * co
     }
 }
 
+void calculateParamsDCParallel_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            tot++;
+            if(et==ec) continue;
+            if(et%2==ec%2) p++;
+            else q++;
+        }
+    }
+}
+
 void calculateParamsBatchDC_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int &p, int &q, int &tot){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            tot++;
+            if(et==ec) continue;
+            if(et%2==ec%2) p++;
+            else q++;
+        }
+    }
+}
+
+void calculateParamsBatchDCParallel_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int &p, int &q, int &tot){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     for(int i=0;i<compLen;i++){
@@ -210,6 +314,25 @@ void calculateParamsDC_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t *
     }
 }
 
+void calculateParamsDCParallel_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot, int &gc1, int &gc2){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            tot++;
+            if(et==ec) continue;
+            if(et%2==ec%2) p++;
+            else q++;
+            if(ec==1||ec==2) gc1++;
+            if(et==1||et==2) gc2++;
+        }
+    }
+}
+
+
 void calculateParamsBatchDC_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int &p, int &q, int &tot, int &gc1, int &gc2){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -227,6 +350,26 @@ void calculateParamsBatchDC_TAMURA(int tarRowId, int curRowId, int seqLen, uint6
         }
     }
 }
+
+void calculateParamsBatchDCParallel_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, uint64_t * compressedSeqsConst, int &p, int &q, int &tot, int &gc1, int &gc2){
+    int compLen=(seqLen+15)/16;
+    long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
+    
+    for(int i=0;i<compLen;i++){
+        long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
+        for(int j=0;j<16&&i*16+j<seqLen;j++){
+            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+            if(et>=4||ec>=4) continue;
+            tot++;
+            if(et==ec) continue;
+            if(et%2==ec%2) p++;
+            else q++;
+            if(ec==1||ec==2) gc1++;
+            if(et==1||et==2) gc2++;
+        }
+    }
+}
+
 
 void MSADistConstructionDC(
     int rowId,
@@ -315,10 +458,10 @@ void MSADistConstructionRangeDC(
     // idx+=st;
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
         tbb::parallel_for(tbb::blocked_range<int>(0, ed-st+1), [&](const tbb::blocked_range<int>& range) {
-        for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
-            int idx = idx_ + st;
+        for (int blockID = range.begin(); blockID < range.end(); ++blockID) {
+            int idx = blockID + st;
             int useful=0, match=0;
-            calculateParamsDC(rowId, idx, seqLen, compressedSeqs, useful, match);
+            calculateParamsDCParallel(rowId, idx, seqLen, compressedSeqs, useful, match);
             double uncor=1-double(match)/useful;
             if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
             else dist[idx]=-0.75*log(1.0-uncor/0.75);
@@ -329,11 +472,11 @@ void MSADistConstructionRangeDC(
     }
     else if(distanceType==DIST_TAJIMANEI){
         tbb::parallel_for(tbb::blocked_range<int>(0, ed-st+1), [&](const tbb::blocked_range<int>& range) {
-        for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
-            int idx = idx_ + st;
+        for (int blockID = range.begin(); blockID < range.end(); ++blockID) {
+            int idx =  blockID + st;
             int frac[4]={},pr[4]={},tot=0,match=0;
             double fr[4]={};
-            calculateParamsDC_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
+            calculateParamsDCParallel_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
             for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
             double h=0;
             h+=0.5*pr[0]*fr[0]*fr[2];
@@ -351,7 +494,7 @@ void MSADistConstructionRangeDC(
         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
             int idx = idx_ + st;
             int p=0,q=0,tot=0;
-            calculateParamsDC_K2P(rowId, idx, seqLen, compressedSeqs, p, q, tot);
+            calculateParamsDCParallel_K2P(rowId, idx, seqLen, compressedSeqs, p, q, tot);
             double pp=double(p)/tot,qq=double(q)/tot;
             if(distanceType==DIST_KIMURA2P) dist[idx]=-0.5*log((1-2*pp-qq)*sqrt(1-2*qq));
             else dist[idx]=0.5*(1.0/(1-2*pp-qq)+0.5/(1-qq*2)-1.5);
@@ -363,7 +506,7 @@ void MSADistConstructionRangeDC(
         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
             int idx = idx_ + st;
             int p=0,q=0,tot=0,gc1=0,gc2=0;
-            calculateParamsDC_TAMURA(rowId, idx, seqLen, compressedSeqs, p, q, tot, gc1, gc2);
+            calculateParamsDCParallel_TAMURA(rowId, idx, seqLen, compressedSeqs, p, q, tot, gc1, gc2);
             double pp=double(p)/tot,qq=double(q)/tot, c=double(gc1)/tot+double(gc2)/tot-2*double(gc1)*double(gc2)/tot/tot;
             dist[idx]=-c*log(1-pp/c-qq)-0.5*(1-c)*log(1-2*qq);
         }
@@ -399,7 +542,7 @@ void MSADistConstructionRangeForClusteringDC(
         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
             int idx = idx_ + st;
             int useful=0, match=0;
-            calculateParamsBatchDC(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst,useful, match);
+            calculateParamsBatchDCParallel(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst,useful, match);
             double uncor=1-double(match)/useful;
             if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
             else dist[idx]=-0.75*log(1.0-uncor/0.75);
@@ -413,7 +556,7 @@ void MSADistConstructionRangeForClusteringDC(
             int idx = idx_ + st;
             int frac[4]={},pr[4]={},tot=0,match=0;
             double fr[4]={};
-            calculateParamsBatchDC_TJ(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, frac, tot, match, pr);
+            calculateParamsBatchDCParallel_TJ(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, frac, tot, match, pr);
             for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
             double h=0;
             h+=0.5*pr[0]*fr[0]*fr[2];
@@ -431,7 +574,7 @@ void MSADistConstructionRangeForClusteringDC(
         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
             int idx = idx_ + st;
             int p=0,q=0,tot=0;
-            calculateParamsBatchDC_K2P(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, p, q, tot);
+            calculateParamsBatchDCParallel_K2P(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, p, q, tot);
             double pp=double(p)/tot,qq=double(q)/tot;
             if(distanceType==DIST_KIMURA2P) dist[idx]=-0.5*log((1-2*pp-qq)*sqrt(1-2*qq));
             else dist[idx]=0.5*(1.0/(1-2*pp-qq)+0.5/(1-qq*2)-1.5);
@@ -443,7 +586,7 @@ void MSADistConstructionRangeForClusteringDC(
         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
             int idx = idx_ + st;
             int p=0,q=0,tot=0,gc1=0,gc2=0;
-            calculateParamsBatchDC_TAMURA(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, p, q, tot, gc1, gc2);
+            calculateParamsBatchDCParallel_TAMURA(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst, p, q, tot, gc1, gc2);
             double pp=double(p)/tot,qq=double(q)/tot, c=double(gc1)/tot+double(gc2)/tot-2*double(gc1)*double(gc2)/tot/tot;
             dist[idx]=-c*log(1-pp/c-qq)-0.5*(1-c)*log(1-2*qq);
         }
