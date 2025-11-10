@@ -484,7 +484,7 @@ __device__ void calculateParamsBatchDCParallel_K2P(int tarRowId, int curRowId, i
     sharedQ[tx]=0;
     sharedTot[tx]=0;
     
-    for(int i=0;i<compLen;i+=1024){
+    for(int i=tx;i<compLen;i+=1024){
         long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
             int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
@@ -557,7 +557,7 @@ __device__ void calculateParamsDCParallel_TAMURA(int tarRowId, int curRowId, int
     sharedGC2[tx] = 0;
     
 
-    for(int i=0;i<compLen;i+512){
+    for(int i=tx;i<compLen;i+512){
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
             int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
@@ -634,7 +634,7 @@ __device__ void calculateParamsBatchDCParallel_TAMURA(int tarRowId, int curRowId
     sharedGC2[tx] = 0;
     
     
-    for(int i=0;i<compLen;i++){
+    for(int i=tx;i<compLen;i++){
         long long vt=compressedSeqs[px+i], vc=compressedSeqsConst[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
             int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
