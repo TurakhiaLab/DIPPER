@@ -1,5 +1,5 @@
-#ifndef MASHPL_CUH
-#define MASHPL_CUH
+#ifndef MASHPL_HPP
+#define MASHPL_HPP
 
 #include <stdint.h>
 #include <iostream>

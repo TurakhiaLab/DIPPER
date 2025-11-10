@@ -110,21 +110,21 @@ else()
 endif()
 
 add_executable (dipper_cpu
-                src/tree_generation.cu
-                cpu/placement.cu
-                cpu/mash.cu
+                cpu/tree_generation.cpp
+                cpu/placement.cpp
+                cpu/mash.cpp
                 src/twoBitCompressor.cpp
                 src/fourBitCompressor.cpp
-                cpu/matrix_reader.cu
-                cpu/MSA.cu
+                cpu/matrix_reader.cpp
+                cpu/MSA.cpp
                 src/tree.cpp
-                cpu/neighborJoining.cu
-                cpu/placement_close_k.cu
-                src/divide_and_conquer/mash.cu
-                src/divide_and_conquer/mash.cpp
-                src/divide_and_conquer/msa.cu
-                src/divide_and_conquer/placement_close_k.cpp
-                src/divide_and_conquer/placement_close_k.cu)
+                cpu/neighborJoining.cpp
+                cpu/placement_close_k.cpp
+                cpu/divide_and_conquer/mash_cu.cpp
+                cpu/divide_and_conquer/mash.cpp
+                cpu/divide_and_conquer/msa.cpp
+                cpu/divide_and_conquer/placement_close_k.cpp
+                cpu/divide_and_conquer/placement_close_k_cu.cpp)
 
 add_compile_options(-w)
 find_package(Boost COMPONENTS program_options REQUIRED)

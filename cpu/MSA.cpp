@@ -1,15 +1,10 @@
-#include "mash_placement.cuh"
+#include "mash_placement.hpp"
 
 #include <stdio.h>
 #include <queue>
-#include <thrust/sort.h>
-#include <thrust/scan.h>
-#include <thrust/binary_search.h>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
 #include <chrono>
+#include <cmath>
 #include <iostream>
-#include <cub/cub.cuh>
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
 
@@ -199,7 +194,6 @@ void calculateParams_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * comp
 }
 
 void calculateParamsParallel_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
-    int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     for (int i=0; i<compLen; i++) {

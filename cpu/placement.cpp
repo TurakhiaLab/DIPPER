@@ -1,17 +1,13 @@
-#include "mash_placement.cuh"
+#include "mash_placement.hpp"
 
 #include <stdio.h>
 #include <queue>
-#include <thrust/sort.h>
-#include <thrust/scan.h>
-#include <thrust/binary_search.h>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
+#include <cassert>
 #include <fstream>
-#include <cub/cub.cuh>
 #include <tbb/parallel_for.h>
+#include <functional>
 
 /*
 void checkCudaErrorsHere(const char* location) {
@@ -760,7 +756,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             d_lim,
             d_dep
         );
-        auto iter=thrust::min_element(minPos.begin(),minPos.end(),compare_tuple());
+        auto iter=std::min_element(minPos.begin(),minPos.end(),compare_tuple());
         std::tuple<int,double,double> smallest=*iter;
         /*
         Update Tree

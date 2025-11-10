@@ -7,11 +7,10 @@
 #include <boost/program_options.hpp>
 #include "../src/kseq.h"
 #include "zlib.h"
-#include <cuda_runtime.h>
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
 #include <tbb/global_control.h>
-#include "version.hpp"
+#include "../src/version.hpp"
 
 #ifndef TWOBITCOMPRESSOR_HPP
 #include "../src/twoBitCompressor.hpp"
@@ -21,8 +20,8 @@
 #include "../src/fourBitCompressor.hpp"
 #endif
 
-#ifndef MASHPL_CUH
-#include "../cpu/mash_placement.cuh"
+#ifndef MASHPL_HPP
+#include "mash_placement.hpp"
 #endif
 
 namespace po = boost::program_options;
@@ -92,10 +91,13 @@ void parseArguments(int argc, char **argv)
                                     ("threads,T", po::value<int>(),
                                      "Number of CPU threads. Default: all available threads.")
 
-                                        ("help,h",
-                                         "Print this help message")
+                                        ("no-shuffle",
+                                         "Disable random shuffling to ensure deterministic and reproducible results.")
 
-                                            ("version,v", "Print DIPPER version");
+                                            ("help,h",
+                                             "Print this help message")
+
+                                                ("version,v", "Print DIPPER version");
 
     mainDesc.add(requiredDesc).add(optionalDesc);
 }
@@ -185,7 +187,7 @@ int main(int argc, char **argv)
         else if (vm.count("version"))
         {
             std::cout << "DIPPER Version " << PROJECT_VERSION << std::endl;
-            return;
+            return 0;
         }
         std::cerr << "\033[31m" << e.what() << "\033[0m" << std::endl;
         std::cerr << mainDesc << std::endl;
@@ -202,7 +204,6 @@ int main(int argc, char **argv)
         }
     }
 
-    cudaSetDevice(1);
     // Kmer Size
     uint64_t k = 15;
     // try {k= (uint64_t)std::stoi(vm["kmer-size"].as<std::string>());}
@@ -392,7 +393,7 @@ int main(int argc, char **argv)
             std::cerr << "Adding new sequnces only supported with input aligned and unaligned sequences\n";
             exit(1);
         }
-        return;
+        return 0;
     }
 
     if (in == "m" && out == "t")
@@ -406,9 +407,15 @@ int main(int argc, char **argv)
         std::vector<int> ids(numSequences);
         for (int i = 0; i < numSequences; i++)
             ids[i] = i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
-
+        if (!vm.count("no-shuffle"))
+        {
+            std::mt19937 rnd(time(NULL));
+            std::shuffle(ids.begin(), ids.end(), rnd);
+        }
+        else
+        {
+            std::cerr << "Disable Random Shuffling." << std::endl;
+        }
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
@@ -488,18 +495,21 @@ int main(int argc, char **argv)
         }
         else if (algo == "3" || algo == "0" && numSequences >= dc_thr)
         {
-            std::cerr << "Using divide-and-conquer mode\n";
+            // std::cerr<<"Using divide-and-conquer mode\n";
+            std::cerr << "Sorry, Divide-and-conquer mode has not been implemented yet." << std::endl;
+            exit(1);
+            /*
             int totalNumSequences = numSequences;
-            int backboneSize = numSequences / 100;
+            int backboneSize = numSequences/20;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
             MashPlacement::msaDeviceArraysDC.allocateDeviceArraysDC(fourBitCompressedSeqs, seqLengths, numSequences, params);
             MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
             auto createArrayEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createArrayTime = createArrayEnd - createArrayStart;
-            std::cerr << "Allocated in: " << createArrayTime.count() / 1000000 << " ms\n";
+            std::cerr << "Allocated in: " <<  createArrayTime.count()/1000000 << " ms\n";
 
-            // Build Tree on Gpu
+            //Build Tree on Gpu
             auto createTreeStart = std::chrono::high_resolution_clock::now();
             MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
             MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
@@ -508,12 +518,13 @@ int main(int argc, char **argv)
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart;
             MashPlacement::kplacementDeviceArraysDC.printTreeDC(names, output_);
-            std::cerr << "Tree Created in: " << createTreeTime.count() / 1000000 << " ms\n";
+            std::cerr << "Tree Created in: " <<  createTreeTime.count()/1000000 << " ms\n";
 
             // Print first 10 hash values corresponding to each sequence
             // MashPlacement::mashDeviceArrays.printSketchValues(10);
             MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
+            */
         }
         else
         {
@@ -540,9 +551,15 @@ int main(int argc, char **argv)
         std::vector<int> ids(numSequences);
         for (int i = 0; i < numSequences; i++)
             ids[i] = i;
-        std::mt19937 rnd(time(NULL));
-        std::shuffle(ids.begin(),ids.end(),rnd);
-        // std::cout << "No Random Shuffle\n";
+        if (!vm.count("no-shuffle"))
+        {
+            std::mt19937 rnd(time(NULL));
+            std::shuffle(ids.begin(), ids.end(), rnd);
+        }
+        else
+        {
+            std::cerr << "Disable Random Shuffling." << std::endl;
+        }
 
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
@@ -615,8 +632,10 @@ int main(int argc, char **argv)
         }
         else if (algo == "3" || algo == "0" && numSequences >= dc_thr)
         {
-            std::cerr << "Using divide-and-conquer mode\n";
-
+            // std::cerr << "Using divide-and-conquer mode\n";
+            std::cerr << "Sorry, Divide-and-conquer mode has not been implemented yet." << std::endl;
+            exit(1);
+            /*
             int totalNumSequences = numSequences;
             int backboneSize = numSequences / 100;
             params.batchSize = backboneSize;
@@ -648,6 +667,7 @@ int main(int argc, char **argv)
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();
             std::cerr << "Tree Created in: " << createTreeTime.count() / 1000000 << " ms\n";
+            */
         }
         else
         {

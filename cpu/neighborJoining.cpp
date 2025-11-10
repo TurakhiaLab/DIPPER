@@ -1,5 +1,5 @@
-#ifndef NJ_CUH
-#include "mash_placement.cuh"
+#ifndef NJ_HPP
+#include "mash_placement.hpp"
 #endif
 
 #include <stdio.h>
@@ -7,21 +7,16 @@
 #include <fstream>
 #include <queue>
 #include <vector>
-#include <thrust/sort.h>
-#include <thrust/scan.h>
-#include <thrust/binary_search.h>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
-#include <thrust/tuple.h>
-#include <cuda_runtime.h>
-#include <thrust/reduce.h>
-#include <thrust/execution_policy.h>
+#include <chrono>
+#include <functional>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range2d.h>
 
-void fillDismatrix(int numSequences, double* d_mashDist){
+void fillDismatrix(int numSequences, double *d_mashDist)
+{
 
-    tbb::parallel_for(tbb::blocked_range2d<int>(0, numSequences, 0, numSequences), [&](const tbb::blocked_range2d<int>& range) {
+    tbb::parallel_for(tbb::blocked_range2d<int>(0, numSequences, 0, numSequences), [&](const tbb::blocked_range2d<int> &range)
+                      {
     for (int i = range.rows().begin(); i < range.rows().end(); ++i) {
         for (int j = range.cols().begin(); j < range.cols().end(); ++j) {
             if(i==j) d_mashDist[i*numSequences+j]=0; // Distances on diagnal is set to 0
@@ -29,8 +24,7 @@ void fillDismatrix(int numSequences, double* d_mashDist){
             double val=d_mashDist[i*numSequences+j];
             d_mashDist[j*numSequences+i]=val;
         }
-    }
-    });
+    } });
 
     /*
     int tx=threadIdx.x, bx=blockIdx.x;
@@ -47,17 +41,16 @@ void fillDismatrix(int numSequences, double* d_mashDist){
     */
 }
 
-
 void MashPlacement::NJDeviceArrays::getDismatrix(
     int numSequences,
-    Param& params,
-    const MashDeviceArrays& mashDeviceArrays,
-    MatrixReader& matrixReader,
-    const MSADeviceArrays& msaDeviceArrays
-){
-    //Allocate memories on GPU and copy data to GPU
+    Param &params,
+    const MashDeviceArrays &mashDeviceArrays,
+    MatrixReader &matrixReader,
+    const MSADeviceArrays &msaDeviceArrays)
+{
+    // Allocate memories on GPU and copy data to GPU
     d_numSequences = numSequences;
-    d_mashDist = new double[1ll*numSequences*numSequences];
+    d_mashDist = new double[1ll * numSequences * numSequences];
     d_U = new double[numSequences];
     /*
     auto err = cudaMalloc(&d_mashDist, 1ll*numSequences*numSequences*sizeof(double));
@@ -74,71 +67,75 @@ void MashPlacement::NJDeviceArrays::getDismatrix(
     }
     cudaDeviceSynchronize();
     */
-    if(params.in == "d"){
+    if (params.in == "d")
+    {
         matrixReader.distConstructionOnGpu(params, 0, d_mashDist);
     }
     auto constructDistStart = std::chrono::high_resolution_clock::now();
-    for(int i=1;i<numSequences;i++){
+    for (int i = 1; i < numSequences; i++)
+    {
         auto disStart = std::chrono::high_resolution_clock::now();
-        if(params.in == "r"){
+        if (params.in == "r")
+        {
             mashDeviceArrays.distConstructionOnGpu(
                 params,
                 i,
-                d_mashDist+i*numSequences
-            );
+                d_mashDist + i * numSequences);
         }
-        else if(params.in == "d"){
+        else if (params.in == "d")
+        {
             matrixReader.distConstructionOnGpu(
                 params,
                 i,
-                d_mashDist+i*numSequences
-            );
+                d_mashDist + i * numSequences);
         }
-        else if(params.in == "m"){
+        else if (params.in == "m")
+        {
             msaDeviceArrays.distConstructionOnGpu(
                 params,
                 i,
-                d_mashDist+i*numSequences
-            );
+                d_mashDist + i * numSequences);
         }
     }
     auto constructDistEnd = std::chrono::high_resolution_clock::now();
-    std::chrono::nanoseconds constructDistTime = constructDistEnd - constructDistStart; 
-    std::cerr << "Distance Matrix Constructed in: " << constructDistTime.count()/1000000 << " ms\n";
-    
+    std::chrono::nanoseconds constructDistTime = constructDistEnd - constructDistStart;
+    std::cerr << "Distance Matrix Constructed in: " << constructDistTime.count() / 1000000 << " ms\n";
+
     // fillDismatrix <<<1024,1024>>> (d_numSequences, d_mashDist);
-    fillDismatrix (d_numSequences, d_mashDist);
+    fillDismatrix(d_numSequences, d_mashDist);
     // for (int i = 0; i < numSequences; ++i) {
     //     std::cout << i << ':' << d_mashDist[i*numSequences] << '\n';
     // }
 }
 
-void MashPlacement::NJDeviceArrays::deallocateDeviceArrays(){
-    //Free space on GPU at the end
-    delete [] d_mashDist;
-    delete [] d_U;
+void MashPlacement::NJDeviceArrays::deallocateDeviceArrays()
+{
+    // Free space on GPU at the end
+    delete[] d_mashDist;
+    delete[] d_U;
     // cudaFree(d_mashDist);
     // cudaFree(d_U);
     // cudaDeviceSynchronize();
 }
 
-void calculateU(int d_numSequences, double *d_mashDist, double *d_U){
-    //Only executes once, calculate the sum of distances in each row
-    int numSequences=d_numSequences;
-    double* temp_U = new double[numSequences];
+void calculateU(int d_numSequences, double *d_mashDist, double *d_U)
+{
+    // Only executes once, calculate the sum of distances in each row
+    int numSequences = d_numSequences;
+    double *temp_U = new double[numSequences];
 
-    tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](const tbb::blocked_range<int>& range) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](const tbb::blocked_range<int> &range)
+                      {
     for (int i = range.begin(); i < range.end(); ++i) {
         double temp = 0.0;
         for (int j = 0; j < numSequences; ++j) {
             if (i != j) temp += d_mashDist[i * numSequences + j];
         }
         d_U[i] = temp;
-    }
-    });
+    } });
 
-    delete [] temp_U;
-    
+    delete[] temp_U;
+
     /*
     __shared__ double temp_U[128]; // Make sure to set this value larger than numSequences/gridSize
     for(auto i=0;i<128;i++)
@@ -162,18 +159,19 @@ void calculateU(int d_numSequences, double *d_mashDist, double *d_U){
 }
 
 // __global__ void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, thrust::tuple<int,int,double> *minPos, int len){
-void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, std::vector<std::tuple<int,int,double>>& minPos, int len){
-    
-    //Store the minimum value found by this thread to global memory for further processing
+void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, std::vector<std::tuple<int, int, double>> &minPos, int len)
+{
 
-    
+    // Store the minimum value found by this thread to global memory for further processing
+
     const double INF = std::numeric_limits<double>::max();
-    int numSequences=d_numSequences;
+    int numSequences = d_numSequences;
 
     minPos.clear();
     minPos.resize(numSequences); // Make sure to set this value larger than numSequences/gridSize*blockSize
 
-    tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](const tbb::blocked_range<int>& range) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](const tbb::blocked_range<int> &range)
+                      {
     for (int i = range.begin(); i < range.end(); ++i) {
     // for (int i = 0; i < numSequences; ++i) {
         double minD = INF;
@@ -189,9 +187,8 @@ void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, std::vecto
             }
         }
         minPos[i]= {x, y, minD};
-    }
-    });
-    
+    } });
+
     /*
     __shared__ double U[128];
     //Required length of each block equal to d_numSequences/gridDim.x+1;
@@ -238,49 +235,52 @@ struct compare_tuple
 };
 */
 
-struct compare_tuple {
-    bool operator()(std::tuple<int,int,double> lhs, std::tuple<int,int,double> rhs)
+struct compare_tuple
+{
+    bool operator()(std::tuple<int, int, double> lhs, std::tuple<int, int, double> rhs)
     {
-      return std::get<2>(lhs) < std::get<2>(rhs);
-      //Always find the tuple whose third value (the criteria we want to minimize) is minimized
+        return std::get<2>(lhs) < std::get<2>(rhs);
+        // Always find the tuple whose third value (the criteria we want to minimize) is minimized
     }
 };
 
-
 // __global__ void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x,int y, double* d_U, int total){
-void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x,int y, double* d_U, int total){
+void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x, int y, double *d_U, int total)
+{
     // Erase node x and y from the matrix (x<y)
-    // Insert the distances to the new node into the matrix, 
+    // Insert the distances to the new node into the matrix,
     // at the original column/row of x for coalasced memory access.
     // Always move the last row/column (distances related to last node) to row/column of y to avoid gap in matrix
-    
+
     int numSequences = total;
 
     // tbb::parallel_for(tbb::blocked_range<int>(0, d_numSequences - 1), [&](const tbb::blocked_range<int>& range) {
     // for (int i = range.begin(); i < range.end(); ++i) {
-    for (int i = 0; i < d_numSequences - 1; ++i) {
-        if (i == x || i == y) continue;
-        double val=(d_mashDist[x*numSequences+i]+d_mashDist[y*numSequences+i]-disxy)*0.5;
-        double fardis=d_mashDist[(d_numSequences-1)*numSequences+i];
-        d_U[i]+=-d_mashDist[x*numSequences+i]-d_mashDist[y*numSequences+i]+val;
+    for (int i = 0; i < d_numSequences - 1; ++i)
+    {
+        if (i == x || i == y)
+            continue;
+        double val = (d_mashDist[x * numSequences + i] + d_mashDist[y * numSequences + i] - disxy) * 0.5;
+        double fardis = d_mashDist[(d_numSequences - 1) * numSequences + i];
+        d_U[i] += -d_mashDist[x * numSequences + i] - d_mashDist[y * numSequences + i] + val;
         d_U[x] += val;
         // Update distance matrix (symmetric)
-        d_mashDist[x*numSequences+i]=val;
-        d_mashDist[i*numSequences+x]=val;
-        d_mashDist[y*numSequences+i]=fardis;
-        d_mashDist[i*numSequences+y]=fardis;
+        d_mashDist[x * numSequences + i] = val;
+        d_mashDist[i * numSequences + x] = val;
+        d_mashDist[y * numSequences + i] = fardis;
+        d_mashDist[i * numSequences + y] = fardis;
     }
     // });
     {
-        d_U[y]=d_U[d_numSequences-1];
-        int i=d_numSequences-1;
-        double val=(d_mashDist[x*numSequences+i]+d_mashDist[y*numSequences+i]-disxy)*0.5;
-        d_U[y]+=-d_mashDist[x*numSequences+i]-d_mashDist[y*numSequences+i]+val;
-        d_U[x]+=val;
-        d_mashDist[x*numSequences+y]=val;
-        d_mashDist[y*numSequences+x]=val;
+        d_U[y] = d_U[d_numSequences - 1];
+        int i = d_numSequences - 1;
+        double val = (d_mashDist[x * numSequences + i] + d_mashDist[y * numSequences + i] - disxy) * 0.5;
+        d_U[y] += -d_mashDist[x * numSequences + i] - d_mashDist[y * numSequences + i] + val;
+        d_U[x] += val;
+        d_mashDist[x * numSequences + y] = val;
+        d_mashDist[y * numSequences + x] = val;
     }
-    
+
     /*
     int tx=threadIdx.x, bx=blockIdx.x;
     int bs=blockDim.x, gs=gridDim.x;
@@ -313,39 +313,42 @@ void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x
     */
 }
 
-
-void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::string> &name, std::ofstream& output_){
-    std::vector <std::vector<std::pair<int,double>>> tree(d_numSequences*2);
+void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector<std::string> &name, std::ofstream &output_)
+{
+    std::vector<std::vector<std::pair<int, double>>> tree(d_numSequences * 2);
     // Store the tree in a vector of vectors, while each small vector consists of several pairs
     // First element in the pair is the index of its child
     // Second element in the pair is the distance to its child
-    int cntThread=256,cntBlock=256; // Could be adjusted based on experiment
-    int realID[d_numSequences]; // Actual sequence id corresponding to i-th row/column in the matrix
-    for(int i=0;i<d_numSequences;i++) realID[i]=i;
+    int cntThread = 256, cntBlock = 256; // Could be adjusted based on experiment
+    int realID[d_numSequences];          // Actual sequence id corresponding to i-th row/column in the matrix
+    for (int i = 0; i < d_numSequences; i++)
+        realID[i] = i;
     // Build the full distance matrix
-    
+
     // thrust::device_vector <thrust::tuple<int,int,double>> minPos(cntThread*cntBlock);
-    std::vector<std::tuple<int,int,double>> minPos(cntThread*cntBlock);
+    std::vector<std::tuple<int, int, double>> minPos(cntThread * cntBlock);
     // Device_vector that stores minimum value found by each thread
-    
+
     // calculateU <<<cntBlock,cntThread>>> (d_numSequences, d_mashDist, d_U);
-    calculateU (d_numSequences, d_mashDist, d_U);
+    calculateU(d_numSequences, d_mashDist, d_U);
     // for (int i = 0; i < d_numSequences; ++i) {
     //     std::cout << i << ':' << d_U[i] << '\n';
     // }
     // Calculate initial sum of distances in each row
-    int ID=d_numSequences;
-    
-    for(int i=0;i<d_numSequences-2;i++){
+    int ID = d_numSequences;
+
+    for (int i = 0; i < d_numSequences - 2; i++)
+    {
         // findMinDist <<<cntBlock,cntThread>>> (d_numSequences-i,d_mashDist,d_U,thrust::raw_pointer_cast(minPos.data()),d_numSequences);
         // cudaDeviceSynchronize();
-        findMinDist (d_numSequences-i,d_mashDist,d_U,minPos,d_numSequences);
-        auto iter=std::min_element(minPos.begin(),minPos.end(),compare_tuple());
+        findMinDist(d_numSequences - i, d_mashDist, d_U, minPos, d_numSequences);
+        auto iter = std::min_element(minPos.begin(), minPos.end(), compare_tuple());
         // Find the global minimum
-        std::tuple<int,int,double> smallest=*iter;
-        int x=std::get<0>(smallest),y=std::get<1>(smallest);
-        double modified_dis=std::get<2>(smallest);
-        if(x>y) std::swap(x,y);
+        std::tuple<int, int, double> smallest = *iter;
+        int x = std::get<0>(smallest), y = std::get<1>(smallest);
+        double modified_dis = std::get<2>(smallest);
+        if (x > y)
+            std::swap(x, y);
 
         // for (auto tt: minPos) {
         //     std::cout << std::get<0>(tt) << ',' << std::get<1>(tt) << ',' << std::get<2>(tt) << '\n';
@@ -361,54 +364,59 @@ void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::s
         // double blX = (*dis+(*ux)/(d_numSequences-i-2)-(*uy)/(d_numSequences-i-2))*0.5;
         // double blY = *dis - blX;
 
-        double dis = d_mashDist[x*d_numSequences+y];
+        double dis = d_mashDist[x * d_numSequences + y];
         double ux = d_U[x];
         double uy = d_U[y];
-        double blX = (dis+(ux)/(d_numSequences-i-2)-(uy)/(d_numSequences-i-2))*0.5;
+        double blX = (dis + (ux) / (d_numSequences - i - 2) - (uy) / (d_numSequences - i - 2)) * 0.5;
         double blY = dis - blX;
         std::cout << i << ' ' << x << ' ' << y << ' ' << dis << ' ' << ux << ' ' << uy << ' ' << blX << ' ' << blY << '\n';
         // Calculate branch lengths
-        if(blX<0) blY+=blX, blX=0;
-        if(blY<0) blX+=blY, blY=0;
+        if (blX < 0)
+            blY += blX, blX = 0;
+        if (blY < 0)
+            blX += blY, blY = 0;
         // Avoid negative branches
-        tree[ID].push_back({realID[x],blX});
-        tree[ID].push_back({realID[y],blY});
+        tree[ID].push_back({realID[x], blX});
+        tree[ID].push_back({realID[y], blY});
         // Insert the two edges into the tree
-        double temp=0;
-        realID[x]=ID++, realID[y]=realID[d_numSequences-i-1]; 
+        double temp = 0;
+        realID[x] = ID++, realID[y] = realID[d_numSequences - i - 1];
         // Update the actual sequence indices corresponding to rows/columns in distance matrix
         // cudaMemcpy(d_U+x,&temp,sizeof(double),cudaMemcpyHostToDevice);
-        d_U[x]=0;
-        updateDisMatrix(d_numSequences-i,d_mashDist,dis,x,y,d_U, d_numSequences);
+        d_U[x] = 0;
+        updateDisMatrix(d_numSequences - i, d_mashDist, dis, x, y, d_U, d_numSequences);
         // Update the distance matrix and U array
         // cudaDeviceSynchronize();
     }
     // If only two nodes are left, their distance is fixed
-    int x=0,y=1;
-    double dis=d_mashDist[x*d_numSequences+y];
+    int x = 0, y = 1;
+    double dis = d_mashDist[x * d_numSequences + y];
     // cudaMemcpy(&dis,d_mashDist+x*d_numSequences+y,sizeof(double),cudaMemcpyDeviceToHost);
-    tree[d_numSequences*2-2].push_back({realID[x],dis*0.5});
-    tree[d_numSequences*2-2].push_back({realID[y],dis*0.5});
+    tree[d_numSequences * 2 - 2].push_back({realID[x], dis * 0.5});
+    tree[d_numSequences * 2 - 2].push_back({realID[y], dis * 0.5});
     // cudaDeviceSynchronize();
     // Output the tree recursively
-    std::function<void(int)>  print=[&](int node){
-        if(tree[node].size()){
+    std::function<void(int)> print = [&](int node)
+    {
+        if (tree[node].size())
+        {
             // printf("(");
             output_ << "(";
-            for(size_t i=0;i<tree[node].size();i++){
+            for (size_t i = 0; i < tree[node].size(); i++)
+            {
                 print(tree[node][i].first);
                 // printf(":");
                 // printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
                 output_ << ":";
-                output_ << tree[node][i].second << (i+1==tree[node].size()?')':',');
+                output_ << tree[node][i].second << (i + 1 == tree[node].size() ? ')' : ',');
             }
         }
-        else output_ << name[node];
+        else
+            output_ << name[node];
         // else std::cout<<name[node];
     };
     // Root of the tree has an index of d_numSequneces*2-2
-    print(d_numSequences*2-2);
+    print(d_numSequences * 2 - 2);
     // std::cout<<";\n";
-    output_<<";\n";
+    output_ << ";\n";
 }
-
