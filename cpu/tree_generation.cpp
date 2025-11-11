@@ -495,10 +495,8 @@ int main(int argc, char **argv)
         }
         else if (algo == "3" || algo == "0" && numSequences >= dc_thr)
         {
-            // std::cerr<<"Using divide-and-conquer mode\n";
-            std::cerr << "Sorry, Divide-and-conquer mode has not been implemented yet." << std::endl;
-            exit(1);
-            /*
+            std::cerr<<"Using divide-and-conquer mode\n";
+            
             int totalNumSequences = numSequences;
             int backboneSize = numSequences/20;
             params.batchSize = backboneSize;
@@ -524,7 +522,6 @@ int main(int argc, char **argv)
             // MashPlacement::mashDeviceArrays.printSketchValues(10);
             MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
-            */
         }
         else
         {
@@ -632,10 +629,9 @@ int main(int argc, char **argv)
         }
         else if (algo == "3" || algo == "0" && numSequences >= dc_thr)
         {
-            // std::cerr << "Using divide-and-conquer mode\n";
-            std::cerr << "Sorry, Divide-and-conquer mode has not been implemented yet." << std::endl;
-            exit(1);
-            /*
+            std::cerr << "Using divide-and-conquer mode\n";
+
+            
             int totalNumSequences = numSequences;
             int backboneSize = numSequences / 100;
             params.batchSize = backboneSize;
@@ -667,7 +663,7 @@ int main(int argc, char **argv)
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();
             std::cerr << "Tree Created in: " << createTreeTime.count() / 1000000 << " ms\n";
-            */
+            
         }
         else
         {
