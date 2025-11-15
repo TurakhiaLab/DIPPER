@@ -2,9 +2,15 @@
 #include "fourBitCompressor.hpp"
 #endif
 
-void fourBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq) {
+void fourBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq, int lowerLimit, int upperLimit) {
+    
+    if (upperLimit > -1) seqLen=upperLimit+1;
+    else upperLimit=-1;
+    if (lowerLimit > 0) seqLen-=lowerLimit;
+    else lowerLimit=0;
+    
     size_t compressedSeqLen = (seqLen+15)/16;
-
+    
     for (size_t i=0; i < compressedSeqLen; i++) {
         compressedSeq[i] = 0;
 
@@ -14,7 +20,7 @@ void fourBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq) 
         uint64_t twoBitVal = 0;
         uint64_t shift = 0;
         for (auto j=start; j<end; j++) {
-            switch(seq[j]) {
+            switch(seq[j+lowerLimit]) {
             case 'A':
                 twoBitVal = 0;
                 break;

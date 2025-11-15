@@ -92,6 +92,9 @@ void parseArguments(int argc, char** argv)
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
 
+        ("range,r",        po::value<std::string>(),
+        "Restrict processing to a subset of alignment coordinates. Provide as start,end (e.g., --range 0,100)")
+
         ("help,h",
         "Print this help message")
         
@@ -235,6 +238,33 @@ int main(int argc, char** argv) {
     bool add = false;
     if (vm.count("add")) add = true;
 
+    std::pair<int, int> range({-1,-1});
+    if (vm.count("range")) {
+        std::string rangeStr;
+        try {
+            rangeStr = vm["range"].as<std::string>();
+        } catch (std::exception &e) {
+            std::cerr << "ERROR: Unable to read --range option: " << e.what() << "\n";
+            return 1;
+        }
+        auto pos = rangeStr.find(',');
+        if (pos == std::string::npos) {
+            std::cerr << "ERROR: Unable to parse --range option. Expect \"start,end\".\n";
+            return 1;
+        }
+        try {
+            range.first = std::stoi(rangeStr.substr(0, pos));
+            range.second = std::stoi(rangeStr.substr(pos+1));
+        } catch (std::exception &e) {
+            std::cerr << "ERROR: Unable to parse --range option. Expect integers: " << e.what() << "\n";
+            return 1;
+        }
+        if (range.first < 0 || range.second < range.first) {
+            std::cerr << "ERROR: Invalid --range values. Ensure start>=0 and end>=start.\n";
+            return 1;
+        }
+    }
+
     std::string treeFile = "";
     try {treeFile = vm["input-tree"].as<std::string>();}
     catch(std::exception &e){}
@@ -246,17 +276,13 @@ int main(int argc, char** argv) {
     std::string outputFile = vm["output-file"].as<std::string>();
     std::ofstream output_(outputFile.c_str());
 
-    // int device_id = 1;  // Use GPU 1 (second GPU)
-    // cudaError_t err = cudaSetDevice(device_id);
-    // if (err != cudaSuccess) {
-    //     std::cerr << "Failed to set CUDA device: " << cudaGetErrorString(err) << std::endl;
-    //     return -1;
-    // }
 
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+    params.range.first = range.first;
+    params.range.second = range.second;
 
     if (add) {
         // Load the tree from the file
@@ -317,15 +343,22 @@ int main(int argc, char** argv) {
         } else if (in == "m" && out == "t") {
             uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
             uint64_t * seqLengths = new uint64_t[numSequences];
+            bool alignmentLengthModify = false;
+            if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
             tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
             for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
                 uint64_t i = static_cast<uint64_t>(idx_);
                 uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
                 uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
-
+                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+                
+                int localSeqLength = seqs[i].size();
+                if (alignmentLengthModify) {
+                    if (params.range.second > -1) localSeqLength=params.range.second+1;
+                    if (params.range.first > 0) localSeqLength-=params.range.first;
+                }
                 int newId = idMap[i];
-                seqLengths[newId] = seqs[i].size();
+                seqLengths[newId] = localSeqLength;
                 fourBitCompressedSeqs[newId] = fourBitCompressed;
             }});
             MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
@@ -358,14 +391,21 @@ int main(int argc, char** argv) {
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
         uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
+        bool alignmentLengthModify=false;
+        if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
             uint64_t i = static_cast<uint64_t>(idx_);
             uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
             uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
+            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
 
-            seqLengths[ids[i]] = seqs[i].size();
+            int localSeqLength = seqs[i].size();
+            if (alignmentLengthModify) {
+                if (params.range.second > -1) localSeqLength=params.range.second+1;
+                if (params.range.first > 0) localSeqLength-=params.range.first;
+            }
+            seqLengths[ids[i]]=localSeqLength;
             fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
             names[ids[i]] = names_[i];
         }});

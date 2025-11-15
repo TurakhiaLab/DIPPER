@@ -234,6 +234,9 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
     __syncthreads();
 
     // reduction
+    if (tx >= 128) {
+        return; // If thread index is out of bounds, exit early
+    }
     for(int stride=128/2; stride>0; stride/=2){
         if(tx<stride){
             sharedP0[tx] += sharedP0[tx + stride];
