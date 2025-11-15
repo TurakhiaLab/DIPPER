@@ -348,15 +348,16 @@ int main(int argc, char** argv) {
             tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
             for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
                 uint64_t i = static_cast<uint64_t>(idx_);
-                uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
-                uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
-                
                 int localSeqLength = seqs[i].size();
                 if (alignmentLengthModify) {
                     if (params.range.second > -1) localSeqLength=params.range.second+1;
                     if (params.range.first > 0) localSeqLength-=params.range.first;
                 }
+                uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
+                uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+                
+                
                 int newId = idMap[i];
                 seqLengths[newId] = localSeqLength;
                 fourBitCompressedSeqs[newId] = fourBitCompressed;
@@ -396,15 +397,18 @@ int main(int argc, char** argv) {
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
             uint64_t i = static_cast<uint64_t>(idx_);
-            uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
-            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
-
+            
             int localSeqLength = seqs[i].size();
             if (alignmentLengthModify) {
                 if (params.range.second > -1) localSeqLength=params.range.second+1;
                 if (params.range.first > 0) localSeqLength-=params.range.first;
             }
+            uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
+
+            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+
+            
             seqLengths[ids[i]]=localSeqLength;
             fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
             names[ids[i]] = names_[i];
