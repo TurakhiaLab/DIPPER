@@ -1,0 +1,2 @@
+extern "C" double pll_core_root_loglikelihood(unsigned int,unsigned int,unsigned int,const double*,const unsigned int*,double* const*,const double*,const unsigned int*,const double*,const int*,const unsigned int*,double*,unsigned int){return 0.0;}
+extern "C" double pll_core_tip_inner_loglikelihood(unsigned int,unsigned int,unsigned int,const double,const unsigned int,const unsigned char,const unsigned int,unsigned int,const double *,double * const *,const double *,const unsigned int *,const double *,const int *,const unsigned int *,double *,unsigned int)

@@ -1,0 +1,13 @@
+model:
+  states: 4
+  subst_model: "GTR"
+  ncat: 4
+  alpha: 0.3
+  pinv: 0.0
+  freqs: [0.25, 0.25, 0.25, 0.25]
+  rates: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # GTR rAC, rAG, ...
+  rate_weights: [0.25,0.25,0.25,0.25]
+  per_rate_scaling: true
+files:
+  alignment: "data.aligned.fa"
+  tree: "data.treefile.nwk"
