@@ -1,3 +1,11 @@
 build/*
 bin/*
 src/version.hpp
+*.o
+*.d
+*.nsys-rep
+*.sqlite
+MLIPPER/core/test_*
+MLIPPER/core_CUDA/test_*
+MLIPPER/tree_generation/test_*
+MLIPPER/tree_generation/tree_generation

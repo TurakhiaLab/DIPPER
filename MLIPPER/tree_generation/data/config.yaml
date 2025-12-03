@@ -9,5 +9,5 @@ model:
   rate_weights: [0.25,0.25,0.25,0.25]
   per_rate_scaling: true
 files:
-  alignment: "data.aligned.fa"
-  tree: "data.treefile.nwk"
+  alignment: "7506.aln"
+  tree: "7506.fasttree.tre"
