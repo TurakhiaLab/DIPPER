@@ -29,6 +29,11 @@ __global__ void fillDismatrix(int numSequences, double* d_mashDist){
             d_mashDist[j*numSequences+i]=val;
         }
     }
+    // if (tx==0 && bx==0) {
+    //     for (int i = 0; i < numSequences; ++i) {
+    //         printf("%d:%f\n",i,d_mashDist[i*numSequences]);
+    //     }
+    // }
 }
 
 
@@ -111,6 +116,11 @@ __global__ void calculateU(int d_numSequences, double *d_mashDist, double *d_U){
     if(threadIdx.x==0){
         for(auto i=blockIdx.x;i<numSequences;i+=gridDim.x) d_U[i]=temp_U[i/gridDim.x];
         // For each block, update the sum to global memory
+    }
+    if (threadIdx.x==0 && blockIdx.x==0) {
+        for (auto i = 0; i < numSequences; ++i) {
+            printf("%d:%f\n",i,d_U[i]);
+        }
     }
 }
 
@@ -226,6 +236,9 @@ void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::s
         cudaMemcpy(uy,d_U+y,sizeof(double),cudaMemcpyDeviceToHost);
         double blX = (*dis+(*ux)/(d_numSequences-i-2)-(*uy)/(d_numSequences-i-2))*0.5;
         double blY = *dis - blX;
+
+        std::cout << i << ' ' << x << ' ' << y << ' ' << (*dis) << ' ' << (*ux) << ' ' << (*uy) << ' ' << blX << ' ' << blY << '\n';
+        
         // Calculate branch lengths
         if(blX<0) blY+=blX, blX=0;
         if(blY<0) blX+=blY, blY=0;
