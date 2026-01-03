@@ -487,4 +487,3 @@ void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int ro
     );
 }
 
-

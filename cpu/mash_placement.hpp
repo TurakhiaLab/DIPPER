@@ -1,5 +1,5 @@
-#ifndef MASHPL_CUH
-#define MASHPL_CUH
+#ifndef MASHPL_HPP
+#define MASHPL_HPP
 
 #include <stdint.h>
 #include <iostream>
@@ -23,8 +23,18 @@ namespace MashPlacement
         std::string out;
         uint64_t batchSize;
         uint64_t backboneSize;
+        uint64_t totalNumSeqs;
+
         // Added
         uint64_t flatStringLength;
+        int threads;
+
+        Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out, int t_threads)
+        {
+            kmerSize = t_kmerSize; sketchSize = t_sketchSize; threshold = t_threshold, distanceType=t_distanceType;
+            in = t_in, out = t_out; 
+            threads = t_threads;
+        };
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {
@@ -108,12 +118,13 @@ namespace MashPlacement
         // size_t numSequences;
         int d_seqLen;
 
-        uint64_t * h_compressedSeqs;
+        uint64_t * h_compressedSeqs=nullptr;
 
         size_t      totalNumSequences;
         size_t      backboneSize;
 
-        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params);
+        void allocateDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params, int gpuNum=0);
+        void transferToDeviceArraysDC (uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, int gpuCluster, Param& params);
         void distConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist) const;
         void distConstructionOnGpuForBackboneDC(Param& params, int rowId, double* d_mashDist) const;
         void distRangeConstructionOnGpuDC(Param& params, int rowId, double* d_mashDist, int l, int r, bool clustering = false) const;
@@ -258,7 +269,7 @@ namespace MashPlacement
         double * d_closest_dis;
         double * d_closest_dis_cluster;
 
-        void allocateDeviceArraysDC (size_t num, size_t totalNum);
+        void allocateDeviceArraysDC (size_t num, size_t totalNum, int gpuNum=0);
         void deallocateDeviceArraysDC ();
         
         void findBackboneTreeDC(
@@ -266,7 +277,8 @@ namespace MashPlacement
             const MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
             const MSADeviceArraysDC& msaDeviceArrays,
-            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            int gpuNum=0
         );
 
         void findClustersDC(
@@ -276,6 +288,15 @@ namespace MashPlacement
             const MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
         );
+        
+        void findClustersDC_batch(
+            Param& params,
+            const MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArraysDC& msaDeviceArrays,
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            const int clusteringBatchIdx
+        );
 
         void findClusterTreeDC(
             Param& params,
@@ -283,6 +304,15 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             MSADeviceArraysDC& msaDeviceArrays,
             KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+        );
+        void findClusterTreeDC_batch(
+            Param& params,
+            MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            MSADeviceArraysDC& msaDeviceArrays,
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            const std::string dir,
+            std::vector<bool>& isCluster
         );
         void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
     };
