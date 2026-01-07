@@ -425,7 +425,8 @@ __global__ void MSADistConstruction(
             if (tx == 0) {   
                 double uncor=1-double(match)/useful;
                 if(distanceType==DIST_UNCORRECTED) dist[blockID]=uncor;
-                else dist[blockID]=-0.75*log(1.0-uncor/0.75);
+                // else dist[blockID]=-0.75*log(1.0-uncor/0.75); // For nucleotide
+                else dist[blockID]= 2*(1/sqrt(1 - uncor)) -1; // For Protein
                 // printf("%d %d %d %d\n",rowId, blockID, match, useful);
             }
         }

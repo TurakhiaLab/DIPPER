@@ -89,6 +89,18 @@ void parseArguments(int argc, char** argv)
         ("add,a",
         "Add query to backbone using k-closest placement")
 
+        ("threads,T", po::value<int>(),
+        "Number of CPU threads (default: all available threads)")
+
+        ("gap-col,g", po::value<double>()->default_value(1.0),
+        "Threshold for gappy columns (default: 1)\n Columns with a gap ratio exceeding this value will be removed to speed up computation.")
+
+        ("nongap-row,n", po::value<double>()->default_value(0),
+        "Threshold for nongap characters (default: 0)\nSequences with fewer nongap characters than the median count multiplied by this value will be removed to reduce noise.")
+
+        ("gpu-index", po::value<int>()->default_value(0),
+        "GPU device index to use (default: 0)")
+
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
 
@@ -99,6 +111,117 @@ void parseArguments(int argc, char** argv)
 
     mainDesc.add(requiredDesc).add(optionalDesc);
 
+}
+
+std::vector<std::string> filter_msa(std::vector<std::string>& sequences, po::variables_map vm)
+{
+    double colTH = vm["gap-col"].as<double>(), rowTH = vm["nongap-row"].as<double>();
+
+    if (sequences.empty()) {
+        return sequences;
+    }
+
+    const size_t num_sequences = sequences.size();
+    const size_t num_columns = sequences[0].length();
+    std::vector<std::string> filtered_sequences (num_sequences);
+    
+    if (colTH < 1) {
+        auto rmColStart = std::chrono::high_resolution_clock::now();
+        // Calculate the maximum number of allowed gaps for a column to be kept.
+        const size_t max_allowed_gaps = static_cast<size_t>(
+            std::floor(colTH * num_sequences)
+        );
+        std::cerr << "Maximum allowed gaps: " << max_allowed_gaps << '\n';
+        // This boolean vector will store the result of our parallel analysis:
+        // true if the column should be KEPT, false if it should be removed.
+        std::vector<bool> keep_column(num_columns);
+
+        // --- Step 1: Parallel Gap Counting using TBB ---
+        // The parallel_for iterates over all columns (0 to num_columns-1).
+        tbb::parallel_for( tbb::blocked_range<size_t>(0, num_columns), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t col_idx = r.begin(); col_idx != r.end(); ++col_idx) {
+                size_t gap_count = 0;
+                // Iterate over all sequences for the current column
+                for (size_t seq_idx = 0; seq_idx < num_sequences; ++seq_idx) {
+                    if (sequences[seq_idx][col_idx] == '-') {
+                        gap_count++;
+                    }
+                }
+                // Store the decision
+                keep_column[col_idx] = (gap_count <= max_allowed_gaps);
+            }
+        }
+        );
+
+        // --- Step 2: Sequential Filtering ---
+        // Calculate the length of the new sequences and pre-size the result strings
+        size_t new_length = 0;
+        for (bool keep : keep_column) {
+            if (keep) {
+                new_length++;
+            }
+        }
+        
+        for (size_t i = 0; i < num_sequences; ++i) {
+            filtered_sequences.reserve(new_length); // Initialize string with new length
+        }
+        // Iterate through the original sequences, copying only the KEPT columns
+        tbb::parallel_for( tbb::blocked_range<size_t>(0, num_sequences), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t seq_idx = r.begin(); seq_idx != r.end(); ++seq_idx) {
+            size_t new_col_idx = 0;
+            for (size_t old_col_idx = 0; old_col_idx < num_columns; ++old_col_idx) {
+                if (keep_column[old_col_idx]) {
+                    filtered_sequences[seq_idx] += sequences[seq_idx][old_col_idx];
+                    new_col_idx++;
+                }
+            }
+        }
+        }
+        );
+        std::cerr << "Original length: " << num_columns 
+                  << ", length after removing gappy columns: " << new_length << '\n';
+        auto rmColEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds rmColTime = rmColEnd - rmColStart;
+        std::cerr << "Remove gappy columns in " << rmColTime.count() / 1000000 << " ms\n";
+    }
+    
+    if (colTH == 1) filtered_sequences = std::move(sequences);
+    if (rowTH > 0) {
+        auto rmRowStart = std::chrono::high_resolution_clock::now();
+        int numCols = filtered_sequences[0].size();
+        std::vector<int> nongapCount (num_sequences, 0);
+        // Count nongap characters of all sequences
+        tbb::parallel_for( tbb::blocked_range<size_t>(0, num_sequences), [&](const tbb::blocked_range<size_t>& r) {
+        for (size_t row_idx = r.begin(); row_idx != r.end(); ++row_idx) {
+                int nongap_count = 0;
+                for (size_t col_idx = 0; col_idx < numCols; ++col_idx) {
+                    if (filtered_sequences[row_idx][col_idx] != '-') nongap_count++;
+                }
+                nongapCount[row_idx] = nongap_count;
+            }
+        }
+        );
+        std::vector<int> nongapCount_copy = nongapCount;
+        std::sort(nongapCount_copy.begin(), nongapCount_copy.end());
+        int min_nongap = static_cast<int>( std::floor(nongapCount_copy[num_sequences/2] * rowTH));
+        nongapCount_copy.clear();
+
+        std::cerr << "Minimum required non-gaps: " << min_nongap << '\n';
+
+        std::vector<std::string> filter_rows;
+        for (int sIdx = 0; sIdx < num_sequences; ++sIdx) {
+            if (nongapCount[sIdx] >= min_nongap) filter_rows.push_back(filtered_sequences[sIdx]);
+        }
+
+        std::cerr << "Original: " << filtered_sequences.size()
+                  << ", sequence number after removing gappy sequences: " << filter_rows.size() << '\n';
+        auto rmRowEnd = std::chrono::high_resolution_clock::now();
+        std::chrono::nanoseconds rmRowTime = rmRowEnd - rmRowStart;
+        std::cerr << "Remove gappy sequences in " << rmRowTime.count() / 1000000 << " ms\n";
+        filtered_sequences = std::move(filter_rows);
+    }
+    return filtered_sequences;
+    
 }
 
 void readAllSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names, std::unordered_map<std::string, int>& nameToIdx)
@@ -156,7 +279,20 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
     // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
 }
 
-
+void writeAlignment(std::string fileName, std::vector<std::string> seqs, std::vector<std::string> names) {
+    std::ofstream outFile;
+    outFile.open(fileName);
+    if (!outFile) {
+        fprintf(stderr, "ERROR: cant open file: %s\n", fileName.c_str());
+        exit(1);
+    }
+    for (int i = 0; i < seqs.size(); ++i) {
+        outFile << ('>' + names[i] + '\n');
+        outFile << (seqs[i] + '\n');
+    }
+    outFile.close();
+    return;
+}
 
 
 int main(int argc, char** argv) {
@@ -256,6 +392,13 @@ int main(int argc, char** argv) {
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
 
+    cudaSetDevice(vm["gpu-index"].as<int>());
+    int cpuThreads = (vm.count("threads")) ? vm["threads"].as<int>() : tbb::this_task_arena::max_concurrency();
+    tbb::global_control init(tbb::global_control::max_allowed_parallelism, cpuThreads);
+    fprintf(stderr, "Using GPU #%d.\n", vm["gpu-index"].as<int>());
+    fprintf(stderr, "Maximum available CPU cores: %d. Using %d CPU cores.\n", tbb::this_task_arena::max_concurrency(), cpuThreads);
+
+
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
 
     if (add) {
@@ -345,6 +488,9 @@ int main(int argc, char** argv) {
 
         // Read Input Sequences (Fasta format)
         readSequences(vm, seqs, names_);
+        seqs = filter_msa(seqs, vm);
+        std::string fileName = vm["input-file"].as<std::string>()+".masked.aln";
+        // writeAlignment(fileName, seqs, names_);
         size_t numSequences = seqs.size();
         names.resize(numSequences);
         std::vector<int> ids(numSequences);
