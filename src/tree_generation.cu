@@ -3,6 +3,7 @@
 #include <fstream>
 #include <string>
 #include <chrono>
+#include <cassert>
 #include <bits/stdc++.h>
 #include <boost/program_options.hpp> 
 #include "../src/kseq.h"
@@ -113,7 +114,7 @@ void parseArguments(int argc, char** argv)
 
 }
 
-std::vector<std::string> filter_msa(std::vector<std::string>& sequences, po::variables_map vm)
+std::vector<std::string> filter_msa(std::vector<std::string>& sequences, std::vector<std::string> names, po::variables_map vm)
 {
     double colTH = vm["gap-col"].as<double>(), rowTH = vm["nongap-row"].as<double>();
 
@@ -208,20 +209,25 @@ std::vector<std::string> filter_msa(std::vector<std::string>& sequences, po::var
 
         std::cerr << "Minimum required non-gaps: " << min_nongap << '\n';
 
-        std::vector<std::string> filter_rows;
+        std::vector<std::string> preserve_seqs;
+        std::vector<std::string> preserve_names;
         for (int sIdx = 0; sIdx < num_sequences; ++sIdx) {
-            if (nongapCount[sIdx] >= min_nongap) filter_rows.push_back(filtered_sequences[sIdx]);
+            if (nongapCount[sIdx] >= min_nongap) {
+                preserve_seqs.push_back(filtered_sequences[sIdx]);
+                preserve_names.push_back(names[sIdx]);
+            }
         }
 
         std::cerr << "Original: " << filtered_sequences.size()
-                  << ", sequence number after removing gappy sequences: " << filter_rows.size() << '\n';
+                  << ", sequence number after removing gappy sequences: " << preserve_seqs.size() << '\n';
         auto rmRowEnd = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds rmRowTime = rmRowEnd - rmRowStart;
         std::cerr << "Remove gappy sequences in " << rmRowTime.count() / 1000000 << " ms\n";
-        filtered_sequences = std::move(filter_rows);
+        filtered_sequences = std::move(preserve_seqs);
+        names = std::move(preserve_names);
+        assert(filtered_sequences.size() == names.size());
     }
     return filtered_sequences;
-    
 }
 
 void readAllSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names, std::unordered_map<std::string, int>& nameToIdx)
@@ -281,16 +287,44 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
 
 void writeAlignment(std::string fileName, std::vector<std::string> seqs, std::vector<std::string> names) {
     std::ofstream outFile;
+    std::vector<std::pair<std::string,std::string>> seqPairs;
+    for (int i = 0; i < seqs.size(); ++i) {
+        seqPairs.push_back({names[i], seqs[i]});
+    } 
+    
+    std::sort(seqPairs.begin(), seqPairs.end(),[](const auto& a, const auto& b) { return a.second < b.second; });
+    
     outFile.open(fileName);
     if (!outFile) {
         fprintf(stderr, "ERROR: cant open file: %s\n", fileName.c_str());
         exit(1);
     }
-    for (int i = 0; i < seqs.size(); ++i) {
-        outFile << ('>' + names[i] + '\n');
-        outFile << (seqs[i] + '\n');
+    for (int i = 0; i < seqPairs.size(); ++i) {
+        outFile << ('>' + seqPairs[i].first + '\n');
+        outFile << (seqPairs[i].second + '\n');
     }
     outFile.close();
+
+    auto current_second = seqPairs[0].second;
+    bool first_in_line = true;
+
+    std::vector<std::string> ids;
+    for (const auto& p : seqPairs) {
+        if (p.second != current_second) {
+            // 換新的一行（新的 second）
+            if (ids.size() > 30) {
+                std::cout << ids.size() << ": \n";
+                for (auto id: ids) std::cout << id << ',';
+                std::cout << "\n";
+            }
+            current_second = p.second;
+            ids.clear();
+            ids.push_back(p.first);
+        }
+        else {
+            ids.push_back(p.first);
+        }
+    }
     return;
 }
 
@@ -488,7 +522,7 @@ int main(int argc, char** argv) {
 
         // Read Input Sequences (Fasta format)
         readSequences(vm, seqs, names_);
-        seqs = filter_msa(seqs, vm);
+        seqs = filter_msa(seqs, names_, vm);
         std::string fileName = vm["input-file"].as<std::string>()+".masked.aln";
         // writeAlignment(fileName, seqs, names_);
         size_t numSequences = seqs.size();
