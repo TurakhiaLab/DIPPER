@@ -8,7 +8,7 @@ if [[ "${OS_NAME}" == "Darwin" ]]; then
         exit 1
     fi
     brew update
-    brew install tbb boost cmake wget git
+    brew install tbb boost cmake wget git gcc@11
 else
     sudo apt-get update && \
         sudo apt-get install -y \
@@ -18,6 +18,8 @@ else
             build-essential \
             libboost-all-dev \
             libtbb-dev \
-            cmake && \
+            cmake \
+            gcc-11 \
+            g++-11 && \
         sudo apt-get clean
 fi
