@@ -2,14 +2,75 @@
 
 BUILD_TYPE=$1
 CMAKE_OPTIONS=""
+BUILD_TYPE="${BUILD_TYPE:-auto}"
+
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+
+normalize_arch() {
+    case "$1" in
+        amd64) echo "x86_64" ;;
+        aarch64) echo "arm64" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+has_cuda_toolchain() {
+    command -v nvcc >/dev/null 2>&1
+}
+
+has_hip_toolchain() {
+    command -v hipcc >/dev/null 2>&1
+}
+
+has_nvidia_gpu() {
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        nvidia-smi -L >/dev/null 2>&1
+        return $?
+    fi
+    if [ -d /proc/driver/nvidia/gpus ]; then
+        return 0
+    fi
+    return 1
+}
+
+has_amd_gpu() {
+    if command -v rocminfo >/dev/null 2>&1; then
+        rocminfo >/dev/null 2>&1
+        return $?
+    fi
+    if command -v rocm-smi >/dev/null 2>&1; then
+        rocm-smi -i >/dev/null 2>&1
+        return $?
+    fi
+    if [ -e /dev/kfd ]; then
+        return 0
+    fi
+    return 1
+}
+
+ARCH_NAME="$(normalize_arch "${ARCH_NAME}")"
+echo "Detected OS: ${OS_NAME}, Arch: ${ARCH_NAME}"
+
+if [ "$BUILD_TYPE" == "auto" ]; then
+    if [ "$OS_NAME" == "Linux" ] && has_nvidia_gpu && has_cuda_toolchain; then
+        BUILD_TYPE="cuda"
+    elif [ "$OS_NAME" == "Linux" ] && has_amd_gpu && has_hip_toolchain; then
+        BUILD_TYPE="hip"
+    else
+        BUILD_TYPE="cpu"
+    fi
+fi
 
 if [ "$BUILD_TYPE" == "cuda" ]; then
     CMAKE_OPTIONS="-DUSE_CUDA=ON -DUSE_HIP=OFF"
 elif [ "$BUILD_TYPE" == "hip" ]; then
     CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=ON"
 else
-    echo "Error: either pass cuda or hip. Usage: ./installUbuntu.sh cuda/hip"
-    exit 1
+    echo "Building CPU-only version."
+    echo "To force CUDA: ./install/installUbuntu.sh cuda"
+    echo "To force HIP: ./install/installUbuntu.sh hip"
+    CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=OFF"
 fi
 
 SCRIPT_DIR=$(pwd)
@@ -35,7 +96,7 @@ find_tbb_cmake_dir() {
 }
 
 find_tbb_dev() {
-    if dpkg -l | grep -q libtbb-dev; then
+    if command -v dpkg >/dev/null 2>&1 && dpkg -l | grep -q libtbb-dev; then
         return 0
     else
         return 1
@@ -83,9 +144,14 @@ else
 fi
 
 
-HIPCC_PATH=$(which hipcc)
-HIP_COMPILE_VERSION=$(echo "$HIPCC_PATH" | sed -n 's|.*/rocm-\([0-9.]*\)/.*|\1|p')
-echo ${HIP_COMPILE_VERSION}
+HIPCC_PATH="$(command -v hipcc 2>/dev/null)"
+HIP_COMPILE_VERSION=""
+if [ -n "${HIPCC_PATH}" ]; then
+    HIP_COMPILE_VERSION=$(echo "$HIPCC_PATH" | sed -n 's|.*/rocm-\([0-9.]*\)/.*|\1|p')
+fi
+if [ -n "${HIP_COMPILE_VERSION}" ]; then
+    echo "HIP version: ${HIP_COMPILE_VERSION}"
+fi
 
 cd "${BUILD_DIR}" || exit 1
 rm -rf CMake*
