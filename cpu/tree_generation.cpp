@@ -1,9 +1,16 @@
-#include <iostream>
-#include <sstream>
-#include <fstream>
-#include <string>
+#include <algorithm>
 #include <chrono>
-#include <bits/stdc++.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <iostream>
+#include <random>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include <boost/program_options.hpp>
 #include "../src/kseq.h"
 #include "zlib.h"
@@ -773,7 +780,7 @@ int main(int argc, char **argv)
     }
     auto mainEnd = std::chrono::high_resolution_clock::now();
     std::chrono::nanoseconds mainTime = mainEnd - inputStart;
-    std::cout << "Total Execution in " << std::fixed << std::setprecision(6) << static_cast<float>(mainTime.count()) / 1000000000.0 << " s\n";
+    std::cout << "Total Execution in " << std::fixed <<  static_cast<float>(mainTime.count()) / 1000000000.0 << " s\n";
 
     return 0;
 }
