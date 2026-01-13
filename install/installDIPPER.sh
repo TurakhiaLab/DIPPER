@@ -131,7 +131,8 @@ if ! find_tbb_dev; then
                 echo "Found TBB: Version: ${tbb_ver}"
                 mkdir -p "${BUILD_DIR}"
             else
-                echo "TBB is not found via Homebrew. Please use "bash ./install/installDependencies.sh" to install libraries."
+                echo "TBB is not found via Homebrew. Please run: bash ./install/installDependencies.sh"
+                exit 1
             fi
         else
             echo "TBB already installed at: ${TBB_CMAKE_DIR}"
@@ -153,6 +154,7 @@ if [ -n "${HIP_COMPILE_VERSION}" ]; then
     echo "HIP version: ${HIP_COMPILE_VERSION}"
 fi
 
+mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}" || exit 1
 rm -rf CMake*
 if [[ "$(uname)" == "Darwin" ]]; then
