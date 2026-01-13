@@ -26,7 +26,7 @@ jobs:
       - name: Build CPU
         run: |
           cd install
-          bash ./installUbuntu.sh cpu
+          bash ./installDIPPER.sh cpu
 
       - name: Run CPU binary
         run: ./bin/dipper_cpu --help
@@ -70,7 +70,7 @@ jobs:
         if: steps.detect_nvidia.outputs.available == 'true'
         run: |
           cd install
-          bash ./installUbuntu.sh cuda
+          bash ./installDIPPER.sh cuda
 
       - name: Run NVIDIA GPU binary
         if: steps.detect_nvidia.outputs.available == 'true'
@@ -80,7 +80,7 @@ jobs:
         if: steps.detect_amd.outputs.available == 'true'
         run: |
           cd install
-          bash ./installUbuntu.sh hip
+          bash ./installDIPPER.sh hip
 
       - name: Run AMD GPU binary
         if: steps.detect_amd.outputs.available == 'true'
