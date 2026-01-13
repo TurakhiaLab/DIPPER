@@ -52,6 +52,12 @@ has_amd_gpu() {
 ARCH_NAME="$(normalize_arch "${ARCH_NAME}")"
 echo "Detected OS: ${OS_NAME}, Arch: ${ARCH_NAME}"
 
+if command -v gcc-11 >/dev/null 2>&1 && command -v g++-11 >/dev/null 2>&1; then
+    export CC=gcc-11
+    export CXX=g++-11
+    echo "Using GCC 11: ${CC}, ${CXX}"
+fi
+
 if [ "$BUILD_TYPE" == "auto" ]; then
     if [ "$OS_NAME" == "Linux" ] && has_nvidia_gpu && has_cuda_toolchain; then
         BUILD_TYPE="cuda"
