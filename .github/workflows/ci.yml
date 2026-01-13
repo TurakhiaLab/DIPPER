@@ -3,12 +3,93 @@ on:
   push:
     branches:
       - main
-      - base     
+      - base   
  
 permissions:
   contents: write
 
 jobs:
+  build_cpu:
+    name: Build CPU (Linux, macOS)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Install dependencies
+        run: bash ./install/installDependencies.sh
+
+      - name: Build CPU
+        run: |
+          cd install
+          bash ./installUbuntu.sh cpu
+
+      - name: Run CPU binary
+        run: ./bin/dipper_cpu --help
+
+  build_gpu:
+    name: Build GPU (Linux, if available)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Detect NVIDIA GPU + CUDA
+        id: detect_nvidia
+        run: |
+          if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1 && command -v nvcc >/dev/null 2>&1; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Detect AMD GPU + HIP
+        id: detect_amd
+        run: |
+          if command -v hipcc >/dev/null 2>&1; then
+            if command -v rocminfo >/dev/null 2>&1 && rocminfo >/dev/null 2>&1; then
+              echo "available=true" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+            if command -v rocm-smi >/dev/null 2>&1 && rocm-smi -i >/dev/null 2>&1; then
+              echo "available=true" >> "${GITHUB_OUTPUT}"
+              exit 0
+            fi
+          fi
+          echo "available=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Install dependencies
+        if: steps.detect_nvidia.outputs.available == 'true' || steps.detect_amd.outputs.available == 'true'
+        run: bash ./install/installDependencies.sh
+
+      - name: Build NVIDIA GPU
+        if: steps.detect_nvidia.outputs.available == 'true'
+        run: |
+          cd install
+          bash ./installUbuntu.sh cuda
+
+      - name: Run NVIDIA GPU binary
+        if: steps.detect_nvidia.outputs.available == 'true'
+        run: ./bin/dipper --help
+
+      - name: Build AMD GPU
+        if: steps.detect_amd.outputs.available == 'true'
+        run: |
+          cd install
+          bash ./installUbuntu.sh hip
+
+      - name: Run AMD GPU binary
+        if: steps.detect_amd.outputs.available == 'true'
+        run: ./bin/dipper --help
+
+      - name: Skip GPU build
+        if: steps.detect_nvidia.outputs.available != 'true' && steps.detect_amd.outputs.available != 'true'
+        run: echo "No GPU/toolchain detected. Skipping GPU build."
+
   deploy:
     name: Deploy Job
     runs-on: ubuntu-latest
