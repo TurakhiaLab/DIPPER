@@ -16,12 +16,14 @@ public:
     size_t getNumLeaves();
     size_t getNumNodes();
     bool is_leaf() {return !(name.substr(0,4) == "node");}
+    bool is_leaf_new() {return children.size() == 0;}
     void setNumleaves() {numLeaves = getNumLeaves();};
 
     std::string name;
     int idx;
     double bl;
     size_t level;
+    int lca=0;
 
     Node* parent;
     std::vector< Node* > children;
@@ -42,10 +44,11 @@ public:
 
     Node* root;
     std::unordered_map< std::string, Node* > allNodes;
-    Tree(std::string newick, size_t totalLeaves);
+    Tree(std::string newick, size_t totalLeaves=0);
     Tree(Node* node);
     Tree() {root = nullptr;}
     ~Tree();
     std::string getNewickString(Node* node = nullptr);
+    void updateNewick();
     void dfsExpansion(Node* node, std::vector< Node* >& vec);
 };

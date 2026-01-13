@@ -305,7 +305,11 @@ Tree::Tree(std::string newickString, size_t totalLeaves) {
 
     m_numLeaves = leaves.size();
 
-    m_currInternalNode = totalLeaves - 1; // Internal nodes start from the last leaf index
+    if (totalLeaves==0)
+        m_currInternalNode = m_numLeaves - 1;
+    else
+        m_currInternalNode = totalLeaves - 1;
+        
     std::stack<Node*> parentStack;
 
     for (size_t i=0; i<leaves.size(); i++) {
@@ -318,17 +322,12 @@ Tree::Tree(std::string newickString, size_t totalLeaves) {
             std::string nid = newInternalNodeId();
             Node* newNode = nullptr;
             if (parentStack.size() == 0) {
-                // nid = "node_"  + std::to_string(2*m_numLeaves+totalLeaves-2);
-                // int idx = m_numLeaves+totalLeaves-2;
                 newNode = new Node(nid, branchLen[level].front());
                 newNode->idx = idx;
                 treeRoot = newNode;
             } else {
-                // int idx = m_currInternalNode+1;
-                // nid = newInternalNodeId();
                 newNode = new Node(nid, parentStack.top(), branchLen[level].front());
                 newNode->idx = idx;
-                // if (branchLen[level].front() < 0.001) std::cout << nid << '\t' << branchLen[level].front() << '\n';
         
             }
             branchLen[level].pop();
@@ -339,9 +338,6 @@ Tree::Tree(std::string newickString, size_t totalLeaves) {
         }
         Node* leafNode = new Node(leaf, parentStack.top(), branchLen[level].front());
         leafNode->idx = m_numLeafID++;
-        if (leafNode->name=="T22") std::cerr << "Leaf T22 found with len " << branchLen[level].front() << '\n';
-        // if (branchLen[level].front() < 0.001) std::cout << leaf << '\t' << branchLen[level].front() << '\n';
-        /* Group Id */
         allNodes[leaf] = leafNode;
 
         branchLen[level].pop();
@@ -367,4 +363,23 @@ Tree::~Tree() {
     }
     this->allNodes.clear();
     this->root = nullptr;
+}
+
+void dfsRename(Node* node, int& leafId){
+    if (node == nullptr) return;
+    if (node->children.size() == 0) {
+        std::cerr << node->name << "\t" << leafId << std::endl;
+        node->name = std::to_string(leafId++);
+    }
+    for (auto child: node->children){
+        dfsRename(child, leafId);
+    }
+    return;
+}
+
+void Tree::updateNewick(){
+    Node* n = root;
+    int leafId=0;
+    dfsRename(n, leafId);
+    return;
 }
