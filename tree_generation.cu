@@ -89,6 +89,9 @@ void parseArguments(int argc, char** argv)
         ("add,a",
         "Add query to backbone using k-closest placement")
 
+        // ("protein,p",
+        // "Input sequences are protein sequences (default: DNA/RNA sequences)")
+
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
 
@@ -238,6 +241,9 @@ int main(int argc, char** argv) {
     bool add = false;
     if (vm.count("add")) add = true;
 
+    bool isProtein = false;
+    if (vm.count("protein")) isProtein = true;
+
     std::pair<int, int> range({-1,-1});
     if (vm.count("range")) {
         std::string rangeStr;
@@ -283,6 +289,7 @@ int main(int argc, char** argv) {
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
     params.range.first = range.first;
     params.range.second = range.second;
+    params.isProtein = isProtein;
 
     if (add) {
         // Load the tree from the file
@@ -403,10 +410,10 @@ int main(int argc, char** argv) {
                 if (params.range.second > -1) localSeqLength=params.range.second+1;
                 if (params.range.first > 0) localSeqLength-=params.range.first;
             }
-            uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
+            uint64_t fourBitCompressedSize = isProtein ? (localSeqLength+7)/8 : (localSeqLength+15)/16;
 
             uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second, isProtein);
 
             
             seqLengths[ids[i]]=localSeqLength;
@@ -478,6 +485,9 @@ int main(int argc, char** argv) {
             int backboneSize = numSequences/20;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
+
+            std::vector<int> largeClustersIdx; // cluster idx mapped to closest id's in the backbone tree
+
             MashPlacement::msaDeviceArraysDC.allocateDeviceArraysDC(fourBitCompressedSeqs, seqLengths, numSequences, params);
             MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
             auto createArrayEnd = std::chrono::high_resolution_clock::now();
@@ -488,7 +498,7 @@ int main(int argc, char** argv) {
             auto createTreeStart = std::chrono::high_resolution_clock::now();
             MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
             MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx);
 
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
@@ -499,6 +509,15 @@ int main(int argc, char** argv) {
             // MashPlacement::mashDeviceArrays.printSketchValues(10);
             MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
+
+            // for (int i=0; i<largeClustersIdx.size(); i++){
+            //     std::cout << "Handling cluster " << largeClustersIdx[i] << std::endl;
+            //     MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDCRecursive(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx[i]);
+            //     break;
+            // }
+
+            return 0;
+
         }
         else{
             std::cerr<<"Using conventional NJ\n";
@@ -598,6 +617,7 @@ int main(int argc, char** argv) {
             int backboneSize = numSequences/100;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
+            std::vector<int> largeClustersIdx;
 
             auto createArrayStart = std::chrono::high_resolution_clock::now();
             MashPlacement::mashDeviceArraysDC.allocateDeviceArraysDC(twoBitCompressedSeqs, seqLengths, numSequences, params);
@@ -620,7 +640,7 @@ int main(int argc, char** argv) {
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart;
 
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx);
             MashPlacement::kplacementDeviceArraysDC.printTreeDC(names, output_);
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();

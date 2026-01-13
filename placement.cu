@@ -518,7 +518,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     /*
     Initialize closest nodes by inifinite
     */
-    int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
+    int threadNum = 1024, blockNum = 1024;
     initialize <<<blockNum, threadNum>>> (
         numSequences*4-4,
         numSequences*2-1,
@@ -592,7 +592,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     }
     for(int i=bd;i<numSequences;i++){
         auto disStart = std::chrono::high_resolution_clock::now();
-        blockNum = (i + 255) / 256;
+
         if(params.in == "r"){
             mashDeviceArrays.distConstructionOnGpu(
                 params,
