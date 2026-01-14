@@ -17,9 +17,16 @@ DIPPER (**DI**stance-based **P**hylogenetic **P**lac**ER**) is a tool for ultraf
 <a name="install"></a>
 ## <b>Installation Methods</b>
 
-NOTE: DIPPER is currently supported on systems with <b>NVIDIA GPUs only</b>. Support for additional platforms, including AMD GPUs and CPU-only options for x86-64 and ARM64 architecture, will be added soon. Stay tuned!
+DIPPER runs on modern Linux and macOS systems, supporting NVIDIA (CUDA) and AMD (HIP/ROCm) GPUs as well as CPU-only execution.
+* <b>Operating Systems</b>
+  * Linux: x86-64, AArch64 (ARM64)
+  * macOS: Apple Silicon (ARM64)
+* <b>Hardware Acceleration</b>
+  * NVIDIA GPUs via CUDA
+  * AMD GPUs via HIP/ROCm
+  * CPU-only execution (no GPU required)
 
-### 1. <a name="conda"></a> Using Conda
+### 1. <a name="conda"></a> Using Conda (Recommended)
 DIPPER is available on platforms with NVIDIA GPUs via Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
 #### i. Dependencies
 1. [Conda](https://docs.conda.io/en/latest/)
@@ -149,6 +156,13 @@ cd bin
 
 !!!Note
     All the files in the examples below can be found in the `DIPPER/dataset`.
+
+<div style="background-color: #e8f5e9; padding: 0.5em; border-radius: 4px;">
+  To execute <strong>DIPPER CPU version</strong>, replace
+  <code>./dipper</code> with <code>./dipper_cpu</code>
+  in the following commands.
+</div><br>
+
 
 Enter into the build directory (assuming `$DIPPER_HOME` directs to the DIPPER repository directory)  
 ```bash
