@@ -641,6 +641,8 @@ int main(int argc, char **argv)
             
             int totalNumSequences = numSequences;
             int backboneSize = numSequences / 100;
+            if (numSequences < 40000)
+                backboneSize = numSequences / 4;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
 
