@@ -27,7 +27,7 @@ DIPPER runs on modern Linux and macOS systems, supporting NVIDIA (CUDA) and AMD 
   * CPU-only execution (no GPU required)
 
 ### 1. <a name="conda"></a> Using Conda (Recommended)
-DIPPER is available on platforms with NVIDIA GPUs via Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
+DIPPER is available on above-mentioned platforms Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
 #### i. Dependencies
 1. [Conda](https://docs.conda.io/en/latest/)
 
@@ -46,7 +46,7 @@ conda install bioconda::dipper
 
 #### iii. Run DIPPER
 ```bash
-# Insider conda environment
+# Inside the conda environment
 dipper --help
 ```
 
@@ -64,7 +64,7 @@ docker run -it --gpus all swalia14/dipper:latest
 ```
 #### iii. Run DIPPER
 ```bash
-# Insider docker container (path: /home/Dipper/bin)
+# Inside the docker container (path: /home/Dipper/bin)
 ./dipper --help
 ```
 
@@ -87,7 +87,7 @@ docker run -it --gpus all dipper
 ```
 #### iv. Run DIPPER
 ```bash
-# Insider docker container (path: /home/Dipper/bin)
+#  Inside the docker container (path: /home/Dipper/bin)
 ./dipper --help
 ```
 
