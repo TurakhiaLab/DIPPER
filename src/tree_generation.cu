@@ -3,7 +3,6 @@
 #include <fstream>
 #include <string>
 #include <chrono>
-#include <cassert>
 #include <bits/stdc++.h>
 #include <boost/program_options.hpp> 
 #include "../src/kseq.h"
@@ -30,7 +29,6 @@ namespace po = boost::program_options;
 KSEQ_INIT2(, gzFile, gzread)
 
 po::options_description mainDesc("DIPPER Command Line Arguments");
-
 
 void parseArguments(int argc, char** argv)
 {
@@ -90,6 +88,9 @@ void parseArguments(int argc, char** argv)
         ("add,a",
         "Add query to backbone using k-closest placement")
 
+        ("protein,p",
+         "Input sequences are protein sequences (default: DNA/RNA sequences)")
+
         ("threads,T", po::value<int>(),
         "Number of CPU threads (default: all available threads)")
 
@@ -101,6 +102,10 @@ void parseArguments(int argc, char** argv)
 
         ("gpu-index", po::value<int>()->default_value(0),
         "GPU device index to use (default: 0)")
+
+        ("range,r",        po::value<std::string>(),
+        "Restrict processing to a subset of alignment coordinates. Provide as start,end (e.g., --range 0,100)")
+
 
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
@@ -285,48 +290,7 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
     // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
 }
 
-void writeAlignment(std::string fileName, std::vector<std::string> seqs, std::vector<std::string> names) {
-    std::ofstream outFile;
-    std::vector<std::pair<std::string,std::string>> seqPairs;
-    for (int i = 0; i < seqs.size(); ++i) {
-        seqPairs.push_back({names[i], seqs[i]});
-    } 
-    
-    std::sort(seqPairs.begin(), seqPairs.end(),[](const auto& a, const auto& b) { return a.second < b.second; });
-    
-    outFile.open(fileName);
-    if (!outFile) {
-        fprintf(stderr, "ERROR: cant open file: %s\n", fileName.c_str());
-        exit(1);
-    }
-    for (int i = 0; i < seqPairs.size(); ++i) {
-        outFile << ('>' + seqPairs[i].first + '\n');
-        outFile << (seqPairs[i].second + '\n');
-    }
-    outFile.close();
 
-    auto current_second = seqPairs[0].second;
-    bool first_in_line = true;
-
-    std::vector<std::string> ids;
-    for (const auto& p : seqPairs) {
-        if (p.second != current_second) {
-            // 換新的一行（新的 second）
-            if (ids.size() > 30) {
-                std::cout << ids.size() << ": \n";
-                for (auto id: ids) std::cout << id << ',';
-                std::cout << "\n";
-            }
-            current_second = p.second;
-            ids.clear();
-            ids.push_back(p.first);
-        }
-        else {
-            ids.push_back(p.first);
-        }
-    }
-    return;
-}
 
 
 int main(int argc, char** argv) {
@@ -405,6 +369,36 @@ int main(int argc, char** argv) {
     bool add = false;
     if (vm.count("add")) add = true;
 
+    bool isProtein = false;
+    if (vm.count("protein")) isProtein = true;
+
+    std::pair<int, int> range({-1,-1});
+    if (vm.count("range")) {
+        std::string rangeStr;
+        try {
+            rangeStr = vm["range"].as<std::string>();
+        } catch (std::exception &e) {
+            std::cerr << "ERROR: Unable to read --range option: " << e.what() << "\n";
+            return 1;
+        }
+        auto pos = rangeStr.find(',');
+        if (pos == std::string::npos) {
+            std::cerr << "ERROR: Unable to parse --range option. Expect \"start,end\".\n";
+            return 1;
+        }
+        try {
+            range.first = std::stoi(rangeStr.substr(0, pos));
+            range.second = std::stoi(rangeStr.substr(pos+1));
+        } catch (std::exception &e) {
+            std::cerr << "ERROR: Unable to parse --range option. Expect integers: " << e.what() << "\n";
+            return 1;
+        }
+        if (range.first < 0 || range.second < range.first) {
+            std::cerr << "ERROR: Invalid --range values. Ensure start>=0 and end>=start.\n";
+            return 1;
+        }
+    }
+
     std::string treeFile = "";
     try {treeFile = vm["input-tree"].as<std::string>();}
     catch(std::exception &e){}
@@ -416,24 +410,14 @@ int main(int argc, char** argv) {
     std::string outputFile = vm["output-file"].as<std::string>();
     std::ofstream output_(outputFile.c_str());
 
-    // int device_id = 1;  // Use GPU 1 (second GPU)
-    // cudaError_t err = cudaSetDevice(device_id);
-    // if (err != cudaSuccess) {
-    //     std::cerr << "Failed to set CUDA device: " << cudaGetErrorString(err) << std::endl;
-    //     return -1;
-    // }
 
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
 
-    cudaSetDevice(vm["gpu-index"].as<int>());
-    int cpuThreads = (vm.count("threads")) ? vm["threads"].as<int>() : tbb::this_task_arena::max_concurrency();
-    tbb::global_control init(tbb::global_control::max_allowed_parallelism, cpuThreads);
-    fprintf(stderr, "Using GPU #%d.\n", vm["gpu-index"].as<int>());
-    fprintf(stderr, "Maximum available CPU cores: %d. Using %d CPU cores.\n", tbb::this_task_arena::max_concurrency(), cpuThreads);
-
-
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+    params.range.first = range.first;
+    params.range.second = range.second;
+    params.isProtein = isProtein;
 
     if (add) {
         // Load the tree from the file
@@ -494,15 +478,23 @@ int main(int argc, char** argv) {
         } else if (in == "m" && out == "t") {
             uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
             uint64_t * seqLengths = new uint64_t[numSequences];
+            bool alignmentLengthModify = false;
+            if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
             tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
             for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
                 uint64_t i = static_cast<uint64_t>(idx_);
-                uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
+                int localSeqLength = seqs[i].size();
+                if (alignmentLengthModify) {
+                    if (params.range.second > -1) localSeqLength=params.range.second+1;
+                    if (params.range.first > 0) localSeqLength-=params.range.first;
+                }
+                uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
                 uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
-
+                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+                
+                
                 int newId = idMap[i];
-                seqLengths[newId] = seqs[i].size();
+                seqLengths[newId] = localSeqLength;
                 fourBitCompressedSeqs[newId] = fourBitCompressed;
             }});
             MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
@@ -524,7 +516,6 @@ int main(int argc, char** argv) {
         readSequences(vm, seqs, names_);
         seqs = filter_msa(seqs, names_, vm);
         std::string fileName = vm["input-file"].as<std::string>()+".masked.aln";
-        // writeAlignment(fileName, seqs, names_);
         size_t numSequences = seqs.size();
         names.resize(numSequences);
         std::vector<int> ids(numSequences);
@@ -538,14 +529,24 @@ int main(int argc, char** argv) {
         // fprintf(stdout, "Compressing input sequence using two-bit encoding.\n");
         uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
+        bool alignmentLengthModify=false;
+        if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
             uint64_t i = static_cast<uint64_t>(idx_);
-            uint64_t fourBitCompressedSize = (seqs[i].size()+15)/16;
-            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
-            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed);
+            
+            int localSeqLength = seqs[i].size();
+            if (alignmentLengthModify) {
+                if (params.range.second > -1) localSeqLength=params.range.second+1;
+                if (params.range.first > 0) localSeqLength-=params.range.first;
+            }
+            uint64_t fourBitCompressedSize = isProtein ? (localSeqLength+7)/8 : (localSeqLength+15)/16;
 
-            seqLengths[ids[i]] = seqs[i].size();
+            uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+            fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second, isProtein);
+
+            
+            seqLengths[ids[i]]=localSeqLength;
             fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
             names[ids[i]] = names_[i];
         }});
@@ -614,6 +615,9 @@ int main(int argc, char** argv) {
             int backboneSize = numSequences/20;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
+
+            std::vector<int> largeClustersIdx; // cluster idx mapped to closest id's in the backbone tree
+
             MashPlacement::msaDeviceArraysDC.allocateDeviceArraysDC(fourBitCompressedSeqs, seqLengths, numSequences, params);
             MashPlacement::kplacementDeviceArraysDC.allocateDeviceArraysDC(backboneSize, totalNumSequences);
             auto createArrayEnd = std::chrono::high_resolution_clock::now();
@@ -624,7 +628,7 @@ int main(int argc, char** argv) {
             auto createTreeStart = std::chrono::high_resolution_clock::now();
             MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
             MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx);
 
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
@@ -635,6 +639,15 @@ int main(int argc, char** argv) {
             // MashPlacement::mashDeviceArrays.printSketchValues(10);
             MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
+
+            for (int i=0; i<largeClustersIdx.size(); i++){
+                std::cout << "Handling cluster " << largeClustersIdx[i] << std::endl;
+                MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDCRecursive(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx[i]);
+                break;
+            }
+
+            return 0;
+
         }
         else{
             std::cerr<<"Using conventional NJ\n";
@@ -734,6 +747,7 @@ int main(int argc, char** argv) {
             int backboneSize = numSequences/100;
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
+            std::vector<int> largeClustersIdx;
 
             auto createArrayStart = std::chrono::high_resolution_clock::now();
             MashPlacement::mashDeviceArraysDC.allocateDeviceArraysDC(twoBitCompressedSeqs, seqLengths, numSequences, params);
@@ -756,7 +770,7 @@ int main(int argc, char** argv) {
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart;
 
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC, largeClustersIdx);
             MashPlacement::kplacementDeviceArraysDC.printTreeDC(names, output_);
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();

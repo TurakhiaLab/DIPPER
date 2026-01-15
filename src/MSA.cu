@@ -27,12 +27,12 @@ void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compress
     // std::cerr<<"????????\n";
     /* Flatten data */
     uint64_t flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+15)/16;
+    for (size_t i =0; i<numSequences; i++) flatStringLength+= params.isProtein ? (h_seqLengths[i]+7)/8 : (h_seqLengths[i]+15)/16;
     uint64_t * h_flattenCompressSeqs = new uint64_t[flatStringLength];
     flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) 
     {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i]+15)/16;
+        uint64_t flatStringLengthLocal = params.isProtein ? (h_seqLengths[i]+7)/8 : (h_seqLengths[i]+15)/16;
         flatStringLength+=flatStringLengthLocal;
         for (size_t j=0; j<flatStringLengthLocal;j++)  
         {
@@ -100,9 +100,9 @@ __device__ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t
 }
 
 
-__device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
+__device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match, bool isProtein){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
-    int compLen=(seqLen+15)/16;
+    int compLen=isProtein ? (seqLen+7)/8 : (seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
 
     // create a shared memory array to store results
@@ -116,10 +116,18 @@ __device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, 
     }
     for (int i=tx; i<compLen; i+=1024) {
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
-        for(int j=0;j<16&&i*16+j<seqLen;j++){
-            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-            if(et<4||ec<4) sharedUseful[tx]++;
-            if(et<4&&et==ec) sharedMatch[tx]++;
+        if (isProtein) {
+            for(int j=0;j<8&&i*8+j<seqLen;j++){
+                int et=(vt>>(j*8))&255, ec=(vc>>(j*8))&255;
+                if(et<20||ec<20) sharedUseful[tx]++;
+                if(et<20&&et==ec) sharedMatch[tx]++;
+            }
+        } else {
+            for(int j=0;j<16&&i*16+j<seqLen;j++){
+                int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+                if(et<4||ec<4) sharedUseful[tx]++;
+                if(et<4&&et==ec) sharedMatch[tx]++;
+            }
         }
     }
     __syncthreads();
@@ -234,6 +242,9 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
     __syncthreads();
 
     // reduction
+    if (tx >= 128) {
+        return; // If thread index is out of bounds, exit early
+    }
     for(int stride=128/2; stride>0; stride/=2){
         if(tx<stride){
             sharedP0[tx] += sharedP0[tx + stride];
@@ -410,7 +421,8 @@ __global__ void MSADistConstruction(
     double * dist,
     int seqLen,
     int numSequences,
-    int distanceType
+    int distanceType,
+    bool isProtein
 ){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int idx=tx+bs*bx;
@@ -420,13 +432,14 @@ __global__ void MSADistConstruction(
         // printf("bx: %d, rowId: %d\n", blockID, rowId);
         if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
             int useful=0, match=0;
-            calculateParamsParallel(rowId, blockID, seqLen, compressedSeqs, useful, match);
+            calculateParamsParallel(rowId, blockID, seqLen, compressedSeqs, useful, match, isProtein);
             // calculateParams(rowId, idx, seqLen, compressedSeqs, useful, match);
             if (tx == 0) {   
                 double uncor=1-double(match)/useful;
                 if(distanceType==DIST_UNCORRECTED) dist[blockID]=uncor;
-                // else dist[blockID]=-0.75*log(1.0-uncor/0.75); // For nucleotide
-                else dist[blockID]= 2*(1/sqrt(1 - uncor)) -1; // For Protein
+                //else dist[blockID]=-0.75*log(1.0-uncor/0.75);
+                else dist[blockID] = -log(1-uncor-0.2*uncor*uncor); // For amino acids
+                //else dist[blockID]= 2*(1/sqrt(1 - uncor)) -1;
                 // printf("%d %d %d %d\n",rowId, blockID, match, useful);
             }
         }
@@ -481,7 +494,9 @@ void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int ro
         d_mashDist, 
         seqLen,
         numSequences,
-        params.distanceType
+        params.distanceType,
+        params.isProtein
     );
 }
+
 

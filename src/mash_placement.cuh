@@ -24,6 +24,8 @@ namespace MashPlacement
         uint64_t batchSize;
         uint64_t backboneSize;
         uint64_t totalNumSeqs;
+        std::pair<int, int> range;
+        bool isProtein=false;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {
@@ -292,7 +294,8 @@ namespace MashPlacement
             MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
             MSADeviceArraysDC& msaDeviceArrays,
-            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            std::vector<int>& largeClustersIdx
         );
         void findClusterTreeDC_batch(
             Param& params,
@@ -303,6 +306,17 @@ namespace MashPlacement
             const std::string dir,
             std::vector<bool>& isCluster
         );
+
+        void findBackboneTreeDCRecursive(
+            Param& params,
+            MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            MSADeviceArraysDC& msaDeviceArrays,
+            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            int clusterIdx
+        );
+        
+
         void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
     };
     static KPlacementDeviceArraysDC kplacementDeviceArraysDC;
