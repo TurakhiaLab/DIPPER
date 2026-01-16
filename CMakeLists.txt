@@ -61,13 +61,13 @@ if(USE_CUDA)
                         message(STATUS "No CUDA-capable GPU found. Skipping CUDA target.")
                 endif()
         else()
-                message(FATAL_ERROR "No CUDA found")
+                message(STATUS "No CUDA found")
         endif()
 
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O4 -Wall -Wextra")
-        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -g -O4 -Wall -Wextra -rdc=true --extended-lambda -Xcompiler -std=c++17")
 
         if(BUILD_GPU_TARGET)
+                set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O4 -Wall -Wextra")
+                set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -g -O4 -Wall -Wextra -rdc=true --extended-lambda -Xcompiler -std=c++17")
                 set (SRC_FILES  src/tree_generation.cu
                                 src/placement.cu
                                 src/mash.cu
@@ -135,7 +135,7 @@ elseif(USE_HIP)
                         message(STATUS "No AMD GPU detected. Skipping HIP target.")
                 endif()
         else()
-	    message(FATAL_ERROR "No HIP found")
+	    message(STATUS "No HIP found")
 	endif()
 endif()
 
