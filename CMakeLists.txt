@@ -4,9 +4,15 @@ project(dipper LANGUAGES CXX)
 
 option(USE_CUDA "Build with CUDA" OFF)
 option(USE_HIP "Build with HIP" OFF)
+option(USE_CPU "Build with CPU" OFF)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (NOT USE_CPU AND NOT USE_CUDA AND NOT USE_HIP)
+    message("Building failed. Set either USE_CPU/USE_CUDA/USE_HIP")
+    exit()
+endif()
 if(NOT USE_CUDA AND NOT USE_HIP)
     message("Building CPU only version. To build with CUDA, set USE_CUDA to ON. To build with HIP, set USE_HIP to ON.")
 endif()
@@ -79,7 +85,7 @@ if(USE_CUDA)
                                 src/divide_and_conquer/placement_close_k.cu
                         )
         endif()
-
+# For ROCM
 elseif(USE_HIP)
         message(STATUS "Build with HIP")
         find_package(HIP QUIET)
@@ -131,28 +137,29 @@ elseif(USE_HIP)
         else()
 	    message(FATAL_ERROR "No HIP found")
 	endif()
-else()
-        message("Building CPU only version")
 endif()
 
-add_executable (dipper_cpu
-                cpu/tree_generation.cpp
-                cpu/placement.cpp
-                cpu/mash.cpp
-                src/twoBitCompressor.cpp
-                src/fourBitCompressor.cpp
-                cpu/matrix_reader.cpp
-                cpu/MSA.cpp
-                src/tree.cpp
-                cpu/neighborJoining.cpp
-                cpu/placement_close_k.cpp
-                cpu/divide_and_conquer/mash_cu.cpp
-                cpu/divide_and_conquer/mash.cpp
-                cpu/divide_and_conquer/msa.cpp
-                cpu/divide_and_conquer/placement_close_k.cpp
-                cpu/divide_and_conquer/placement_close_k_cu.cpp)
+if (USE_CPU)
+        add_executable (dipper_cpu
+                        cpu/tree_generation.cpp
+                        cpu/placement.cpp
+                        cpu/mash.cpp
+                        src/twoBitCompressor.cpp
+                        src/fourBitCompressor.cpp
+                        cpu/matrix_reader.cpp
+                        cpu/MSA.cpp
+                        src/tree.cpp
+                        cpu/neighborJoining.cpp
+                        cpu/placement_close_k.cpp
+                        cpu/divide_and_conquer/mash_cu.cpp
+                        cpu/divide_and_conquer/mash.cpp
+                        cpu/divide_and_conquer/msa.cpp
+                        cpu/divide_and_conquer/placement_close_k.cpp
+                        cpu/divide_and_conquer/placement_close_k_cu.cpp)
+        
+        target_compile_options(dipper_cpu PRIVATE -w)
+endif()
 
-target_compile_options(dipper_cpu PRIVATE -w)
 add_compile_definitions(TBB_PREVIEW_GLOBAL_CONTROL=1)
 find_package(Boost COMPONENTS program_options REQUIRED)
 find_package(ZLIB REQUIRED)
@@ -171,7 +178,8 @@ if (BUILD_GPU_TARGET)
         install(TARGETS dipper RUNTIME DESTINATION bin)
 endif()
 
-set_target_properties(dipper_cpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
-install(TARGETS dipper_cpu RUNTIME DESTINATION bin)
-
+if (USE_CPU)
+        set_target_properties(dipper_cpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+        target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
+        install(TARGETS dipper_cpu RUNTIME DESTINATION bin)
+endif()

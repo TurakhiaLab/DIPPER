@@ -64,14 +64,14 @@ if [ "$BUILD_TYPE" == "auto" ]; then
 fi
 
 if [ "$BUILD_TYPE" == "cuda" ]; then
-    CMAKE_OPTIONS="-DUSE_CUDA=ON -DUSE_HIP=OFF"
+    CMAKE_OPTIONS="-DUSE_CUDA=ON -DUSE_HIP=OFF -DUSE_CPU=ON"
 elif [ "$BUILD_TYPE" == "hip" ]; then
-    CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=ON"
+    CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=ON -DUSE_CPU=ON"
 else
     echo "Building CPU-only version."
     echo "To force CUDA: ./install/installUbuntu.sh cuda"
     echo "To force HIP: ./install/installUbuntu.sh hip"
-    CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=OFF"
+    CMAKE_OPTIONS="-DUSE_CUDA=OFF -DUSE_HIP=OFF -DUSE_CPU=ON"
 fi
 
 SCRIPT_DIR=$(pwd)
@@ -168,6 +168,5 @@ else
     fi
 fi
 cmake --build . --config Release --parallel
-# cmake --install . --prefix ${BIN_DIR}
 export PATH=${BIN_DIR}/bin:$PATH
 cd ${BIN_DIR}
