@@ -173,4 +173,5 @@ endif()
 
 set_target_properties(dipper_cpu PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
+install(TARGETS dipper_cpu RUNTIME DESTINATION bin)
 
