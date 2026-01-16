@@ -159,7 +159,7 @@ mkdir -p "${BUILD_DIR}"
 cd "${BUILD_DIR}" || exit 1
 rm -rf CMake*
 if [[ "$(uname)" == "Darwin" ]]; then
-    cmake -DTBB_DIR="$(brew --prefix tbb)/lib/cmake/tbb" -DHIP_COMPILE_VERSION=${HIP_COMPILE_VERSION} ..
+    cmake -DTBB_DIR="$(brew --prefix tbb)/lib/cmake/tbb" -DHIP_COMPILE_VERSION=${HIP_COMPILE_VERSION} $CMAKE_OPTIONS ..
 else
     if find_tbb_dev; then
         cmake -DHIP_COMPILE_VERSION=${HIP_COMPILE_VERSION} $CMAKE_OPTIONS ..
