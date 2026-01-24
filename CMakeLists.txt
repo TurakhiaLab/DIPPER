@@ -42,24 +42,13 @@ if(USE_CUDA)
         if(CMAKE_CUDA_COMPILER)
                 enable_language(CUDA)
                 message(STATUS "CUDA compiler detected at: ${CMAKE_CUDA_COMPILER}")
-                TRY_RUN(
-                        FIND_GPU_RESULT
-                        FIND_GPU_COMPILE_RESULT
-                        ${CMAKE_CURRENT_BINARY_DIR}/
-                        ${CMAKE_CURRENT_BINARY_DIR}/../src/findgpu.cu
-                        RUN_OUTPUT_VARIABLE GPU_ARCH_OUTPUT
-                )
-                if("${FIND_GPU_COMPILE_RESULT}" AND ("${FIND_GPU_RESULT}" EQUAL 0))
-                        message(STATUS "CUDA-capable GPU found. GPU architecture: ${GPU_ARCH_OUTPUT}")
-                        if(${CMAKE_VERSION} VERSION_LESS "3.18")
-                                set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_${GPU_ARCH_OUTPUT}")
-                        else()
-                                set(CMAKE_CUDA_ARCHITECTURES ${GPU_ARCH_OUTPUT})
-                        endif()
-                        set(BUILD_GPU_TARGET ON)
-                else()
-                        message(STATUS "No CUDA-capable GPU found. Skipping CUDA target.")
+                # Optionally allow the user to set CUDA architectures manually, otherwise set a default
+                if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+                    # Set default architectures (compatible for most modern NVIDIA GPUs)
+                    set(CMAKE_CUDA_ARCHITECTURES 60 61 70 75 80 86)
                 endif()
+                message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+                set(BUILD_GPU_TARGET ON)
         else()
                 message(STATUS "No CUDA found")
         endif()
