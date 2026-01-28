@@ -1,3 +1,12 @@
+/**
+ * cpu/divide_and_conquer/placement_close_k.cpp
+ *
+ * CPU DC k-closest placement. Host DC arrays (allocateHostArraysDC),
+ * backbone/cluster tree construction (findBackboneTreeDC, findClustersDC,
+ * findClusterTreeDC), per-cluster placement, Newick output. Uses
+ * placement_close_k_cu for shared helpers (init, branch length, tree update).
+ */
+
 #include "../mash_placement.hpp"
 
 #include <stdio.h>
@@ -10,6 +19,7 @@
 #include <tbb/tbb.h>
 #include <tbb/parallel_for.h>
 
+/** Allocate host DC placement arrays (adjacency, closest_id/dis, cluster copies). */
 void MashPlacement::KPlacementDeviceArraysHostDC::allocateHostArraysDC(size_t num, size_t totalNum)
 {
     numSequences = int(num);
@@ -56,12 +66,7 @@ void MashPlacement::KPlacementDeviceArraysHostDC::allocateHostArraysDC(size_t nu
 //     return;
 // }
 
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
+/* Tuple: (edge_id, fracLen, addLen). */
 struct compare_tuple
 {
     bool operator()(std::tuple<int, double, double> lhs, std::tuple<int, double, double> rhs)
@@ -71,6 +76,7 @@ struct compare_tuple
     }
 };
 
+/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/dis. */
 void calculateBranchLengthCpu(
     int num, // should be bd, not numSequences
     int *head,
@@ -134,6 +140,7 @@ void calculateBranchLengthCpu(
     return;
 }
 
+/** Same as calculateBranchLengthCpu but over edge mask h_edgeMask. */
 void calculateBranchLengthSpecialIDCpu(
     int num, // useless here
     int *head,

@@ -1,3 +1,11 @@
+/**
+ * cpu/divide_and_conquer/mash_cu.cpp
+ *
+ * CPU DC MASH: allocate DC arrays (batch/backbone hash lists, leaf map),
+ * MurmurHash3, sketch construction for DC, distConstruction for backbone/range/special-ID.
+ * Mirrors GPU DC mash but runs on host with TBB.
+ */
+
 #include "../mash_placement.hpp"
 
 #include <stdio.h>
@@ -7,6 +15,7 @@
 #include <tbb/parallel_for.h>
 #include <cmath>
 
+/** Allocate DC MASH host arrays (batch/backbone hash lists, leaf map). */
 void MashPlacement::MashDeviceArraysDC::allocateDeviceArraysDC(uint64_t **h_compressedSeqs, uint64_t *h_seqLengths, size_t num, Param &params)
 {
     this->totalNumSequences = num;

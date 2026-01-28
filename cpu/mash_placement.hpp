@@ -1,3 +1,12 @@
+/**
+ * cpu/mash_placement.hpp
+ *
+ * CPU MASH/placement declarations. Same structures as GPU mash_placement.cuh
+ * (Param, MashDeviceArrays, MSADeviceArrays, MatrixReader, PlacementDeviceArrays,
+ * KPlacementDeviceArrays, NJDeviceArrays, DC structs) but with host allocation
+ * and CPU implementations. Param includes threads for TBB.
+ */
+
 #ifndef MASHPL_HPP
 #define MASHPL_HPP
 
@@ -6,15 +15,13 @@
 #include <vector>
 #include <cstdio>
 #include <string>
-#include <cstring>   
-#include <cerrno>    
+#include <cstring>
+#include <cerrno>
 #include "../src/tree.hpp"
-
-// typedef uint64_t hash_t;
-
 
 namespace MashPlacement
 {
+    /** CLI and pipeline parameters; threads for TBB. */
     struct Param
     {
         uint64_t kmerSize;

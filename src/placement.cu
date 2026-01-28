@@ -1,3 +1,6 @@
+/* placement.cu: Exact placement mode. Sequential GPU placement: distances -> lim updates ->
+ * best-branch choice -> tree structure update (adjacency, depth, BFS/DFS, levelst/leveled). */
+
 #include "mash_placement.cuh"
 
 #include <stdio.h>
@@ -12,6 +15,7 @@
 #include <fstream>
 #include <cub/cub.cuh>
 
+/** Check CUDA errors and sync; exit on failure. */
 void checkCudaErrorsHere(const char* location) {
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -25,6 +29,7 @@ void checkCudaErrorsHere(const char* location) {
     }
 }
 
+/* Allocate GPU arrays for exact placement: adjacency, BFS/DFS/depth/levels, dist, len, lim. */
 void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     cudaError_t err;
     numSequences = int(num);
@@ -115,6 +120,7 @@ void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     }
 }
 
+/** Reset adjacency slots and node metadata (head, dep, dfsrk, levelst, leveled) to sentinels. */
 __global__ void initialize(
     int lim,
     int nodes,
@@ -153,6 +159,7 @@ distance to new node inserted on branch from starting vertex (belong[id]),
 distance from new node inserted on branch to new node inserted outside branch
 */
 
+/** For each candidate edge, compute fracLen and addLen from lim; output (eid, fracLen, addLen). */
 __global__ void calculateBranchLength(
     int num, // should be bd, not numSequences 
     int * head,
@@ -197,6 +204,7 @@ __global__ void calculateBranchLength(
     minPos[bx*bs+tx]=minTuple;
 }
 
+/** Insert new leaf on edge eid: split edge, add middle node, attach outside (placeId). Update rev. */
 __global__ void updateTreeStructure(
     int * head,
     int * nxt,
@@ -249,9 +257,10 @@ __global__ void updateTreeStructure(
     }
     dfsrk[middle]=dfsrk[y];
     dfsrk[outside]=dfsrk[middle]+1;
-    dep[middle]=dep[x], dep[outside]=dep[middle]+1;
+    dep[middle]=dep[x],     dep[outside]=dep[middle]+1;
 }
 
+/** Build 3-node tree: nodes 0, 1, and nv=numSequences; two edges of length dis[0]/2. */
 __global__ void buildInitialTree(
     int numSequences,
     int * head,
@@ -327,6 +336,7 @@ __global__ void updateFromBottomToTop(
             lim[i]=mx;
 }
 
+/** Propagate lim from root toward children: sibling max of (lim - len). */
 __global__ void updateFromTopToBottom(
     int tot,
     int level,
@@ -362,6 +372,7 @@ __global__ void updateFromTopToBottom(
     }
 }
 
+/** Shift DFS ranks >= dfsrk[ex1] by 2 for nodes in [id, num), excluding ex1/ex2. */
 __global__ void updateDfsRk(
     int tot,
     int * dfsrk,
@@ -377,7 +388,7 @@ __global__ void updateDfsRk(
     if(dfsrk[idx]>=dfsrk[ex1]) dfsrk[idx]+=2;
 }
 
-
+/** Write temp[idx] = dfsrk[idx]-1 for valid insertion-range nodes, else sentinel. */
 __global__ void findEndRk(
     int tot,
     int * dfsrk,
@@ -414,7 +425,7 @@ __global__ void updateDepth(
     if(dfsrk[idx]<=edrk&&dfsrk[idx]>=dfsrk[ref]) dep[idx]++;
 }
 
-
+/** Update levelst[level] and leveled[level] from BFS order and depth. */
 __global__ void updateLevelStEd(
     int tot,
     int * bfsorder,
@@ -432,7 +443,6 @@ __global__ void updateLevelStEd(
     if(idx+1==id*2+1||dep[bfsorder[idx+1]]!=dep[bfsorder[idx]]) leveled[dep[bfsorder[idx]]]=idx;
 }
 
-
 void MashPlacement::PlacementDeviceArrays::deallocateDeviceArrays(){
     cudaFree(d_head);
     cudaFree(d_e);
@@ -449,7 +459,7 @@ void MashPlacement::PlacementDeviceArrays::deallocateDeviceArrays(){
     cudaFree(d_leveled);
 }
 
-
+/** Copy tree arrays to host and emit Newick via recursive DFS over adjacency. */
 void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[numSequences*2];
     int * h_e = new int[numSequences*8];
@@ -504,7 +514,8 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
     output_<<";\n";
 }
 
-
+/** Exact placement loop: init, build initial tree, then for each taxon compute distances,
+ * update lim (bottom-up then top-down), choose best branch, update structure and DFS/depth/levels. */
 void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     Param& params,
     const MashDeviceArrays& mashDeviceArrays,
@@ -514,10 +525,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     if(params.in == "d"){
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
     }
-    
-    /*
-    Initialize closest nodes by inifinite
-    */
+
     int threadNum = 1024, blockNum = 1024;
     initialize <<<blockNum, threadNum>>> (
         numSequences*4-4,
@@ -623,9 +631,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-        /*
-        Calculate Lim from bottom to top, then from top to bottom
-        */
+
         cudaMemcpy(id_maxdep, d_bfsorder+i*2-2, sizeof(int), cudaMemcpyDeviceToHost);
         int id=*id_maxdep;
         cudaMemcpy(maxdep, d_dep+id,sizeof(int),cudaMemcpyDeviceToHost);
@@ -687,9 +693,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         auto iter=thrust::min_element(minPos.begin(),minPos.end(),compare_tuple());
         thrust::tuple<int,double,double> smallest=*iter;
-        /*
-        Update Tree
-        */
+
         int eid=thrust::get<0>(smallest);
         double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
         // std::cerr<<eid<<" "<<fracLen<<" "<<addLen<<'\n';
@@ -711,9 +715,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         idx+=4;
 
-        /*
-        Update DFS order and DFS rank, new nodes excluded
-        */
+        /* Update DFS rank (exclude new nodes), then depth, BFS order, levelst/leveled. */
         // cudaMemcpy(levelst, d_dfsrk, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
         blockNum = (numSequences+i+255)/256;
@@ -747,6 +749,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         // std::cerr<<small<<'\n';
         // cudaMemcpy(levelst, d_dep, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
+        /* Update depth from DFS range, then BFS order and levelst/leveled. */
         updateDepth <<<blockNum, threadNum>>>(
             numSequences+i,
             d_dep,
@@ -759,9 +762,6 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         // cudaMemcpy(levelst, d_dep, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
-        /*
-        Update BFS order based on depth
-        */
         thrust::copy(thrust::device, d_dep, d_dep+numSequences+i, d_temp);
         thrust::stable_sort_by_key(thrust::device, d_temp, d_temp+numSequences+i, d_bfsorder);
         /*
@@ -786,4 +786,5 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     }
     std::cerr << "Distance Operation Time " <<  disTime.count()/1000000 << " ms\n";
     std::cerr << "Tree Operation Time " <<  treeTime.count()/1000000 << " ms\n";
+}
 }

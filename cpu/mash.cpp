@@ -1,3 +1,11 @@
+/**
+ * cpu/mash.cpp
+ *
+ * CPU MASH: 2-bit compressed seqs, prefix/agg lengths, flatten, exclusive scan.
+ * MinHash sketch construction (MurmurHash3, decompress, memcmp), rearrange hashes,
+ * MASH distance construction. TBB-parallel over sequences.
+ */
+
 #include "mash_placement.hpp"
 
 #include <stdio.h>
@@ -10,8 +18,6 @@
 
 #define BIG_CONSTANT(x) (x##LLU)
 
-// CPU Implementation start here
-
 inline void exclusive_scan(uint64_t *data, size_t n)
 {
     uint64_t runningSum = 0;
@@ -23,6 +29,7 @@ inline void exclusive_scan(uint64_t *data, size_t n)
     }
 }
 
+/** Allocate host arrays, flatten compressed seqs, build prefix scan. */
 void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t **h_compressedSeqs, uint64_t *h_seqLengths, size_t num, Param &params)
 {
     numSequences = int(num);
@@ -110,6 +117,7 @@ void MashPlacement::MashDeviceArrays::printSketchValues(int numValues)
     }
 }
 
+/** Rotate-left 64-bit (MurmurHash3). */
 inline uint64_t rotl64_cpu(uint64_t x, int8_t r)
 {
     return (x << r) | (x >> (64 - r));
@@ -120,6 +128,7 @@ inline uint64_t getblock64_cpu(const uint64_t *p, int i)
     return p[i];
 }
 
+/** MurmurHash3 64-bit mix. */
 inline uint64_t fmix64_cpu(uint64_t k)
 {
     k ^= k >> 33;
@@ -130,6 +139,7 @@ inline uint64_t fmix64_cpu(uint64_t k)
     return k;
 }
 
+/** MurmurHash3 x64 128-bit for MASH MinHash. */
 void MurmurHash3_x64_128_MASH_CPU(void *key, const int len, const uint32_t seed, void *out)
 {
     const uint8_t *data = (const uint8_t *)key;
@@ -240,7 +250,7 @@ void MurmurHash3_x64_128_MASH_CPU(void *key, const int len, const uint32_t seed,
     ((uint64_t *)out)[1] = h2;
 }
 
-// CPU version of decompress
+/** Decode 2-bit k-mer into forward and reverse complement. */
 void decompressCPU(
     uint64_t compressedSeq,
     uint64_t kmerSize,
@@ -256,7 +266,7 @@ void decompressCPU(
     }
 }
 
-// CPU version of memcmp_device
+/** Lexicographic compare for canonical k-mer. */
 int memcmpCPU(const char *kmer_fwd, const char *kmer_rev, int kmerSize)
 {
     for (int i = 0; i < kmerSize; i++)
@@ -269,6 +279,7 @@ int memcmpCPU(const char *kmer_fwd, const char *kmer_rev, int kmerSize)
     return 0;
 }
 
+/** Build MinHash sketch per sequence (TBB over seqs); sort, keep top sketchSize. */
 void sketchConstruction(
     uint64_t *d_compressedSeqs,
     uint64_t *d_seqLengths,       // bases (not words)
@@ -374,6 +385,7 @@ void sketchConstruction(
     return;
 }
 
+/** Transpose hash list from [seq][sketch] to [sketch][seq]. */
 void rearrangeHashList(
     int numSequences,
     int sketchSize,
@@ -391,6 +403,7 @@ void rearrangeHashList(
     return;
 }
 
+/** Run CPU sketch construction, then rearrange hashes. */
 void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(
     Param &params)
 {
@@ -452,6 +465,7 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(
     std::cout << "Time to generate hashes (CPU sequential): " << elapsed.count() << " s\n";
 }
 
+/** MASH distances from row rowId to rows 0..rowId-1 via Jaccard (TBB over rows). */
 void mashDistConstruction(
     int rowId,
     uint64_t *d_hashList,
@@ -483,6 +497,7 @@ void mashDistConstruction(
     } });
 }
 
+/** Dispatch mashDistConstruction for row rowId. */
 void MashPlacement::MashDeviceArrays::distConstructionOnGpu(Param &params, int rowId, double *d_mashDist) const
 {
 

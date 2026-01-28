@@ -1,3 +1,11 @@
+/**
+ * cpu/neighborJoining.cpp
+ *
+ * CPU neighbor-joining. Build full distance matrix (getDismatrix), fill symmetric
+ * (fillDismatrix), U sums (calculateU), findMinDist, updateDisMatrix, output
+ * Newick. TBB over rows/blocks.
+ */
+
 #ifndef NJ_HPP
 #include "mash_placement.hpp"
 #endif
@@ -12,6 +20,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range2d.h>
 
+/** Symmetrize matrix: diagonal 0, copy lower triangle to upper. */
 void fillDismatrix(int numSequences, double *d_mashDist)
 {
 
@@ -41,6 +50,7 @@ void fillDismatrix(int numSequences, double *d_mashDist)
     */
 }
 
+/** Allocate dist matrix and U; build row-by-row distances, then fillDismatrix. */
 void MashPlacement::NJDeviceArrays::getDismatrix(
     int numSequences,
     Param &params,
@@ -118,9 +128,9 @@ void MashPlacement::NJDeviceArrays::deallocateDeviceArrays()
     // cudaDeviceSynchronize();
 }
 
+/** Row sums U[i] = sum_j d_mashDist[i,j] (TBB over rows). */
 void calculateU(int d_numSequences, double *d_mashDist, double *d_U)
 {
-    // Only executes once, calculate the sum of distances in each row
     int numSequences = d_numSequences;
     double *temp_U = new double[numSequences];
 
@@ -158,11 +168,9 @@ void calculateU(int d_numSequences, double *d_mashDist, double *d_U)
     */
 }
 
-// __global__ void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, thrust::tuple<int,int,double> *minPos, int len){
+/** Per-row min of NJ criterion (d_ij - U_i/(n-2) - U_j/(n-2)); output (x,y,minD) per row. */
 void findMinDist(int d_numSequences, double *d_mashDist, double *d_U, std::vector<std::tuple<int, int, double>> &minPos, int len)
 {
-
-    // Store the minimum value found by this thread to global memory for further processing
 
     const double INF = std::numeric_limits<double>::max();
     int numSequences = d_numSequences;
@@ -244,13 +252,9 @@ struct compare_tuple
     }
 };
 
-// __global__ void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x,int y, double* d_U, int total){
+/** Replace x,y with new node; update distances and U; move last row/col to y. */
 void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x, int y, double *d_U, int total)
 {
-    // Erase node x and y from the matrix (x<y)
-    // Insert the distances to the new node into the matrix,
-    // at the original column/row of x for coalasced memory access.
-    // Always move the last row/column (distances related to last node) to row/column of y to avoid gap in matrix
 
     int numSequences = total;
 
@@ -313,12 +317,10 @@ void updateDisMatrix(int d_numSequences, double *d_mashDist, double disxy, int x
     */
 }
 
+/** NJ loop: calculateU, findMinDist, min-element, branch lengths, updateDisMatrix; then output Newick. */
 void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector<std::string> &name, std::ofstream &output_)
 {
     std::vector<std::vector<std::pair<int, double>>> tree(d_numSequences * 2);
-    // Store the tree in a vector of vectors, while each small vector consists of several pairs
-    // First element in the pair is the index of its child
-    // Second element in the pair is the distance to its child
     int cntThread = 256, cntBlock = 256; // Could be adjusted based on experiment
     int realID[d_numSequences];          // Actual sequence id corresponding to i-th row/column in the matrix
     for (int i = 0; i < d_numSequences; i++)

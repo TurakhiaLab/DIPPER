@@ -1,3 +1,11 @@
+/**
+ * cpu/divide_and_conquer/msa.cpp
+ *
+ * CPU DC MSA: transferToDeviceArraysDC (copy cluster backbone to const),
+ * allocateDeviceArraysDC (flatten, backbone copy), distance construction
+ * for DC (batch/range/special-ID). 4-bit compressed MSA.
+ */
+
 #include "../mash_placement.hpp"
 
 #include <stdio.h>
@@ -7,6 +15,7 @@
 #include <iostream>
 #include <tbb/parallel_for.h>
 
+/** Copy backbone slice for cluster gpuCluster into d_compressedSeqsConst. */
 void MashPlacement::MSADeviceArraysDC::transferToDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, int gpuCluster, Param& params)
 {
     
@@ -42,7 +51,7 @@ void MashPlacement::MSADeviceArraysDC::transferToDeviceArraysDC(uint64_t ** h_co
     delete[] compressedSeqs;
 }
 
-
+/** Allocate DC MSA host arrays, flatten, copy backbone to d_compressedSeqsBackBone. */
 void MashPlacement::MSADeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params, int gpuNum)
 {
 

@@ -1,3 +1,10 @@
+/**
+ * cpu/matrix_reader.cpp
+ *
+ * PHYLIP distance matrix reader. Allocates host buffer, reads names and
+ * distances per row; distConstructionOnGpu fills d_mashDist for a given row.
+ */
+
 #include "mash_placement.hpp"
 
 #include <stdio.h>
@@ -6,6 +13,7 @@
 #include <chrono>
 #include <iostream>
 
+/** Allocate host arrays and attach FILE for PHYLIP matrix. */
 void MashPlacement::MatrixReader::allocateDeviceArrays(int num, FILE *fPtr)
 {
     numSequences = num;
@@ -15,6 +23,7 @@ void MashPlacement::MatrixReader::allocateDeviceArrays(int num, FILE *fPtr)
     filePtr = fPtr;
 }
 
+/** Read row rowId (name + distances), copy into d_mashDist. */
 void MashPlacement::MatrixReader::distConstructionOnGpu(Param &params, int rowId, double *d_mashDist)
 {
     fgets(buffer, numSequences * 20, filePtr);

@@ -1,3 +1,12 @@
+/**
+ * cpu/divide_and_conquer/placement_close_k_cu.cpp
+ *
+ * CPU DC k-closest placement implementation. Allocates host DC arrays,
+ * findBackboneTreeDC / findClustersDC / findClusterTreeDC (and _batch
+ * variants), printTreeDC. Uses TBB over edges/levels; mirrors GPU
+ * placement_close_k.cu logic on host.
+ */
+
 #include "../mash_placement.hpp"
 
 #include <stdio.h>
@@ -12,6 +21,7 @@
 #include <cassert>
 #include <functional>
 
+/** Allocate host DC placement arrays (adjacency, closest_id/dis, cluster copies). */
 void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum, int gpuNum){
     // cudaError_t err;
 
@@ -30,6 +40,7 @@ void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num,
     d_closest_id_cluster = new int [totalNumSequences*20];
 }
 
+/** Reset adjacency and closest_id/closest_dis to sentinels (TBB over edges). */
 void initializeDC(
     int lim,
     int nodes,
@@ -59,20 +70,15 @@ void initializeDC(
     });
 }
 
+/** Compare placement tuples by addLen (third element). */
 struct compare_tupleDC {
   bool operator()(std::tuple<int,double,double> lhs, std::tuple<int,double,double> rhs)
   {
     return std::get<2>(lhs) < std::get<2>(rhs);
-    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
 
+/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/dis (TBB). */
 void calculateBranchLengthDC(
     int num, // should be bd, not numSequences 
     int * head,
@@ -609,8 +615,7 @@ void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
     // cudaFree(d_len);
     // cudaFree(d_closest_dis);
 }
-
-
+/** Copy tree to local buffers and emit Newick via recursive DFS. */
 void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[totalNumSequences*2];
     int * h_e = new int[totalNumSequences*8];
@@ -664,6 +669,8 @@ void printSeqsDC(
     }
 }
 
+/** Build backbone tree on first numSequences taxa: init, distances, initial tree,
+ * updateClosestNodes, then sequential placement (dist, calculateBranchLength, updateTree, updateClosest). */
 void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -850,6 +857,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     return;
 }
 
+/** Assign each non-backbone sequence to k-closest edge (clusterID); batch dist + calculateBranchLength. */
 void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -1022,6 +1030,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     return;
 }
 
+/** Batch variant of findClustersDC for a single clustering batch index. */
 void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -1212,8 +1221,7 @@ void resetIdFromDisDC(int * id, int * from, double * dis, int size){
     
 }
 
-
-
+/** For each cluster: transfer MASH/MSA, init, place each leaf; emit Newick. */
 void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     Param& params,
     MashDeviceArraysDC& mashDeviceArrays,
@@ -1490,6 +1498,7 @@ bool read_binary_blob(gzFile file, size_t n, uint64_t* out_data) {
     return true;
 }
 
+/** Batch variant of findClusterTreeDC (cluster data from dir, isCluster filter). */
 void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     Param& params,
     MashDeviceArraysDC& mashDeviceArrays,

@@ -1,3 +1,11 @@
+/**
+ * cpu/divide_and_conquer/mash.cpp
+ *
+ * CPU MASH for DC: distRangeConstructionOnCpu (MASH distances for rows [l,r]),
+ * distSpecialIDConstructionOnCpu (distances for a set of IDs). Used by
+ * placement_close_k DC flow.
+ */
+
 #include "../mash_placement.hpp"
 
 #include <stdio.h>
@@ -7,6 +15,7 @@
 #include <cmath>
 #include <tbb/parallel_for.h>
 
+/** MASH distances from row rowId to rows [st,ed] (TBB over range). */
 void mashDistConstructionRangeCpu(
     int rowId,
     uint64_t *h_hashList,
@@ -39,9 +48,9 @@ void mashDistConstructionRangeCpu(
         h_mashDist[idx] = std::min(1.0, temp);
         // printf("idx: %d, mashDist: %lf\n", idx, h_mashDist[idx]);
     } });
-    // }
 }
 
+/** MASH distances from row rowId to rows in h_id; output into h_mashDist. */
 void mashDistConstructionSpecialIDCpu(
     int rowId,
     uint64_t *h_hashList,
@@ -90,6 +99,7 @@ void mashDistConstructionSpecialIDCpu(
     }
 }
 
+/** Dispatch mashDistConstructionRangeCpu for [l,r]. */
 void MashPlacement::MashDeviceArraysDC::distRangeConstructionOnCpu(Param &params, int rowId, double *h_mashDist, int l, int r) const
 {
     mashDistConstructionRangeCpu(
@@ -103,7 +113,7 @@ void MashPlacement::MashDeviceArraysDC::distRangeConstructionOnCpu(Param &params
         r);
 }
 
-// void MashPlacement::MashDeviceArrays::distSpecialIDConstructionOnCpu(Param& params, int rowId, double* h_mashDist, int numToConstruct, int * h_id) const{
+/** Dispatch mashDistConstructionSpecialIDCpu for h_id. */
 void MashPlacement::MashDeviceArraysDC::distSpecialIDConstructionOnCpu(Param &params, int rowId, std::vector<double> &h_mashDist, int numToConstruct, std::vector<int> &h_id) const
 {
 

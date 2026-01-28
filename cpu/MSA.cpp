@@ -1,3 +1,11 @@
+/**
+ * cpu/MSA.cpp
+ *
+ * CPU aligned-sequence arrays and distance construction. 4-bit compressed MSA,
+ * seq lengths; pairwise distances (uncorrected, JC, Tajima-Nei, K2P, Tamura,
+ * Jin-Nei) via TBB over target rows.
+ */
+
 #include "mash_placement.hpp"
 
 #include <stdio.h>
@@ -8,6 +16,7 @@
 #include <tbb/parallel_for.h>
 #include <tbb/parallel_reduce.h>
 
+/** Allocate host MSA arrays, flatten 4-bit compressed data. */
 void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
     // cudaError_t err;
@@ -95,7 +104,7 @@ void MashPlacement::MSADeviceArrays::deallocateDeviceArrays(){
 #define DIST_TAMURA 5
 #define DIST_JINNEI 6
 
-
+/** Count useful (non-gap) sites and matches between two compressed rows. */
 void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -245,6 +254,7 @@ void calculateParamsParallel_TAMURA(int tarRowId, int curRowId, int seqLen, uint
     }
 }
 
+/** Build distance row rowId; dispatch by distanceType (TBB over target rows). */
 void MSADistConstruction(
     int rowId,
     uint64_t * compressedSeqs,
@@ -316,7 +326,7 @@ void MSADistConstruction(
     }
 }
 
-
+/** Launch MSADistConstruction for row rowId. */
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
     // int threadNum = 1024, blockNum = 1024; // dont change threadNUM, interally it is used to calculate the distance
     // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);

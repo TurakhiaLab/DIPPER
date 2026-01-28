@@ -1,3 +1,5 @@
+/* cpu/placement_close_k.cpp: CPU k-closest placement. Host arrays, backbone init, findPlacementTree/addQuery. */
+
 #include "mash_placement.hpp"
 
 #include <stdio.h>
@@ -9,6 +11,7 @@
 #include <cassert>
 #include <functional>
 
+/** Allocate host arrays for k-closest placement; backboneSize for add-query mode. */
 void MashPlacement::KPlacementDeviceArrays::allocateDeviceArrays(size_t num, int backboneSize)
 {
 
@@ -106,6 +109,7 @@ void updateClosestNodes(
     }
 }
 
+/** Build adjacency from Tree t via DFS; init closest from backbone. */
 void MashPlacement::KPlacementDeviceArrays::initializeDeviceArrays(Tree *t)
 {
     size_t numSequences = this->numSequences;
@@ -214,6 +218,7 @@ void MashPlacement::KPlacementDeviceArrays::initializeDeviceArrays(Tree *t)
     return;
 }
 
+/** Reset adjacency and closest_id/closest_dis to sentinels. */
 void initialize(
     int lim,
     int nodes,
@@ -239,19 +244,13 @@ void initialize(
     } });
 }
 
+/** Compare placement tuples by addLen (third element). */
 bool compare_tuple(std::tuple<int, double, double> lhs, std::tuple<int, double, double> rhs)
 {
     return std::get<2>(lhs) < std::get<2>(rhs);
-    // Always find the tuple whose third value (the criteria we want to minimize) is minimized
 }
 
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
-
+/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/closest_dis. */
 void calculateBranchLength(
     int num, // should be bd, not numSequences
     int *head,
@@ -406,6 +405,7 @@ __global__ void updateTreeStructuretoAddQuery(
 }
 */
 
+/** Insert new leaf on edge eid; update closest_id/closest_dis for new edges. */
 void updateTreeStructure(
     int *head,
     int *nxt,
@@ -502,6 +502,7 @@ void updateTreeStructure(
     edgeCount++;
 }
 
+/** Build 3-node tree (0, 1, nv) with two edges of length dis[0]/2. */
 void buildInitialTree(
     int numSequences,
     int *head,
@@ -540,6 +541,7 @@ void MashPlacement::KPlacementDeviceArrays::deallocateDeviceArrays()
     delete[] d_closest_dis;
 }
 
+/** Copy tree to local buffers and emit Newick via recursive DFS. */
 void MashPlacement::KPlacementDeviceArrays::printTree(std::vector<std::string> name, std::ofstream &output_)
 {
     int *h_head = new int[numSequences * 2];
@@ -632,6 +634,8 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector<std::string> n
     output_ << ";\n";
 }
 
+/** K-closest placement: init, build initial tree, updateClosestNodes for initial nodes;
+ * then for each new taxon: dist -> calculateBranchLength -> updateTree -> updateClosestNodes. */
 void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     Param &params,
     const MashDeviceArrays &mashDeviceArrays,
@@ -819,6 +823,7 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     std::cerr << "Tree Operation Time " << treeTime.count() / 1000000 << " ms\n";
 }
 
+/** Add queries to backbone: place each new sequence via k-closest, updateTree, updateClosestNodes. */
 void MashPlacement::KPlacementDeviceArrays::addQuery(
     Param &params,
     const MashDeviceArrays &mashDeviceArrays,

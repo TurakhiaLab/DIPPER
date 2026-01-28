@@ -1,3 +1,11 @@
+/**
+ * cpu/placement.cpp
+ *
+ * CPU exact placement mode. Same logic as GPU placement.cu: sequential placement
+ * with lim-based updates (BFS/DFS, levelst/leveled), TBB-parallel loops over
+ * adjacency/levels. Host arrays (d_* allocated via new); no k-closest.
+ */
+
 #include "mash_placement.hpp"
 
 #include <stdio.h>
@@ -24,6 +32,7 @@ void checkCudaErrorsHere(const char* location) {
 }
 */
 
+/** Allocate host arrays for exact placement: adjacency, BFS/DFS/depth/levels, dist, len, lim. */
 void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     numSequences = int(num);
     bd = 2, idx = 0;
@@ -43,6 +52,7 @@ void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
     d_lim = new double [numSequences*8];
 }
 
+/** Reset adjacency and node metadata (head, dep, dfsrk, levelst, leveled) to sentinels. */
 void initialize(
     int lim,
     int nodes,
@@ -68,20 +78,16 @@ void initialize(
     });
 }
 
+/** Compare placement tuples by addLen (third element). */
 struct compare_tuple {
   bool operator()(std::tuple<int,double,double> lhs, std::tuple<int,double,double> rhs)
   {
     return std::get<2>(lhs) < std::get<2>(rhs);
-    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
+/* Tuple: (edge_id, fracLen, addLen). */
 
+/** For each candidate edge, compute (eid, fracLen, addLen) from lim. */
 void calculateBranchLength(
     int num, // should be bd, not numSequences 
     int * head,
@@ -160,6 +166,7 @@ void calculateBranchLength(
     */
 }
 
+/** Insert new leaf on edge eid; split edge, add middle, attach placeId; update rev. */
 void updateTreeStructure(
     int * head,
     int * nxt,
@@ -215,6 +222,7 @@ void updateTreeStructure(
     dep[middle]=dep[x], dep[outside]=dep[middle]+1;
 }
 
+/** Build 3-node tree (0, 1, nv) with two edges of length dis[0]/2. */
 void buildInitialTree(
     int numSequences,
     int * head,
@@ -256,7 +264,7 @@ void buildInitialTree(
     dfsrk[0]=1, dfsrk[1]=2, dfsrk[nv]=0;
 }
 
-
+/** Propagate lim from children toward root. */
 void updateFromBottomToTop(
     int tot,
     int level,
@@ -316,6 +324,7 @@ void updateFromBottomToTop(
     */
 }
 
+/** Propagate lim from root toward children (sibling max). */
 void updateFromTopToBottom(
     int tot,
     int level,
@@ -378,6 +387,7 @@ void updateFromTopToBottom(
     */
 }
 
+/** Shift DFS ranks >= dfsrk[ex1] by 2, excluding ex1/ex2 and [id,num). */
 void updateDfsRk(
     int tot,
     int * dfsrk,
@@ -406,7 +416,7 @@ void updateDfsRk(
     */
 }
 
-
+/** Write temp[idx] = dfsrk[idx]-1 for valid insertion-range nodes, else sentinel. */
 void findEndRk(
     int tot,
     int * dfsrk,
@@ -459,7 +469,7 @@ void updateDepth(
     // if(dfsrk[idx]<=edrk&&dfsrk[idx]>=dfsrk[ref]) dep[idx]++;
 }
 
-
+/** Update levelst/leveled from BFS order and depth. */
 void updateLevelStEd(
     int tot,
     int * bfsorder,
@@ -564,7 +574,8 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
     output_<<";\n";
 }
 
-
+/** Exact placement loop: init, build initial tree, then for each taxon compute distances,
+ * update lim (bottom-up then top-down), choose best branch, update structure and DFS/depth/levels. */
 void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     Param& params,
     const MashDeviceArrays& mashDeviceArrays,
