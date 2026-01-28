@@ -237,7 +237,7 @@ void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::s
         double blX = (*dis+(*ux)/(d_numSequences-i-2)-(*uy)/(d_numSequences-i-2))*0.5;
         double blY = *dis - blX;
 
-        std::cout << i << ' ' << x << ' ' << y << ' ' << (*dis) << ' ' << (*ux) << ' ' << (*uy) << ' ' << blX << ' ' << blY << '\n';
+        //std::cout << i << ' ' << x << ' ' << y << ' ' << (*dis) << ' ' << (*ux) << ' ' << (*uy) << ' ' << blX << ' ' << blY << '\n';
         
         // Calculate branch lengths
         if(blX<0) blY+=blX, blX=0;

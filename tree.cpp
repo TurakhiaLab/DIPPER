@@ -1,3 +1,10 @@
+/**
+ * tree.cpp
+ *
+ * Node and Tree implementation: constructors, DFS, Newick parse/serialization,
+ * leaf/internal counts, string split/strip helpers.
+ */
+
 #include "tree.hpp"
 
 Node::Node(const std::string& id, double len){
@@ -16,6 +23,7 @@ Node::Node(const std::string& id, Node* par, double len){
     par->children.push_back(this);
 }
 
+/** Recursive count of leaves under this node. */
 size_t Node::getNumLeaves(){
     size_t num_leaves = 0;
     if (children.size() == 0) return num_leaves;
@@ -26,6 +34,7 @@ size_t Node::getNumLeaves(){
     return num_leaves;
 }
 
+/** Recursive count of nodes in subtree. */
 size_t Node::getNumNodes(){
     size_t num_nodes = 1;
     if (children.size() == 0) return num_nodes;
@@ -35,6 +44,7 @@ size_t Node::getNumNodes(){
     return num_nodes;
 }
 
+/** Split on delim; respect quoted segments (odd count of '). */
 void stringSplit (std::string const& s, char delim, std::vector<std::string>& words) {
     size_t start_pos = 0, end_pos = 0, temp_pos = 0;
     while ((end_pos = s.find(delim, start_pos)) != std::string::npos) {
@@ -79,6 +89,7 @@ std::string stripString(std::string s){
     return s;
 }
 
+/** Append node and all descendants to vec in DFS order. */
 void Tree::dfsExpansion(Node* node,
                                      std::vector< Node* >& vec) {
     vec.push_back(node);
@@ -86,7 +97,6 @@ void Tree::dfsExpansion(Node* node,
         dfsExpansion(child, vec);
     }
 }
-
 
 int dfsExpansionSize(Node* node) {
     int c = 0;
@@ -101,6 +111,7 @@ int dfsExpansionSize(Node* node) {
     return c;
 }
 
+/** Serialize subtree rooted at node to Newick (with branch lengths). */
 std::string Tree::getNewickString(Node* node) {
 
     // traversal to print each node subtree size
@@ -213,6 +224,7 @@ std::string Tree::getNewickString(Node* node) {
     return newick;
 }
 
+/** Parse Newick string, build Node tree, fill allNodes and root. totalLeaves used for internal node indexing. */
 Tree::Tree(std::string newickString, size_t totalLeaves) {
     newickString = stripString(newickString);
 
@@ -353,9 +365,7 @@ Tree::Tree(std::string newickString, size_t totalLeaves) {
 
     treeRoot->bl = 0;
     root = treeRoot;
-
 }
-
 
 Tree::~Tree() {
     for (auto n: this->allNodes) {
@@ -377,6 +387,7 @@ void dfsRename(Node* node, int& leafId){
     return;
 }
 
+/** Rename leaves to numeric IDs and emit Newick. */
 void Tree::updateNewick(){
     Node* n = root;
     int leafId=0;

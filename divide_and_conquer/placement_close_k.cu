@@ -1,3 +1,12 @@
+/**
+ * divide_and_conquer/placement_close_k.cu
+ *
+ * Divide-and-conquer placement: build backbone tree on subset, cluster non-backbone
+ * by k-closest edge, then build per-cluster trees (edge/leaf masks, special-ID
+ * distance construction). Handles MASH and MSA input, batch clustering, and
+ * cluster-tree output.
+ */
+
 #include "../mash_placement.cuh"
 
 #include <stdio.h>
@@ -16,6 +25,7 @@
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
 
+/** Allocate DC placement arrays: adjacency, closest_id/dis (and cluster copies), dist, len. */
 void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum, int gpuNum){
     cudaError_t err;
 
@@ -87,6 +97,7 @@ void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num,
     cudaDeviceSynchronize();
 }
 
+/** Reset adjacency and closest_id/closest_dis to sentinels; used in DC backbone init. */
 __global__ void initializeDC(
     int lim,
     int nodes,
@@ -113,21 +124,16 @@ __global__ void initializeDC(
     }
 }
 
+/** Compare placement tuples by addLen (third element). */
 struct compare_tupleDC {
   __host__ __device__
   bool operator()(thrust::tuple<int,double,double> lhs, thrust::tuple<int,double,double> rhs)
   {
     return thrust::get<2>(lhs) < thrust::get<2>(rhs);
-    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
 
+/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/closest_dis. */
 __global__ void calculateBranchLengthDC(
     int num, // should be bd, not numSequences 
     int * head,
@@ -180,7 +186,7 @@ __global__ void calculateBranchLengthDC(
     }
 }
 
-
+/** Same as calculateBranchLengthDC but over edge mask d_edgeMask (subset of edges). */
 __global__ void calculateBranchLengthSpecialIDDC(
     int num, // useless here
     int * head,
@@ -237,7 +243,7 @@ __global__ void calculateBranchLengthSpecialIDDC(
     }
 }
 
-
+/** BFS from x; update closest_id/closest_dis per edge when improving. */
 __global__ void updateClosestNodesDC(
     int * head,
     int * nxt,
@@ -275,6 +281,7 @@ __global__ void updateClosestNodesDC(
     }
 }
 
+/** BFS from x restricted by d_edgeMaskIndex (cluster edges only). */
 __global__ void updateClosestNodesClusterDC(
     int * head,
     int * nxt,
@@ -313,6 +320,7 @@ __global__ void updateClosestNodesClusterDC(
     }
 }
 
+/** BFS from x within cluster: skip cluster edge endpoints, use d_edgeMaskIndex. */
 __global__ void updateClosestNodesInClusterDC(
     int * head,
     int * nxt,
@@ -359,6 +367,7 @@ __global__ void updateClosestNodesInClusterDC(
     }
 }
 
+/** Insert new leaf on edge eid; update closest_id/closest_dis for new edges. */
 __global__ void updateTreeStructureDC(
     int * head,
     int * nxt,
@@ -443,6 +452,7 @@ __global__ void updateTreeStructureDC(
     edgeCount++;
 }
 
+/** Same as updateTreeStructureDC but uses placeCount for middle node indexing in cluster. */
 __global__ void updateTreeStructureInClusterDC(
     int * head,
     int * nxt,
@@ -528,6 +538,7 @@ __global__ void updateTreeStructureInClusterDC(
     edgeCount++;
 }
 
+/** Build 3-node backbone (0, 1, nv) with two edges of length dis[0]/2. */
 __global__ void buildInitialTreeDC(
     int totalNumSequences,
     int * head,
@@ -554,6 +565,7 @@ __global__ void buildInitialTreeDC(
     edgeCount++;
 }
 
+/** Record new leaf and its edges in leaf/edge masks and leafMap for cluster subtree. */
 __global__ void updateClusterInfoDC (
     int leafID,
     int edgeidx,
@@ -575,6 +587,7 @@ __global__ void updateClusterInfoDC (
 
 }
 
+/** Copy closest_id/closest_dis to cluster copies before cluster placement. */
 __global__ void copyClosestIdsDC(
     int * d_closest_id,
     int * d_closest_id_cluster,
@@ -590,6 +603,7 @@ __global__ void copyClosestIdsDC(
     }
 }
 
+/** Copy cluster closest_id/dis back to main arrays after cluster placement. */
 __global__ void copyBackClosestIdsDC(
     int * d_closest_id,
     int * d_closest_id_cluster,
@@ -605,6 +619,7 @@ __global__ void copyBackClosestIdsDC(
     }
 }
 
+/** Set up cluster edge/leaf masks and leafMap from closest_id of edge eid. */
 __global__ void initializeClusterDC (
     int eid,
     int * e,
@@ -652,6 +667,7 @@ void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
 }
 
 
+/** Copy tree arrays to host and emit Newick via recursive DFS. */
 void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[totalNumSequences*2];
     int * h_e = new int[totalNumSequences*8];
@@ -716,11 +732,6 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
     output_<<";\n";
 }
 
-/*
-d_head: index of each node in the arrays ()
-
-*/
-
 __global__
 void printSeqsDC(
     uint64_t * d_compressedSeqs,
@@ -734,6 +745,9 @@ void printSeqsDC(
     }
 }
 
+/** Build backbone tree on first numSequences taxa: init, distances, initial tree,
+ * updateClosestNodes, then sequential placement with distRangeConstruction and
+ * calculateBranchLengthDC / updateTreeStructureDC / updateClosestNodesDC. */
 void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -942,6 +956,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     return;
 }
 
+/** Assign each non-backbone sequence to k-closest edge (clusterID); batch distance
+ * construction and calculateBranchLengthDC per sequence. */
 void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -949,7 +965,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     const MSADeviceArraysDC& msaDeviceArrays,
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost
 ){ 
-    cudaError err;
+    cudaError_t err;
     int idx=params.backboneSize*4-4;
     
     kplacementDeviceArraysHost.clusterID = new int[totalNumSequences];
@@ -1120,6 +1136,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     return;
 }
 
+/** Batch variant of findClustersDC for a single clustering batch index. */
 void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -1128,7 +1145,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
     const int clusteringBatchIdx
 ){ 
-    cudaError err;
+    cudaError_t err;
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
 
@@ -1399,8 +1416,9 @@ void resetIdFromDisDC(int * id, int * from, double * dis, int size){
     dis[idx] = 2.0;   
 }
 
-
-
+/** For each cluster: transfer MASH/MSA data, initializeClusterDC, then place each leaf
+ * via distSpecialIDConstruction, calculateBranchLengthSpecialIDDC, updateTreeStructureInClusterDC,
+ * updateClusterInfoDC, updateClosestNodesInClusterDC. */
 void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     Param& params,
     MashDeviceArraysDC& mashDeviceArrays,
@@ -1685,10 +1703,11 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     const std::string dir,
     std::vector<bool>& isCluster
 ){ 
+    cudaError_t err;
     int idx=params.backboneSize*4-4;
     int threadNum = 1024, blockNum = 1024;
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
+    err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");

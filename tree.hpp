@@ -1,3 +1,10 @@
+/**
+ * tree.hpp
+ *
+ * In-memory phylogenetic tree: Node (name, branch length, parent, children, level)
+ * and Tree (root, allNodes, Newick parse/serialization, DFS, leaf/internal counts).
+ */
+
 #pragma once
 
 #include <iostream>
@@ -11,8 +18,8 @@
 class Node 
 {
 public:
-    Node(const std::string& id, double len);
-    Node(const std::string& id, Node* par, double len);
+    Node(const std::string& id, double len);       /** Root or standalone node. */
+    Node(const std::string& id, Node* par, double len);  /** Child of par. */
     size_t getNumLeaves();
     size_t getNumNodes();
     bool is_leaf() {return !(name.substr(0,4) == "node");}
@@ -34,7 +41,6 @@ public:
 class Tree
 {
 public:
-
     size_t m_currInternalNode{ 0 };
     size_t m_maxDepth{ 0 };
     size_t m_numLeaves{ 0 };
@@ -44,7 +50,7 @@ public:
 
     Node* root;
     std::unordered_map< std::string, Node* > allNodes;
-    Tree(std::string newick, size_t totalLeaves=0);
+    Tree(std::string newick, size_t totalLeaves=0);  /** Parse Newick and build tree. */
     Tree(Node* node);
     Tree() {root = nullptr;}
     ~Tree();

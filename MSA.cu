@@ -1,3 +1,11 @@
+/**
+ * MSA.cu
+ *
+ * Aligned-sequence device arrays and distance construction. Allocates 4-bit
+ * compressed MSA, seq lengths; computes pairwise distances on GPU (uncorrected,
+ * Jukes-Cantor, Tajima-Nei, K2P, Tamura, Jin-Nei) from compressed columns.
+ */
+
 #include "mash_placement.cuh"
 
 #include <stdio.h>
@@ -85,7 +93,7 @@ void MashPlacement::MSADeviceArrays::deallocateDeviceArrays(){
 #define DIST_TAMURA 5
 #define DIST_JINNEI 6
 
-
+/** Count useful (non-gap) sites and matches between two compressed rows; DNA 4-bit. */
 __device__ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -99,7 +107,7 @@ __device__ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t
     }
 }
 
-
+/** Parallel count useful/matches over compressed rows; supports DNA (4-bit) and protein (8-bit). */
 __device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match, bool isProtein){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int compLen=isProtein ? (seqLen+7)/8 : (seqLen+15)/16;
@@ -163,6 +171,7 @@ __device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, 
     // }
 }
 
+/** Tajima-Nei: base counts frac[4], pair counts pr[4], total and match. */
 __device__ void calculateParams_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int * frac, int &tot, int &match, int * pr){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -185,6 +194,7 @@ __device__ void calculateParams_TJ(int tarRowId, int curRowId, int seqLen, uint6
     }
 }
 
+/** Parallel Tajima-Nei parameter computation. */
 __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int * frac, int &tot, int &match, int * pr){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int compLen=(seqLen+15)/16;
@@ -279,6 +289,7 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
     __syncthreads();
 }
 
+/** Kimura 2-parameter: transitions p, transversions q, total. */
 __device__ void calculateParams_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -295,6 +306,7 @@ __device__ void calculateParams_K2P(int tarRowId, int curRowId, int seqLen, uint
     }
 }
 
+/** Parallel K2P parameter computation. */
 __device__ void calculateParamsParallel_K2P(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int compLen=(seqLen+15)/16;
@@ -341,6 +353,7 @@ __device__ void calculateParamsParallel_K2P(int tarRowId, int curRowId, int seqL
     __syncthreads();
 }
 
+/** Tamura: p, q, tot, and GC counts gc1, gc2. */
 __device__ void calculateParams_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot, int &gc1, int &gc2){
     int compLen=(seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
@@ -359,6 +372,7 @@ __device__ void calculateParams_TAMURA(int tarRowId, int curRowId, int seqLen, u
     }
 }
 
+/** Parallel Tamura parameter computation. */
 __device__ void calculateParamsParallel_TAMURA(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int &p, int &q, int &tot, int &gc1, int &gc2){
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int compLen=(seqLen+15)/16;
@@ -415,6 +429,7 @@ __device__ void calculateParamsParallel_TAMURA(int tarRowId, int curRowId, int s
 
 }
 
+/** Build distance row rowId: one block per target row; dispatch by distanceType (uncorrected, JC, TJ, K2P, Tamura, Jin-Nei). */
 __global__ void MSADistConstruction(
     int rowId,
     uint64_t * compressedSeqs,
@@ -487,9 +502,9 @@ __global__ void MSADistConstruction(
     }
 }
 
-
+/** Launch MSADistConstruction for row rowId; threadNum 1024 used internally for distance logic. */
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const {
-    int threadNum = 1024, blockNum = 1024; // dont change threadNUM, interally it is used to calculate the distance
+    int threadNum = 1024, blockNum = 1024;
     // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
     MSADistConstruction <<<blockNum, threadNum>>> (
         rowId, 
