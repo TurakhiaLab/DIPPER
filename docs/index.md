@@ -17,17 +17,19 @@ DIPPER (**DI**stance-based **P**hylogenetic **P**lac**ER**) is a tool for ultraf
 <a name="install"></a>
 ## <b>Installation Methods</b>
 
-DIPPER runs on modern Linux and macOS systems, supporting NVIDIA (CUDA) and AMD (HIP/ROCm) GPUs as well as CPU-only execution.
-* <b>Operating Systems</b>
-  * Linux: x86-64, AArch64 (ARM64)
-  * macOS: Apple Silicon (ARM64)
-* <b>Hardware Acceleration</b>
-  * NVIDIA GPUs via CUDA
-  * AMD GPUs via HIP/ROCm
-  * CPU-only execution (no GPU required)
+DIPPER runs on modern Linux and macOS systems, supporting NVIDIA (CUDA) and AMD (HIP/ROCm) GPUs as well as CPU-only execution. Users may choose the installation method suitable for their requirements.
+
+| Platform / Setup       | [Conda](#conda) | [Script](#script) | [Docker](#docker) |
+|------------------------|-----------------|-------------------|-------------------|
+| Linux (x86_64)         | ✅               | ✅                | ✅                |
+| Linux (aarch64)        | ✅               | ✅                | ✅                |
+| macOS (Intel Chip)     | ✅               | ✅                | ✅                |
+| macOS (Apple Silicon)  | ✅               | ✅                | ✅                |
+| NVIDIA GPU             | ✅               | ✅                | ✅                |
+| AMD GPU                | ❌               | ✅                | ❌                |
 
 ### 1. <a name="conda"></a> Using Conda (Recommended)
-DIPPER is available on above-mentioned platforms Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
+DIPPER is available on multiple platforms via Conda. See [DIPPER Bioconda Page](https://anaconda.org/bioconda/dipper) for details.
 #### i. Dependencies
 1. [Conda](https://docs.conda.io/en/latest/)
 
@@ -42,12 +44,14 @@ conda config --add channels conda-forge
 conda config --set channel_priority strict
 # Install DIPPER
 conda install bioconda::dipper
+conda install bioconda::dipper_cpu # CPU-only
 ```
 
 #### iii. Run DIPPER
 ```bash
 # Inside the conda environment
 dipper --help
+# dipper_cpu --help # CPU-only
 ```
 
 ### 2. <a name="dockerimage"></a> Using Docker Image
@@ -57,16 +61,19 @@ To use DIPPER in a docker container, users can create a docker container from a 
 #### ii. Pull and build the DIPPER docker image from DockerHub
 ```bash
 ## Note: If the Docker image already exists locally, make sure to pull the latest version using 
-## docker pull swalia14/dipper:latest
+## docker pull swalia14/dipper:latest # (NVIDIA-GPUs)
+## docker pull swalia14/dipper_cpu:latest # (CPU-only)
 
 ## If the Docker image does not exist locally, the following command will pull and run the latest version
-docker run -it --gpus all swalia14/dipper:latest
+docker run -it --gpus all swalia14/dipper:latest # (NVIDIA-GPUs)
+docker run -it swalia14/dipper_cpu:latest # (CPU-only)
+
 ```
 #### iii. Run DIPPER
 ```bash
-# Inside the docker container (path: /home/Dipper/bin)
-./dipper --help
-```
+# Inside the docker container (path: /home/DIPPER/bin)
+dipper --help
+# dipper_cpu --help # CPU-only
 
 ### 3. Using DockerFile <a name="dockerfile"></a>
 Docker container with the preinstalled DIPPER program can also be built from a Dockerfile by following these steps.
@@ -80,6 +87,7 @@ Docker container with the preinstalled DIPPER program can also be built from a D
 git clone https://github.com/TurakhiaLab/DIPPER.git
 cd DIPPER/docker
 docker build -t dipper .
+docker build -t dipper -f  Dockerfile_cpu . # CPU-only 
 ```
 #### iii. Build and run the docker container
 ```bash
@@ -89,6 +97,7 @@ docker run -it --gpus all dipper
 ```bash
 #  Inside the docker container (path: /home/Dipper/bin)
 ./dipper --help
+# dipper_cpu --help # CPU-only
 ```
 
 ### 4. <a name="script"></a> Using installation script (requires sudo access)  
