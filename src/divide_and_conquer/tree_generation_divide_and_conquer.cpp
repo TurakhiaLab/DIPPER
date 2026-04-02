@@ -43,6 +43,8 @@ void parseArguments(int argc, char** argv)
         ("algorithm,a", po::value<std::string>(), "Algorithm selection (0 - default mode, 1 - force placement, 2 - force conventional NJ)")
         ("placement-mode,p", po::value<std::string>(), "Placement mode selection (0 - exact mode, 1 - k-closest mode), default is k-closest")
         // ("batch-size,b", po::value<std::string>(), "Batch size for GPU processing (Default = 100000)")
+        ("print-binary-newick",
+         "Print fully resolved binary Newick with explicit :0 branches; default collapses near-zero internal edges")
         ("help,h", "Print help messages");
 
 }
@@ -193,6 +195,8 @@ int main(int argc, char** argv) {
         else
             return 1;
     }
+
+    MashPlacement::g_printBinaryNewick = vm.count("print-binary-newick") > 0;
 
     // Kmer Size
     uint64_t k = 15;

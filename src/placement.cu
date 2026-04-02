@@ -465,26 +465,6 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
     int * h_e = new int[numSequences*8];
     int * h_nxt = new int[numSequences*8];
     double * h_len = new double[numSequences*8];
-    std::function<void(int,int)>  print=[&](int node, int from){
-        if(h_nxt[h_head[node]]!=-1){
-            output_ << "(";
-            // printf("(");
-
-            std::vector <int> pos;
-            for(int i=h_head[node];i!=-1;i=h_nxt[i])
-                if(h_e[i]!=from)
-                    pos.push_back(i);
-            for(size_t i=0;i<pos.size();i++){
-                print(h_e[pos[i]],node);
-                // printf(":");
-                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
-                output_ << ":";
-                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
-            }
-        }
-        // else std::cout<<name[node];
-        else output_ << name[node];
-    };
     auto err = cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
     {
@@ -509,9 +489,9 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
         fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
         exit(1);
     }
-    print(numSequences+bd-2,-1);
-    // std::cout<<";\n";
-    output_<<";\n";
+    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
+                                 g_printBinaryNewick);
+    output_ << ";\n";
 }
 
 /** Exact placement loop: init, build initial tree, then for each taxon compute distances,

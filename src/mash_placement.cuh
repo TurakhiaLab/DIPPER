@@ -10,6 +10,8 @@
 #define MASHPL_CUH
 
 #include <stdint.h>
+#include <cmath>
+#include <functional>
 #include <iostream>
 #include <vector>
 #include <cstdio>
@@ -18,7 +20,10 @@
 
 namespace MashPlacement
 {
-    /** CLI and pipeline parameters: kmer/sketch size, distance type, I/O format, range, etc. */
+    /** Default false: print multifurcating Newick by collapsing ~zero-length internal branches when present.
+     *  Set true (e.g. --print-binary-newick) to print the fully resolved binary tree with explicit :0 edges. */
+    inline bool g_printBinaryNewick = false;
+
     struct Param
     {
         uint64_t kmerSize;
@@ -201,13 +206,35 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
+
         void addQuery(
             Param& params,
             const MashDeviceArrays& mashDeviceArrays,
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
+        void updateBranchLengthsFromTopology(
+            Tree* t,
+            double* h_mashDist,
+            size_t numSeqs,
+            uint64_t seed,
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays
+        );
         void printTree(std::vector <std::string> name, std::ofstream& output_);
+        void printTree(std::vector <std::string> name, std::ofstream& output_, UnrootedTree* t, std::vector<int>& edgeIdsMappingToNewTreeEdges);
+
+        void estimateBranchLengthsFromTopology(
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays,
+            std::vector<int>& edgeIdsMappingToNewTreeEdges,
+            UnrootedTree* t,
+            std::vector<std::string>& names
+        );
     };
     static KPlacementDeviceArrays kplacementDeviceArrays;
 
@@ -335,6 +362,66 @@ namespace MashPlacement
     };
     static KPlacementDeviceArraysDC kplacementDeviceArraysDC;
 
+/** Write rooted Newick from host-side adjacency (h_head/h_e/h_nxt/h_len) used by GPU placement trees. */
+inline void printNewickFromHostAdjacency(std::ostream& out, const std::vector<std::string>& name, int* h_head,
+                                         int* h_e, int* h_nxt, double* h_len, int rootNode, bool binaryNewick) {
+    const double kLenEps = 1e-12;
+    auto hasKids = [h_head, h_e, h_nxt](int node, int from) -> bool {
+        for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
+            if (h_e[i] != from) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::function<void(int, int)> dfs;
+    dfs = [&](int node, int from) {
+        if (!hasKids(node, from)) {
+            out << name[node];
+            return;
+        }
+        if (binaryNewick) {
+            out << "(";
+            std::vector<int> pos;
+            for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
+                if (h_e[i] != from) {
+                    pos.push_back(i);
+                }
+            }
+            for (size_t i = 0; i < pos.size(); ++i) {
+                dfs(h_e[pos[i]], node);
+                out << ":" << h_len[pos[i]] << (i + 1 == pos.size() ? ")" : ",");
+            }
+            return;
+        }
+        std::vector<std::pair<int, double>> kids;
+        std::function<void(int, int)> addCollapsed;
+        addCollapsed = [&](int n, int fr) {
+            for (int i = h_head[n]; i != -1; i = h_nxt[i]) {
+                int ch = h_e[i];
+                if (ch == fr) {
+                    continue;
+                }
+                double L = h_len[i];
+                if (std::fabs(L) <= kLenEps && hasKids(ch, n)) {
+                    addCollapsed(ch, n);
+                } else {
+                    kids.push_back({ch, L});
+                }
+            }
+        };
+        addCollapsed(node, from);
+        out << "(";
+        for (size_t i = 0; i < kids.size(); ++i) {
+            dfs(kids[i].first, node);
+            out << ":" << kids[i].second << (i + 1 == kids.size() ? ")" : ",");
+        }
+    };
+    dfs(rootNode, -1);
+}
+
 };
+
+
 
 #endif
