@@ -123,8 +123,8 @@ void parseArguments(int argc, char** argv)
         
         ("version,v", "Print DIPPER version")
 
-        ("print-binary-newick",
-         "Print fully resolved binary Newick with explicit :0 branches; default is to collapse near-zero "
+        ("force-binary",
+         "Force output of fully resolved binary Newick with explicit :0 branches; default is to collapse near-zero "
          "internal edges to multifurcations when writing trees");
 
     mainDesc.add(requiredDesc).add(optionalDesc);
@@ -218,7 +218,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    MashPlacement::g_printBinaryNewick = vm.count("print-binary-newick") > 0;
+    MashPlacement::g_printBinaryNewick = vm.count("force-binary") > 0;
 
     
 
