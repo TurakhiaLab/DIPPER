@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <queue>
+#include <unordered_map>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
 #include <thrust/binary_search.h>
@@ -301,6 +302,18 @@ struct compare_tuple {
     //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
+
+
+struct find_if_tuple_bidir {
+    int bidirNewedgeIdToAttach;
+    __host__ __device__
+    find_if_tuple_bidir(int id) : bidirNewedgeIdToAttach(id) {}
+    __host__ __device__
+    bool operator()(thrust::tuple<int,double,double> tup) const
+    {
+      return thrust::get<0>(tup) == bidirNewedgeIdToAttach;
+    }
+};
 /*
 Three variables in tuple:
 ID of branch in linked list,
@@ -340,7 +353,13 @@ __global__ void calculateBranchLength(
                 if(val>dis1) dis1=val;
             }
         otheid=head[oth];
-        while(e[otheid]!=x) assert(otheid!=-1),otheid=nxt[otheid];
+        /* modified for fixed topology */
+        while(otheid!=-1 && e[otheid]!=x) otheid=nxt[otheid];
+        if(otheid==-1){
+            thrust::tuple <int,double,double> minTuple(0,0,2);
+            minPos[idx]=minTuple;
+            continue;
+        }
         for(int i=0;i<5;i++)
             if(closest_id[otheid*5+i]!=-1){
                 val = dis[closest_id[otheid*5+i]]-closest_dis[otheid*5+i];
@@ -471,11 +490,13 @@ __global__ void updateTreeStructure(
     for(int i=head[x];i!=-1;i=nxt[i])
         if(e[i]==y){
             e[i]=middle,len[i]=fracLen,xe=i;
+            // printf("x -> middle: eid: %d\n", i);
             break;
         }
     for(int i=head[y];i!=-1;i=nxt[i])
         if(e[i]==x){
             e[i]=middle,len[i]-=fracLen,ye=i;
+            // printf("y -> middle: eid: %d\n", i);
             break;
         }
     /*
@@ -484,6 +505,7 @@ __global__ void updateTreeStructure(
     */
     //middle -> x
     e[edgeCount]=x,len[edgeCount]=fracLen,nxt[edgeCount]=head[middle],head[middle]=edgeCount,belong[edgeCount]=middle;
+    // printf("middle -> x: eid: %d\n", edgeCount);
     for(int i=0;i<5;i++)
         if(closest_id[ye*5+i]!=-1){
             closest_id[edgeCount*5+i]=closest_id[ye*5+i];
@@ -492,6 +514,7 @@ __global__ void updateTreeStructure(
     edgeCount++;
     //middle -> y
     e[edgeCount]=y,len[edgeCount]=originalDis-fracLen,nxt[edgeCount]=head[middle],head[middle]=edgeCount,belong[edgeCount]=middle;
+    // printf("middle -> y: eid: %d\n", edgeCount);
     for(int i=0;i<5;i++)
         if(closest_id[xe*5+i]!=-1){
             closest_id[edgeCount*5+i]=closest_id[xe*5+i];
@@ -500,9 +523,11 @@ __global__ void updateTreeStructure(
     edgeCount++;
     //outside -> middle
     e[edgeCount]=middle,len[edgeCount]=addLen,nxt[edgeCount]=head[outside],head[outside]=edgeCount,belong[edgeCount]=outside;
+    // printf("outside -> middle: eid: %d\n", edgeCount);
     edgeCount++;
     //middle -> outside
     e[edgeCount]=outside,len[edgeCount]=addLen,nxt[edgeCount]=head[middle],head[middle]=edgeCount,belong[edgeCount]=middle;
+    // printf("middle -> outside: eid: %d\n", edgeCount);
     int e1=edgeCount-2, e2=edgeCount-3;
     for(int i=0;i<5;i++){
         if(closest_id[e1*5+i]==-1) break;
@@ -547,9 +572,11 @@ __global__ void buildInitialTree(
     double d = dis[0];
     // 0 -> nv
     e[edgeCount]=nv,len[edgeCount]=d/2,nxt[edgeCount]=head[0],head[0]=edgeCount,belong[edgeCount]=0;
+    // printf("0 -> nv: eid: %d, from: %d, to: %d\n", edgeCount);
     edgeCount++;
     // 1 -> nv
     e[edgeCount]=nv,len[edgeCount]=d/2,nxt[edgeCount]=head[1],head[1]=edgeCount,belong[edgeCount]=1;
+    // printf("1 -> nv: eid: %d\n", edgeCount);
     edgeCount++;
     // nv -> 0
     e[edgeCount]=0,len[edgeCount]=d/2,nxt[edgeCount]=head[nv],head[nv]=edgeCount,belong[edgeCount]=nv;
@@ -576,28 +603,9 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     int * h_e = new int[numSequences*8];
     int * h_nxt = new int[numSequences*8];
     double * h_len = new double[numSequences*8];
+    
     double * h_closest_dis = new double[numSequences*20];
     int * h_closest_id = new int[numSequences*20];
-    std::function<void(int,int)>  print=[&](int node, int from){
-        if(h_nxt[h_head[node]]!=-1){
-            // printf("(");
-            output_ << "(";
-            std::vector <int> pos;
-            for(int i=h_head[node];i!=-1;i=h_nxt[i])
-                if(h_e[i]!=from)
-                    pos.push_back(i);
-            for(size_t i=0;i<pos.size();i++){
-                print(h_e[pos[i]],node);
-                // printf(":");
-                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
-                output_ << ":";
-                // output_ << "%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',';
-                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
-            }
-        }
-        // else std::cout<<name[node];
-        else output_<<name[node];
-    };
     auto err = cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
     {
@@ -623,6 +631,7 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
         exit(1);
     }
 
+
     // print h_head, h_e, h_nxt, h_len
     // std::cerr<<"Tree: ";
     // for(int i=0;i<numSequences*2;i++){
@@ -643,11 +652,36 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     // std::cerr<<"\n";
 
 
-    print(numSequences+bd-2,-1);
-    // std::cout<<";\n";
-    output_<<";\n";
+    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
+                                 g_printBinaryNewick);
+    output_ << ";\n";
 }
 
+void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_, UnrootedTree* t, std::vector<int>& edgeIdsMappingToNewTreeEdges){
+    double * h_len = new double[numSequences*8];
+    auto err = cudaMemcpy(h_len, d_len, numSequences*8*sizeof(double),cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+        exit(1);
+    }
+
+    // Iterate over all edges in the tree and update the edge length based on edgeIdsMappingToNewTreeEdges
+    for (auto &nodePair : t->getNodes()) {
+        UnrootedNode* node = nodePair.second;
+        for (auto &edge : node->neighbors) {
+            int edge_id = edge.edge_id;
+            assert(edge_id >= 0 && edge_id < numSequences * 8 && "Edge ID out of bounds");
+            edge.length = h_len[edge_id];
+        }
+    }
+
+    if (!g_printBinaryNewick) {
+        t->collapseZeroLengthInternalEdges();
+    }
+    output_ << t->toNewick() << std::endl;
+    return;
+
+}
 
 void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
     Param& params,
@@ -868,6 +902,8 @@ void MashPlacement::KPlacementDeviceArrays::findPlacementTree(
 
 
 
+
+
 void MashPlacement::KPlacementDeviceArrays::addQuery(
     Param& params,
     const MashDeviceArrays& mashDeviceArrays,
@@ -998,6 +1034,322 @@ void MashPlacement::KPlacementDeviceArrays::addQuery(
     std::cerr << "Distance Operation Time " <<  disTime.count()/1000000 << " ms\n";
     std::cerr << "Tree Operation Time " <<  treeTime.count()/1000000 << " ms\n";
 
-    
+}
 
+void MashPlacement::KPlacementDeviceArrays::estimateBranchLengthsFromTopology(
+    Param& params,
+    const MashDeviceArrays& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    const MSADeviceArrays& msaDeviceArrays,
+    std::vector<int>& edgeMapOldToNew,
+    UnrootedTree* t,
+    std::vector<std::string>& names
+){
+
+    std::unordered_map<int, int> bidirEdgeMap;
+    std::unordered_map<int, std::vector<int>> edgeMapNewToOld;
+    std::unordered_map<int, bool> visistedEdges;
+    std::unordered_map<int, bool> visistedNodes;
+
+    
+    int * d_id;
+    auto err = cudaMalloc(&d_id, numSequences*2*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+    int * d_from;
+    err = cudaMalloc(&d_from, numSequences*2*sizeof(int));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+    double * d_dis;
+    err = cudaMalloc(&d_dis, numSequences*2*sizeof(double));
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+        exit(1);
+    }
+
+    
+    int threadNum = 1024, blockNum = 1024;
+    initialize <<<blockNum, threadNum>>> (
+        numSequences*4-4,
+        numSequences*2,
+        d_closest_dis,
+        d_closest_id,
+        d_head,
+        d_nxt,
+        d_belong,
+        d_e
+    );
+    /*
+    Build Initial Tree
+    */
+    if(params.in == "r"){
+        mashDeviceArrays.distConstructionOnGpu(
+            params,
+            1,
+            d_dist
+        );
+    }
+    else if(params.in == "d"){
+        matrixReader.distConstructionOnGpu(
+            params,
+            1,
+            d_dist
+        );
+    }
+    else if(params.in == "m"){
+        msaDeviceArrays.distConstructionOnGpu(
+            params,
+            1,
+            d_dist
+        );
+    }
+    // cudaDeviceSynchronize();
+
+    // return;
+    // double * h_dis = new double[numSequences];
+    // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
+    // for(int j=0;j<1;j++) fprintf(stderr,"%.8lf ",h_dis[j]);std::cerr<<'\n';
+
+    // std::cout << "==================== Building initial tree ====================" << std::endl;
+    // std::cout << names[0] << " " << names[1] << std::endl;
+
+    buildInitialTree <<<1,1>>> (
+        numSequences,
+        d_head,
+        d_e,
+        d_len,
+        d_nxt,
+        d_belong,
+        d_dist,
+        idx
+    );
+    cudaDeviceSynchronize();
+    idx += 4;
+
+    /* edges 0 and 2 are same edge in different directions */
+    std::vector<UnrootedEdge> edges = t->edgesBetween(names[0], t->getRoot());
+    edgeMapNewToOld[0]=std::vector<int>();
+    for(auto &e: edges){
+        visistedEdges[e.edge_id]=true;
+        edgeMapOldToNew[e.edge_id]=0;
+        edgeMapNewToOld[0].push_back(e.edge_id);
+    }
+    edges = t->edgesBetween(names[1], t->getRoot());
+    edgeMapNewToOld[1]=std::vector<int>();
+    for(auto &e: edges){
+        visistedEdges[e.edge_id]=true;
+        edgeMapOldToNew[e.edge_id]=1;
+        edgeMapNewToOld[1].push_back(e.edge_id);
+    }
+    
+    /* edges 0 and 2 are same edge in different directions (based on buildInitialTree) */
+    bidirEdgeMap[0]=2;
+    bidirEdgeMap[2]=0;
+    /* edges 1 and 3 are same edge in different directions (based on buildInitialTree) */
+    bidirEdgeMap[1]=3;
+    bidirEdgeMap[3]=1;
+
+    // std::cout << "bidirEdgeMap: " << std::endl;
+    // for(auto &e: bidirEdgeMap){
+    //     std::cout << "edge " << e.first << " -> " << e.second << std::endl;
+    // }
+
+    // std::cout << "edgeMapNewToOld: " << std::endl;
+    // for(auto &e: edgeMapNewToOld){
+    //     std::cout << "edge " << e.first << " -> ";
+    //     for(auto &f: e.second){
+    //         std::cout << f << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
+
+    // std::cout << "edgeMapOldToNew: " << std::endl;
+    // for (int i=0;i<edgeMapOldToNew.size();i++){
+    //     std::cout << "edge " << i << " -> " << edgeMapOldToNew[i] << std::endl;
+    // }
+    /*
+    Initialize closest nodes by inital tree
+    */
+    for(int i=0;i<bd;i++){
+        updateClosestNodes <<<1,1>>> (
+            d_head,
+            d_nxt,
+            d_e,
+            d_len,
+            d_closest_dis,
+            d_closest_id,
+            i,
+            d_id,
+            d_from,
+            d_dis
+        );
+    }
+ 
+    thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
+
+    for(int i=bd;i<numSequences;i++){
+        std::string queryName = names[i];
+        std::vector<UnrootedEdge> edges = t->edgesBetween(names[i], names[i-1]);
+
+        int oldedgeIdToAttach = -1;
+        int newedgeIdToAttach = -1;
+        for (auto &e: edges){
+            if (visistedEdges.find(e.edge_id) != visistedEdges.end() && visistedEdges[e.edge_id]) {
+                oldedgeIdToAttach = e.edge_id;
+                break;
+            }
+        }
+        if(oldedgeIdToAttach == -1){
+            std::cerr << "Error: Edge not found" << std::endl;
+            exit(1);
+        }
+        // std::cout << "oldedgeIdToAttach: " << oldedgeIdToAttach << std::endl;
+
+        /* update edgeMapNewToOld */
+        int bidirNewedgeIdToAttach=-1;
+        assert(edgeMapOldToNew[oldedgeIdToAttach] != -1 && "Edge not found in edgeMapOldToNew");
+        newedgeIdToAttach=edgeMapOldToNew[oldedgeIdToAttach];
+        if (edgeMapNewToOld.find(newedgeIdToAttach) == edgeMapNewToOld.end()){
+            newedgeIdToAttach = bidirEdgeMap[newedgeIdToAttach];
+        }
+        bidirNewedgeIdToAttach = bidirEdgeMap[newedgeIdToAttach];
+        
+        edgeMapNewToOld[bidirNewedgeIdToAttach]=std::vector<int>();
+        // std::cout << "moving edges: ";
+        for (auto &e: edges){
+            if (visistedEdges[e.edge_id] && edgeMapOldToNew[e.edge_id] == newedgeIdToAttach) {
+                // std::cout << e.edge_id << " ";
+                edgeMapNewToOld[bidirNewedgeIdToAttach].push_back(e.edge_id);
+                // Remove e.edge_id from edgeMapNewToOld[newedgeIdToAttach] vector
+                auto& vec = edgeMapNewToOld[newedgeIdToAttach];
+                vec.erase(std::remove(vec.begin(), vec.end(), e.edge_id), vec.end());
+                edgeMapOldToNew[e.edge_id]=bidirNewedgeIdToAttach;
+            }
+        }
+        // std::cout << std::endl;
+
+        /* update bidirEdgeMap */
+        bidirEdgeMap[newedgeIdToAttach]=idx;
+        bidirEdgeMap[idx]=newedgeIdToAttach;
+        bidirEdgeMap[bidirNewedgeIdToAttach]=idx+1;
+        bidirEdgeMap[idx+1]=bidirNewedgeIdToAttach;
+
+        /* add new tip information */
+        edgeMapNewToOld[idx+2]=std::vector<int>();
+        for (auto &e: edges){
+            if (!visistedEdges[e.edge_id]) {
+                edgeMapNewToOld[idx+2].push_back(e.edge_id);
+                edgeMapOldToNew[e.edge_id]=idx+2;
+                visistedEdges[e.edge_id]=true;
+            }
+        }
+        bidirEdgeMap[idx+2]=idx+3;
+        bidirEdgeMap[idx+3]=idx+2;
+
+        // std::cout << "bidirEdgeMap: " << std::endl;
+        // for(auto &e: bidirEdgeMap){
+        //     std::cout << "edge " << e.first << " -> " << e.second << std::endl;
+        // }
+
+        // std::cout << "edgeMapNewToOld: " << std::endl;
+        // for(auto &e: edgeMapNewToOld){
+        //     std::cout << "edge " << e.first << " -> ";
+        //     for(auto &f: e.second){
+        //         std::cout << f << " ";
+        //     }
+        //     std::cout << std::endl;
+        // }
+
+        // std::cout << "edgeMapOldToNew: " << std::endl;
+        // for (int i=0;i<edgeMapOldToNew.size();i++){
+        //     std::cout << "edge " << i << " -> " << edgeMapOldToNew[i] << std::endl;
+        // }
+        
+        if(params.in == "r"){
+            mashDeviceArrays.distConstructionOnGpu(
+                params,
+                i,
+                d_dist
+            );
+        } else if(params.in == "m"){
+            msaDeviceArrays.distConstructionOnGpu(
+                params,
+                i,
+                d_dist
+            );
+        }
+        cudaDeviceSynchronize();
+
+        calculateBranchLength <<<blockNum,threadNum>>> (
+            i,
+            d_head,
+            d_nxt,
+            d_dist,
+            d_e,
+            d_len,
+            d_belong,
+            thrust::raw_pointer_cast(minPos.data()),
+            numSequences*4-4,
+            d_closest_dis,
+            d_closest_id,
+            numSequences
+        );
+        
+        auto iter = thrust::find_if(minPos.begin(), minPos.end(), find_if_tuple_bidir(newedgeIdToAttach));
+        if (iter == minPos.end()) {
+            iter = thrust::find_if(minPos.begin(), minPos.end(), find_if_tuple_bidir(bidirNewedgeIdToAttach));
+        }
+        if (iter == minPos.end()) {
+            std::cerr << "Error: Edge not found in minPos" << std::endl;
+            exit(1);
+        }
+        
+        thrust::tuple<int,double,double> smallest=*iter;
+        
+        /*
+        Update Tree (and assign closest nodes to newly added nodes)
+        */
+        int eid=newedgeIdToAttach;
+        double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
+        // std::cout << "eid: " << eid << " fracLen: " << fracLen << " addLen: " << addLen << std::endl;
+        updateTreeStructure <<<1,1>>>(
+            d_head,
+            d_nxt,
+            d_e,
+            d_len,
+            d_closest_dis,
+            d_closest_id,
+            d_belong,
+            eid,
+            fracLen,
+            addLen,
+            i,
+            idx,
+            numSequences
+        );
+        cudaDeviceSynchronize();
+        idx+=4;
+        /*
+        Update closest nodes
+        */
+        updateClosestNodes <<<1,1>>> (
+            d_head,
+            d_nxt,
+            d_e,
+            d_len,
+            d_closest_dis,
+            d_closest_id,
+            i,
+            d_id,
+            d_from,
+            d_dis
+        );
+    }
 }

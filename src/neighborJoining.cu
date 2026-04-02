@@ -16,6 +16,7 @@
 #include <cuda_runtime.h>
 #include <thrust/reduce.h>
 #include <thrust/execution_policy.h>
+#include <cmath>
 
 __global__ void fillDismatrix(int numSequences, double* d_mashDist){
     int tx=threadIdx.x, bx=blockIdx.x;
@@ -248,21 +249,40 @@ void MashPlacement::NJDeviceArrays::findNeighbourJoiningTree(std::vector <std::s
     tree[d_numSequences*2-2].push_back({realID[x],dis*0.5});
     tree[d_numSequences*2-2].push_back({realID[y],dis*0.5});
     cudaDeviceSynchronize();
-    // Output the tree recursively
-    std::function<void(int)>  print=[&](int node){
-        if(tree[node].size()){
-            // printf("(");
-            output_ << "(";
-            for(size_t i=0;i<tree[node].size();i++){
-                print(tree[node][i].first);
-                // printf(":");
-                // printf("%.5g%c",tree[node][i].second,i+1==tree[node].size()?')':',');
-                output_ << ":";
-                output_ << tree[node][i].second << (i+1==tree[node].size()?')':',');
+    const double kNjLenEps = 1e-12;
+    auto collectFlatKids = [&](int ch, double L, std::vector<std::pair<int, double>>& out) {
+        std::function<void(int, double)> go;
+        go = [&](int c, double len) {
+            if (std::fabs(len) <= kNjLenEps && !tree[c].empty()) {
+                for (const auto& p : tree[c]) {
+                    go(p.first, p.second);
+                }
+            } else {
+                out.push_back({c, len});
             }
+        };
+        go(ch, L);
+    };
+    // Output the tree recursively
+    std::function<void(int)> print = [&](int node) {
+        if (tree[node].size()) {
+            output_ << "(";
+            std::vector<std::pair<int, double>> kids;
+            if (g_printBinaryNewick) {
+                kids = tree[node];
+            } else {
+                for (const auto& p : tree[node]) {
+                    collectFlatKids(p.first, p.second, kids);
+                }
+            }
+            for (size_t i = 0; i < kids.size(); ++i) {
+                print(kids[i].first);
+                output_ << ":";
+                output_ << kids[i].second << (i + 1 == kids.size() ? ')' : ',');
+            }
+        } else {
+            output_ << name[node];
         }
-        else output_ << name[node];
-        // else std::cout<<name[node];
     };
     // Root of the tree has an index of d_numSequneces*2-2
     print(d_numSequences*2-2);

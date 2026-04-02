@@ -107,7 +107,11 @@ void parseArguments(int argc, char** argv)
         ("help,h",
         "Print this help message")
         
-        ("version,v", "Print DIPPER version");
+        ("version,v", "Print DIPPER version")
+
+        ("print-binary-newick",
+         "Print fully resolved binary Newick with explicit :0 branches; default is to collapse near-zero "
+         "internal edges to multifurcations when writing trees");
 
     mainDesc.add(requiredDesc).add(optionalDesc);
 
@@ -378,6 +382,8 @@ int main(int argc, char** argv) {
         std::cerr << mainDesc << std::endl;
         return 1;
     }
+
+    MashPlacement::g_printBinaryNewick = vm.count("print-binary-newick") > 0;
 
     
     if (vm.count("add")) {

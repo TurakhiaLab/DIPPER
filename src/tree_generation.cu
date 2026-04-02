@@ -92,13 +92,28 @@ void parseArguments(int argc, char** argv)
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
 
+        ("input-tree-2",       po::value<std::string>(),
+        "Input backbone tree (Newick format), required with --node-dist option")
+
         ("range,r",        po::value<std::string>(),
         "Restrict processing to a subset of alignment coordinates. Provide as start,end (e.g., --range 0,100)")
 
+        ("update-bl", "Update branch lengths of a tree with DIPPER-computed distances without changing topology")
+
+        ("seed", po::value<std::string>(),
+        "Random seed for tip selection in --update-bl (default: 0)")
+
+        ("node-dist",           po::value<std::string>(),
+        "find distance between a tip into trees, differ by one placement")
+        
         ("help,h",
         "Print this help message")
         
-        ("version,v", "Print DIPPER version");
+        ("version,v", "Print DIPPER version")
+
+        ("print-binary-newick",
+         "Print fully resolved binary Newick with explicit :0 branches; default is to collapse near-zero "
+         "internal edges to multifurcations when writing trees");
 
     mainDesc.add(requiredDesc).add(optionalDesc);
 
@@ -135,7 +150,7 @@ void readAllSequences(po::variables_map& vm, std::vector<std::string>& seqs, std
     // std::cout << "Sequences read in: " <<  seqReadTime.count() << " ns\n";
 }
 
-void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names)
+void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::vector<std::string>& names, std::unordered_map<std::string, bool>namesInTree={})
 {
     auto seqReadStart = std::chrono::high_resolution_clock::now();
     std::string seqFileName = vm["input-file"].as<std::string>();
@@ -149,9 +164,11 @@ void readSequences(po::variables_map& vm, std::vector<std::string>& seqs, std::v
     kseq_t* kseq_rd = kseq_init(f_rd);
 
     while (kseq_read(kseq_rd) >= 0) {
-        size_t seqLen = kseq_rd->seq.l;
-        seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
-        names.push_back(std::string(kseq_rd->name.s, kseq_rd->name.l));
+        if (namesInTree.empty() || namesInTree.find(std::string(kseq_rd->name.s, kseq_rd->name.l)) != namesInTree.end()) {
+            size_t seqLen = kseq_rd->seq.l;
+            seqs.push_back(std::string(kseq_rd->seq.s, seqLen));
+            names.push_back(std::string(kseq_rd->name.s, kseq_rd->name.l));
+        }
     }
     
     auto seqReadEnd = std::chrono::high_resolution_clock::now();
@@ -188,6 +205,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    MashPlacement::g_printBinaryNewick = vm.count("print-binary-newick") > 0;
+
     
 
     
@@ -215,7 +234,7 @@ int main(int argc, char** argv) {
     // try {threshold= (uint64_t)std::stoi(vm["threshold"].as<std::string>());}
     // catch(std::exception &e){}
 
-    uint64_t distanceType = 1;
+    uint64_t distanceType = 2;
     try {distanceType= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -272,6 +291,14 @@ int main(int argc, char** argv) {
         std::cerr << "ERROR: Input tree file is required for adding query to a backbone tree.\n";
         return 1;
     }
+    if (vm.count("update-bl") && treeFile == "") {
+        std::cerr << "ERROR: Input tree (--input-tree/-t) is required for --update-bl.\n";
+        return 1;
+    }
+
+    std::string treeFile2 = "";
+    try {treeFile2 = vm["input-tree-2"].as<std::string>();}
+    catch(std::exception &e){}
 
     std::string outputFile = vm["output-file"].as<std::string>();
     std::ofstream output_(outputFile.c_str());
@@ -283,6 +310,313 @@ int main(int argc, char** argv) {
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
     params.range.first = range.first;
     params.range.second = range.second;
+
+    bool updateBranchLengths = false;
+    bool updateBranchLengths_old = false;
+    if (vm.count("update-bl")) updateBranchLengths = true;
+
+    uint64_t seed = 0;
+    if (vm.count("seed")) {
+        try { seed = std::stoull(vm["seed"].as<std::string>()); }
+        catch (std::exception& e) {
+            std::cerr << "ERROR: Invalid --seed value.\n";
+            return 1;
+        }
+    }
+
+    std::string node_dist="";
+    try {node_dist = vm["node-dist"].as<std::string>();}
+    catch(std::exception &e){}
+
+    if (node_dist != "") {
+        while (!node_dist.empty() && (node_dist.back() == '\n' || node_dist.back() == '\r' || node_dist.back() == ' ')) {
+            node_dist.pop_back();
+        }
+        while (!node_dist.empty() && (node_dist.front() == ' ' || node_dist.front() == '\t')) {
+            node_dist.erase(0, 1);
+        }
+        if (node_dist.empty()) {
+            std::cerr << "ERROR: --node-dist requires a non-empty tip name.\n";
+            return 1;
+        }
+        if (treeFile == "") {
+            std::cerr << "ERROR: Input tree (--input-tree/-t) is required for --node-dist option.\n";
+            std::cerr << mainDesc << std::endl;
+            return 1;
+        }
+        if (treeFile2 == "") {
+            std::cerr << "ERROR: Input tree 2 (--input-tree-2) is required for --node-dist option.\n";
+            std::cerr << mainDesc << std::endl;
+            return 1;
+        }
+        std::ifstream treeFileStream(treeFile);
+        if (!treeFileStream) {
+            std::cerr << "ERROR: Unable to open input tree file: " << treeFile << "\n";
+            return 1;
+        }
+        std::string newickTree;
+        std::getline(treeFileStream, newickTree);
+        treeFileStream.close();
+        UnrootedTree* t1 = new UnrootedTree(newickTree, 0);
+
+        std::ifstream treeFileStream2(treeFile2);
+        if (!treeFileStream2) {
+            std::cerr << "ERROR: Unable to open input tree file 2: " << treeFile2 << "\n";
+            delete t1;
+            return 1;
+        }
+        std::string newickTree2;
+        std::getline(treeFileStream2, newickTree2);
+        treeFileStream2.close();
+
+        // Align resolution when topologies match but one tree has polytomies: collapse
+        // edges in each tree whose non-trivial splits are not displayed in the partner.
+        UnrootedTree* t2work = new UnrootedTree(newickTree2, 0);
+        std::set<std::string> splitsTree1 = collectNonTrivialSplitKeys(*t1);
+        std::set<std::string> splitsTree2 = collectNonTrivialSplitKeys(*t2work);
+        t1->collapseToSplitsDisplayedIn(splitsTree2);
+        t2work->collapseToSplitsDisplayedIn(splitsTree1);
+        std::string newickTree2Aligned = t2work->toNewick();
+        delete t2work;
+
+        UnrootedTree* t2 = new UnrootedTree(newickTree2Aligned, t1, node_dist, 0);
+
+        int edgeDist = computeTipPlacementEdgeDistance(t1, t2, node_dist);
+        delete t1;
+        delete t2;
+
+        if (edgeDist < 0) {
+            std::cerr << "ERROR: Could not compute edge distance (tip '" << node_dist << "' not found or invalid trees).\n";
+            return 1;
+        }
+        std::cout << edgeDist << std::endl;
+        return 0;
+    }
+
+    if (updateBranchLengths_old) {
+        std::ifstream treeFileStream(treeFile);
+        if (!treeFileStream) {
+            std::cerr << "ERROR: Unable to open input tree file: " << treeFile << "\n";
+            return 1;
+        }
+        std::vector<std::string> seqs, names, namesDump;
+        readSequences(vm, seqs, namesDump);
+        std::cerr << "Read " << seqs.size() << " sequences from input file.\n";
+        assert(seqs.size() > 0 && "No sequences found in the input file.");
+        std::string newickTree;
+        std::getline(treeFileStream, newickTree);
+        Tree *t = new Tree(newickTree, namesDump.size());
+        std::cerr << "Tree loaded successfully with "<< t->allNodes.size()<<" nodes and root " << t->root->name << ".\n";
+        size_t backboneSize = t->m_numLeaves;
+        size_t numSequences = seqs.size();
+        std::unordered_map<int, int> idMap;
+        names.resize(backboneSize);
+        for (int i=0; i<(int)numSequences;i++){
+            if (t->allNodes.find(namesDump[i]) == t->allNodes.end()) {
+                names.push_back(namesDump[i]);
+                idMap[i] = names.size()-1;
+            } else {
+                names[t->allNodes[namesDump[i]]->idx] = namesDump[i];
+                idMap[i]=t->allNodes[namesDump[i]]->idx;
+            }
+        }
+        if (in == "m" && out == "t") {
+            uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
+            uint64_t * seqLengths = new uint64_t[numSequences];
+            bool alignmentLengthModify = false;
+            if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
+            tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+            for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
+                uint64_t i = static_cast<uint64_t>(idx_);
+                int localSeqLength = seqs[i].size();
+                if (alignmentLengthModify) {
+                    if (params.range.second > -1) localSeqLength=params.range.second+1;
+                    if (params.range.first > 0) localSeqLength-=params.range.first;
+                }
+                uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
+                uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+                int newId = idMap[i];
+                seqLengths[newId] = localSeqLength;
+                fourBitCompressedSeqs[newId] = fourBitCompressed;
+            }});
+            MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
+            MashPlacement::njDeviceArrays.getDismatrix(
+                numSequences,params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+            );
+            std::cout << "Distance matrix construction completed on GPU" << std::endl;
+            auto h_mashdist = new double[1ll*numSequences*numSequences];
+            cudaMemcpy(h_mashdist, MashPlacement::njDeviceArrays.d_mashDist, sizeof(double)*1ll*numSequences*numSequences, cudaMemcpyDeviceToHost);
+            placementAccuracy(t, h_mashdist,numSequences);
+            std::string newick= t->getNewickString(t->root);
+            output_ << newick;
+            output_.close();
+            return 0;
+        } else {
+            std::cerr << "Adding new sequnces only supported with input aligned and unaligned sequences\n";
+            exit(1);
+        }
+        return 0;
+    }
+
+    if (updateBranchLengths) {
+        std::ifstream treeFileStream(treeFile);
+        if (!treeFileStream) {
+            std::cerr << "ERROR: Unable to open input tree file: " << treeFile << "\n";
+            return 1;
+        }
+        std::string newickTree;
+        std::getline(treeFileStream, newickTree);
+        UnrootedTree *t = new UnrootedTree(newickTree);
+        std::cerr << "Tree loaded successfully with " << t->numNodes() << " nodes.\n";
+        std::unordered_map<std::string, bool> namesInTree;
+        for (auto &a: t->getNodes()){
+            if (a.second->is_leaf()) {
+                namesInTree[a.second->name] = true;
+            }
+        }
+
+        std::vector<std::string> seqs, namesDump, names;
+        readSequences(vm, seqs, namesDump, namesInTree);
+
+        size_t numSequences = seqs.size();
+        names.resize(numSequences);
+        std::vector<int> ids(numSequences);
+        for(int i=0;i<numSequences;i++) ids[i]=i;
+        std::mt19937 rnd(time(NULL));
+        std::shuffle(ids.begin(),ids.end(),rnd);
+
+
+        /* print all sequences */
+        std::cerr << "Read " << seqs.size() << " sequences from input file.\n";
+        assert(seqs.size() > 0 && "No sequences found in the input file.");
+
+        
+    
+
+        // if (in == "r" && out == "t") {
+        //     uint64_t ** twoBitCompressedSeqs = new uint64_t*[numSequences];
+        //     uint64_t * seqLengths = new uint64_t[numSequences];
+        //     tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range) {
+        //         for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+        //             size_t i = static_cast<size_t>(idx_);
+        //             int newId = idMap[i];
+        //             uint64_t twoBitCompressedSize = (seqs[i].size() + 31) / 32;
+        //             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
+        //             twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+        //             seqLengths[newId] = seqs[i].size();
+        //             twoBitCompressedSeqs[newId] = twoBitCompressed;
+        //         }
+        //     });
+        //     MashPlacement::mashDeviceArrays.allocateDeviceArrays(twoBitCompressedSeqs, seqLengths, numSequences, params);
+        //     MashPlacement::mashDeviceArrays.sketchConstructionOnGpu(params);
+        //     MashPlacement::njDeviceArrays.getDismatrix(
+        //         numSequences, params, MashPlacement::mashDeviceArrays,
+        //         MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+        //     );
+        //     std::cerr << "Distance matrix construction completed on GPU\n";
+        // } 
+        if (in == "m" && out == "t") {
+            uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
+            uint64_t * seqLengths = new uint64_t[numSequences];
+            bool alignmentLengthModify = false;
+            if (params.range.first > 0 || params.range.second > -1) alignmentLengthModify=true;
+            tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
+            for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
+                uint64_t i = static_cast<uint64_t>(idx_);
+                int localSeqLength = seqs[i].size();
+                if (alignmentLengthModify) {
+                    if (params.range.second > -1) localSeqLength=params.range.second+1;
+                    if (params.range.first > 0) localSeqLength-=params.range.first;
+                }
+                uint64_t fourBitCompressedSize = (localSeqLength+15)/16;
+                uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
+                fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
+                
+                seqLengths[ids[i]] = localSeqLength;
+                fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
+                names[ids[i]] = namesDump[i];
+            }});
+            
+            /* Validation 
+            // print all edges in the tree
+            std::set<int> edgeIds;
+            for (auto &a: t->getNodes()){
+                for (auto &b: a.second->neighbors) {
+                    edgeIds.insert(b.edge_id);
+                }
+            }
+
+            std::cout << "Number of edges in the tree: " << edgeIds.size() << std::endl;
+            for (auto &e: edgeIds) {
+                std::cout << e << std::endl;
+            }
+            */
+            /* Add root between first two tips */
+            // std::set<UnrootedEdge> edgeIds;
+            std::vector<UnrootedNode*> path = t->nodesBetween(names[0], names[1]);
+            t->rootBetween(path[path.size()/2-1]->name, path[path.size()/2]->name);
+
+            // Print tree after rooting
+            // edgeIds.clear();
+            // for (auto &a: t->getNodes()){
+            //     for (auto &b: a.second->neighbors) {
+            //         std::cout << b.edge_id << " from " << a.second->name << " to " << b.node->name << std::endl;
+            //     }
+            // }
+
+            // // print root 
+            // std::cout << "Root: " << t->m_root->name << std::endl;
+            // for (auto &a: t->m_root->neighbors){
+            //     std::cout << a.edge_id  << std::endl;
+            // }
+
+            std::vector<int> edgeIdsMappingToNewTreeEdges(t->numEdges(),-1);
+            MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
+            MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences);
+            MashPlacement::kplacementDeviceArrays.estimateBranchLengthsFromTopology(params, MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays, edgeIdsMappingToNewTreeEdges, t, names);
+            
+            /* update edge lengths in the tree */
+            MashPlacement::kplacementDeviceArrays.printTree(names, output_, t, edgeIdsMappingToNewTreeEdges);
+        } 
+
+        
+
+
+        
+        
+        // else {
+        //     std::cerr << "ERROR: --update-bl requires input format 'r' (raw) or 'm' (aligned) with output format 't' (tree).\n";
+        //     return 1;
+        // }
+
+        // double * h_mashdist = new double[1ll * numSequences * numSequences];
+        // cudaMemcpy(h_mashdist, MashPlacement::njDeviceArrays.d_mashDist,
+        //            sizeof(double) * 1ll * numSequences * numSequences, cudaMemcpyDeviceToHost);
+
+        // MashPlacement::kplacementDeviceArrays.allocateDeviceArrays(numSequences, numSequences);
+        // MashPlacement::kplacementDeviceArrays.updateBranchLengthsFromTopology(
+        //     t, h_mashdist, numSequences, seed, params,
+        //     MashPlacement::mashDeviceArrays, MashPlacement::matrixReader, MashPlacement::msaDeviceArrays
+        // );
+
+        // std::vector<std::string> placementNames(numSequences);
+        // std::vector<int> tip_order = t->getPlacementOrder(seed);
+        // for (size_t i = 0; i < numSequences; i++) {
+        //     Node* n = t->getNodeByIdx(tip_order[i]);
+        //     placementNames[i] = n ? n->name : "";
+        // }
+        // MashPlacement::kplacementDeviceArrays.printTree(placementNames, output_);
+        // output_.close();
+
+        // delete[] h_mashdist;
+        // MashPlacement::kplacementDeviceArrays.deallocateDeviceArrays();
+        // MashPlacement::njDeviceArrays.deallocateDeviceArrays();
+        // if (in == "r") MashPlacement::mashDeviceArrays.deallocateDeviceArrays();
+        // else MashPlacement::msaDeviceArrays.deallocateDeviceArrays();
+
+        return 0;
+    }
 
     if (add) {
         // Load the tree from the file
@@ -408,7 +742,6 @@ int main(int argc, char** argv) {
             uint64_t * fourBitCompressed = new uint64_t[fourBitCompressedSize];
             fourBitCompressor(seqs[i], seqs[i].size(), fourBitCompressed, params.range.first, params.range.second);
 
-            
             seqLengths[ids[i]]=localSeqLength;
             fourBitCompressedSeqs[ids[i]] = fourBitCompressed;
             names[ids[i]] = names_[i];

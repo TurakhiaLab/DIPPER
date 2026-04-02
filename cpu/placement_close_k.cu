@@ -551,26 +551,6 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     double * h_len = new double[numSequences*8];
     double * h_closest_dis = new double[numSequences*20];
     int * h_closest_id = new int[numSequences*20];
-    std::function<void(int,int)>  print=[&](int node, int from){
-        if(h_nxt[h_head[node]]!=-1){
-            // printf("(");
-            output_ << "(";
-            std::vector <int> pos;
-            for(int i=h_head[node];i!=-1;i=h_nxt[i])
-                if(h_e[i]!=from)
-                    pos.push_back(i);
-            for(size_t i=0;i<pos.size();i++){
-                print(h_e[pos[i]],node);
-                // printf(":");
-                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
-                output_ << ":";
-                // output_ << "%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',';
-                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
-            }
-        }
-        // else std::cout<<name[node];
-        else output_<<name[node];
-    };
     for (int i = 0; i < numSequences*2; ++i) {
         h_head[i] = d_head[i];
     }
@@ -625,7 +605,8 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     // std::cerr<<"\n";
 
 
-    print(numSequences+bd-2,-1);
+    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
+                                 g_printBinaryNewick);
     // std::cout<<";\n";
     output_<<";\n";
 }
