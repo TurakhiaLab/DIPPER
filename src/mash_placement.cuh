@@ -1,3 +1,11 @@
+/**
+ * mash_placement.cuh
+ *
+ * Declarations for DIPPER MASH/placement pipeline: Param, MashDeviceArrays,
+ * MSADeviceArrays, MatrixReader, PlacementDeviceArrays (exact), KPlacementDeviceArrays
+ * (k-closest), NJDeviceArrays, and divide-and-conquer variants (DC structs).
+ */
+
 #ifndef MASHPL_CUH
 #define MASHPL_CUH
 
@@ -9,9 +17,6 @@
 #include <cstdio>
 #include <string>
 #include "tree.hpp"
-
-// typedef uint64_t hash_t;
-
 
 namespace MashPlacement
 {
@@ -31,6 +36,7 @@ namespace MashPlacement
         uint64_t backboneSize;
         uint64_t totalNumSeqs;
         std::pair<int, int> range;
+        bool isProtein=false;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {
@@ -38,7 +44,8 @@ namespace MashPlacement
             in = t_in, out = t_out; 
         };
     };
-    
+
+    /** Device arrays for MASH: compressed seqs, prefix/agg lengths, hash list, sketch construction. */
     struct MashDeviceArrays{
         uint64_t * d_compressedSeqs;
         uint64_t * d_prefixCompressed;
@@ -58,6 +65,7 @@ namespace MashPlacement
     };
     static MashDeviceArrays mashDeviceArrays;
 
+    /** MASH device arrays for divide-and-conquer (backbone vs full, leaf map, etc.). */
     struct MashDeviceArraysDC{
         uint64_t * d_compressedSeqs;
         uint64_t * d_prefixCompressed;
@@ -94,6 +102,7 @@ namespace MashPlacement
     };
     static MashDeviceArraysDC mashDeviceArraysDC;
 
+    /** Device arrays for aligned sequences: 4-bit compressed MSA, seq lengths, distance construction. */
     struct MSADeviceArrays{
         uint64_t * d_compressedSeqs;
         uint64_t * d_seqLengths;
@@ -107,6 +116,7 @@ namespace MashPlacement
     };
     static MSADeviceArrays msaDeviceArrays;
 
+    /** MSA device arrays for DC (backbone vs const, seq len). */
     struct MSADeviceArraysDC{
         uint64_t * d_compressedSeqsBackBone;
         uint64_t * d_compressedSeqsConst;
@@ -130,7 +140,7 @@ namespace MashPlacement
     };
     static MSADeviceArraysDC msaDeviceArraysDC;
 
-
+    /** PHYLIP distance matrix reader and device copy. */
     struct MatrixReader{
         int numSequences;
         double * h_dist;
@@ -142,7 +152,7 @@ namespace MashPlacement
     };
     static MatrixReader matrixReader;
 
-
+    /** Exact placement: adjacency, BFS/DFS/depth/levelst/leveled, lim; no k-closest. */
     struct PlacementDeviceArrays{
         int idx, bd;
         int numSequences;
@@ -173,6 +183,7 @@ namespace MashPlacement
     };
     static PlacementDeviceArrays placementDeviceArrays;
 
+    /** K-closest placement: closest_id/closest_dis per edge; build tree or add query to backbone. */
     struct KPlacementDeviceArrays{
         int idx, bd;
         int numSequences;
@@ -227,6 +238,7 @@ namespace MashPlacement
     };
     static KPlacementDeviceArrays kplacementDeviceArrays;
 
+    /** Conventional neighbor-joining: distance matrix and U matrix. */
     struct NJDeviceArrays
     {
         int d_numSequences;
@@ -244,6 +256,7 @@ namespace MashPlacement
     };
     static NJDeviceArrays njDeviceArrays;
 
+    /** Host-side DC arrays for cluster trees and k-closest. */
     struct KPlacementDeviceArraysHostDC{
         int idx, bd;
         int numSequences;
@@ -271,7 +284,8 @@ namespace MashPlacement
         void printTreeCpuDC(std::vector <std::string> name);
     };
     static KPlacementDeviceArraysHostDC kplacementDeviceArraysHostDC;
-    
+
+    /** Device-side DC k-closest placement: backbone, clusters, per-cluster trees. */
     struct KPlacementDeviceArraysDC{
         int idx, bd;
         int numSequences;
@@ -321,7 +335,8 @@ namespace MashPlacement
             MashDeviceArraysDC& mashDeviceArrays,
             MatrixReader& matrixReader,
             MSADeviceArraysDC& msaDeviceArrays,
-            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC
+            KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            std::vector<int>& largeClustersIdx
         );
         void findClusterTreeDC_batch(
             Param& params,
@@ -332,6 +347,17 @@ namespace MashPlacement
             const std::string dir,
             std::vector<bool>& isCluster
         );
+
+        void findBackboneTreeDCRecursive(
+            Param& params,
+            MashDeviceArraysDC& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            MSADeviceArraysDC& msaDeviceArrays,
+            const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHostDC,
+            int clusterIdx
+        );
+        
+
         void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
     };
     static KPlacementDeviceArraysDC kplacementDeviceArraysDC;

@@ -1,13 +1,13 @@
 /**
- * divide_and_conquer/placement_close_k.cu
+ * cpu/divide_and_conquer/placement_close_k_cu.cpp
  *
- * Divide-and-conquer placement: build backbone tree on subset, cluster non-backbone
- * by k-closest edge, then build per-cluster trees (edge/leaf masks, special-ID
- * distance construction). Handles MASH and MSA input, batch clustering, and
- * cluster-tree output.
+ * CPU DC k-closest placement implementation. Allocates host DC arrays,
+ * findBackboneTreeDC / findClustersDC / findClusterTreeDC (and _batch
+ * variants), printTreeDC. Uses TBB over edges/levels; mirrors GPU
+ * placement_close_k.cu logic on host.
  */
 
-#include "../mash_placement.cuh"
+#include "../mash_placement.hpp"
 
 #include <stdio.h>
 #include <zlib.h>
@@ -15,90 +15,33 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
-#include <thrust/sort.h>
-#include <thrust/scan.h>
-#include <thrust/binary_search.h>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
-#include <cub/cub.cuh>
-#include <cuda_runtime.h>
+#include <tbb/parallel_for.h>
+#include <cassert>
+#include <functional>
 
-/** Allocate DC placement arrays: adjacency, closest_id/dis (and cluster copies), dist, len. */
+/** Allocate host DC placement arrays (adjacency, closest_id/dis, cluster copies). */
 void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num, size_t totalNum, int gpuNum){
-    cudaError_t err;
+    // cudaError_t err;
 
     numSequences = int(num);
     totalNumSequences = int(totalNum);
     bd = 2, idx = 0;
-
-    err = cudaMalloc(&d_dist, totalNumSequences*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_head, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_e, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_len, totalNumSequences*8*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_nxt, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_belong, totalNumSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_closest_dis, totalNumSequences*20*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_closest_id, totalNumSequences*20*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    err = cudaMalloc(&d_closest_dis_cluster, totalNumSequences*20*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_closest_id_cluster, totalNumSequences*20*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    cudaDeviceSynchronize();
+    d_dist = new double [totalNumSequences];
+    d_head = new int [totalNumSequences*2];
+    d_e = new int [totalNumSequences*8];
+    d_len = new double [totalNumSequences*8];
+    d_nxt = new int [totalNumSequences*8];
+    d_belong = new int [totalNumSequences*8];
+    d_closest_dis = new double [totalNumSequences*20];
+    d_closest_id = new int [totalNumSequences*20];
+    d_closest_dis_cluster = new double [totalNumSequences*20];
+    d_closest_id_cluster = new int [totalNumSequences*20];
 }
 
-/** Reset adjacency and closest_id/closest_dis to sentinels; used in DC backbone init. */
-__global__ void initializeDC(
+/** Reset adjacency and closest_id/closest_dis to sentinels (TBB over edges). */
+void initializeDC(
     int lim,
     int nodes,
     double * d_closest_dis,
@@ -108,11 +51,13 @@ __global__ void initializeDC(
     int * belong,
     int * e
 ){
-    int tx=threadIdx.x,bs=blockDim.x;
-    int bx=blockIdx.x,gs=gridDim.x;
-    int idx=tx+bs*bx;
-    for (int idx_=idx; idx_<lim; idx_+=gs*bs) {
-        if(idx_>=lim) return;
+    // int tx=threadIdx.x,bs=blockDim.x;
+    // int bx=blockIdx.x,gs=gridDim.x;
+    // int idx=tx+bs*bx;
+    tbb::parallel_for(tbb::blocked_range<int>(0, lim), [&](tbb::blocked_range<int> range){
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+    // for (int idx_=idx; idx_<lim; idx_+=gs*bs) {
+        // if(idx_>=lim) return;
         for(int i=0;i<5;i++){
             d_closest_dis[idx_*5+i]=2;
             d_closest_id[idx_*5+i]=-1;
@@ -122,19 +67,19 @@ __global__ void initializeDC(
         belong[idx_] = -1;
         if(idx_<nodes) head[idx_] = -1;
     }
+    });
 }
 
 /** Compare placement tuples by addLen (third element). */
 struct compare_tupleDC {
-  __host__ __device__
-  bool operator()(thrust::tuple<int,double,double> lhs, thrust::tuple<int,double,double> rhs)
+  bool operator()(std::tuple<int,double,double> lhs, std::tuple<int,double,double> rhs)
   {
-    return thrust::get<2>(lhs) < thrust::get<2>(rhs);
+    return std::get<2>(lhs) < std::get<2>(rhs);
   }
 };
 
-/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/closest_dis. */
-__global__ void calculateBranchLengthDC(
+/** For each candidate edge, compute (eid, fracLen, addLen) from closest_id/dis (TBB). */
+void calculateBranchLengthDC(
     int num, // should be bd, not numSequences 
     int * head,
     int * nxt,
@@ -142,19 +87,21 @@ __global__ void calculateBranchLengthDC(
     int * e, 
     double * len, 
     int * belong,
-    thrust::tuple<int,double,double> * minPos,
+    std::tuple<int,double,double> * minPos,
     int lim,
     double * closest_dis,
     int * closest_id
 ){
-    int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
-    int idx=tx+bs*bx;
+    // int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
+    // int idx=tx+bs*bx;
     // if(idx>=lim) return;
-    for (int idx_=idx; idx_<lim; idx_+=gs*bs) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, lim), [&](tbb::blocked_range<int> range){
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+    // for (int idx_=idx; idx_<lim; idx_+=gs*bs) {
         if(idx_>=num*4-4||belong[idx_]<e[idx_]){
-            thrust::tuple <int,double,double> minTuple(0,0,2);
-            minPos[bx*bs+tx]=minTuple;
-            return;
+            std::tuple <int,double,double> minTuple(0,0,2);
+            minPos[idx_]=minTuple;
+            continue;
         }
         int x=belong[idx_],oth=e[idx_];
         int eid=idx_,otheid;
@@ -181,13 +128,14 @@ __global__ void calculateBranchLengthDC(
         // assert(dis1+dis2-1e-6<=len[eid]);
         double rest=len[eid]-dis1-dis2;
         dis1+=rest/2,dis2+=rest/2;
-        thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
-        minPos[bx*bs+tx]=minTuple;
+        std::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
+        minPos[idx_]=minTuple;
     }
+    });
 }
 
-/** Same as calculateBranchLengthDC but over edge mask d_edgeMask (subset of edges). */
-__global__ void calculateBranchLengthSpecialIDDC(
+
+void calculateBranchLengthSpecialIDDC(
     int num, // useless here
     int * head,
     int * nxt,
@@ -195,23 +143,25 @@ __global__ void calculateBranchLengthSpecialIDDC(
     int * e, 
     double * len, 
     int * belong,
-    thrust::tuple<int,double,double> * minPos,
+    std::tuple<int,double,double> * minPos,
     int lim,
     double * closest_dis,
     int * closest_id,
     int numToCalculate,
     int * d_edgeMask 
 ){
-    int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
-    int idx=tx+bs*bx;
+    // int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
+    // int idx=tx+bs*bx;
     // if(idx>=numToCalculate) return;
-    for (int idx_=idx; idx_<numToCalculate; idx_+=gs*bs) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, lim), [&](tbb::blocked_range<int> range){
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+    // for (int idx_=idx; idx_<numToCalculate; idx_+=gs*bs) {
         if(idx_>=numToCalculate) return;
         idx_ = d_edgeMask[idx_];
         if(belong[idx_]<e[idx_]){
-            thrust::tuple <int,double,double> minTuple(0,0,2);
-            minPos[bx*bs+tx]=minTuple;
-            return;
+            std::tuple <int,double,double> minTuple(0,0,2);
+            minPos[idx_]=minTuple;
+            continue;
         }
         int x=belong[idx_],oth=e[idx_];
         int eid=idx_,otheid;
@@ -238,13 +188,13 @@ __global__ void calculateBranchLengthSpecialIDDC(
         // assert(dis1+dis2-1e-6<=len[eid]);
         double rest=len[eid]-dis1-dis2;
         dis1+=rest/2,dis2+=rest/2;
-        thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
-        minPos[bx*bs+tx]=minTuple;
+        std::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
+        minPos[idx_]=minTuple;
     }
+    });
 }
 
-/** BFS from x; update closest_id/closest_dis per edge when improving. */
-__global__ void updateClosestNodesDC(
+void updateClosestNodesDC(
     int * head,
     int * nxt,
     int * e,
@@ -281,8 +231,7 @@ __global__ void updateClosestNodesDC(
     }
 }
 
-/** BFS from x restricted by d_edgeMaskIndex (cluster edges only). */
-__global__ void updateClosestNodesClusterDC(
+void updateClosestNodesClusterDC(
     int * head,
     int * nxt,
     int * e,
@@ -320,8 +269,7 @@ __global__ void updateClosestNodesClusterDC(
     }
 }
 
-/** BFS from x within cluster: skip cluster edge endpoints, use d_edgeMaskIndex. */
-__global__ void updateClosestNodesInClusterDC(
+void updateClosestNodesInClusterDC(
     int * head,
     int * nxt,
     int * e,
@@ -367,8 +315,7 @@ __global__ void updateClosestNodesInClusterDC(
     }
 }
 
-/** Insert new leaf on edge eid; update closest_id/closest_dis for new edges. */
-__global__ void updateTreeStructureDC(
+void updateTreeStructureDC(
     int * head,
     int * nxt,
     int * e,
@@ -452,8 +399,7 @@ __global__ void updateTreeStructureDC(
     edgeCount++;
 }
 
-/** Same as updateTreeStructureDC but uses placeCount for middle node indexing in cluster. */
-__global__ void updateTreeStructureInClusterDC(
+void updateTreeStructureInClusterDC(
     int * head,
     int * nxt,
     int * e,
@@ -538,8 +484,7 @@ __global__ void updateTreeStructureInClusterDC(
     edgeCount++;
 }
 
-/** Build 3-node backbone (0, 1, nv) with two edges of length dis[0]/2. */
-__global__ void buildInitialTreeDC(
+void buildInitialTreeDC(
     int totalNumSequences,
     int * head,
     int * e,
@@ -565,8 +510,7 @@ __global__ void buildInitialTreeDC(
     edgeCount++;
 }
 
-/** Record new leaf and its edges in leaf/edge masks and leafMap for cluster subtree. */
-__global__ void updateClusterInfoDC (
+void updateClusterInfoDC (
     int leafID,
     int edgeidx,
     int * d_leafMask,
@@ -587,8 +531,7 @@ __global__ void updateClusterInfoDC (
 
 }
 
-/** Copy closest_id/closest_dis to cluster copies before cluster placement. */
-__global__ void copyClosestIdsDC(
+void copyClosestIdsDC(
     int * d_closest_id,
     int * d_closest_id_cluster,
     double * d_closest_dis,
@@ -603,8 +546,7 @@ __global__ void copyClosestIdsDC(
     }
 }
 
-/** Copy cluster closest_id/dis back to main arrays after cluster placement. */
-__global__ void copyBackClosestIdsDC(
+void copyBackClosestIdsDC(
     int * d_closest_id,
     int * d_closest_id_cluster,
     double * d_closest_dis,
@@ -619,8 +561,7 @@ __global__ void copyBackClosestIdsDC(
     }
 }
 
-/** Set up cluster edge/leaf masks and leafMap from closest_id of edge eid. */
-__global__ void initializeClusterDC (
+void initializeClusterDC (
     int eid,
     int * e,
     int * belong,
@@ -656,18 +597,25 @@ __global__ void initializeClusterDC (
 
 
 void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
-    cudaFree(d_head);
-    cudaFree(d_e);
-    cudaFree(d_nxt);
-    cudaFree(d_belong);
-    cudaFree(d_closest_id);
-    cudaFree(d_dist);
-    cudaFree(d_len);
-    cudaFree(d_closest_dis);
+    delete [] d_head;
+    delete [] d_e;
+    delete [] d_nxt;
+    delete [] d_belong;
+    delete [] d_closest_id;
+    delete [] d_dist;
+    delete [] d_len;
+    delete [] d_closest_dis;
+
+    // cudaFree(d_head);
+    // cudaFree(d_e);
+    // cudaFree(d_nxt);
+    // cudaFree(d_belong);
+    // cudaFree(d_closest_id);
+    // cudaFree(d_dist);
+    // cudaFree(d_len);
+    // cudaFree(d_closest_dis);
 }
-
-
-/** Copy tree arrays to host and emit Newick via recursive DFS. */
+/** Copy tree to local buffers and emit Newick via recursive DFS. */
 void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[totalNumSequences*2];
     int * h_e = new int[totalNumSequences*8];
@@ -675,44 +623,40 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
     double * h_len = new double[totalNumSequences*8];
     double * h_closest_dis = new double[totalNumSequences*20];
     int * h_closest_id = new int[totalNumSequences*20];
-    auto err = cudaMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_e, d_e, totalNumSequences*8*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_nxt, d_nxt, totalNumSequences*8*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_len, d_len, totalNumSequences*8*sizeof(double),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-
-    
-    // print len
-    // for (int i=0; i<totalNumSequences*2;i++){
-    //     std::cout << h_head[i] << "\t";
-    // }
-    // std::cout << std::endl;
- 
-    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, totalNumSequences + bd - 2,
-                                 g_printBinaryNewick);
-    output_ << ";\n";
+    std::function<void(int,int)>  print=[&](int node, int from){
+        if(h_nxt[h_head[node]]!=-1){
+            // printf("(");
+            output_ << "(";
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print(h_e[pos[i]],node);
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
+            }
+        }
+        // else std::cout<<name[node];
+        else {
+            output_<<name[node];
+        }
+    };
+    std::memcpy(h_head, d_head, totalNumSequences*2 * sizeof(int));
+    std::memcpy(h_e, d_e, totalNumSequences*8*sizeof(int));
+    std::memcpy(h_nxt, d_nxt, totalNumSequences*8*sizeof(int));
+    std::memcpy(h_len, d_len, totalNumSequences*8*sizeof(double));
+    print(totalNumSequences+bd-2,-1);
+    output_<<";\n";
 }
 
-__global__
+/*
+d_head: index of each node in the arrays ()
+
+*/
+
 void printSeqsDC(
     uint64_t * d_compressedSeqs,
     int num,
@@ -726,8 +670,7 @@ void printSeqsDC(
 }
 
 /** Build backbone tree on first numSequences taxa: init, distances, initial tree,
- * updateClosestNodes, then sequential placement with distRangeConstruction and
- * calculateBranchLengthDC / updateTreeStructureDC / updateClosestNodesDC. */
+ * updateClosestNodes, then sequential placement (dist, calculateBranchLength, updateTree, updateClosest). */
 void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -736,40 +679,20 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
     int gpuNum
 ){ 
-    cudaError_t err;
+    // cudaError_t err;
     if(params.in == "d"){
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
     }
-    int * d_id;
-    err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 1!\n");
-        exit(1);
-    }
-    int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 2 !\n");
-        exit(1);
-    }
-    double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 3!\n");
-        exit(1);
-    }
-    
-    
+    int * d_id = new int [totalNumSequences*2];
+    int * d_from = new int [totalNumSequences*2];
+    double * d_dis = new double [totalNumSequences*2];
 
     /*
     Initialize closest nodes by inifinite
     */
     // int threadNum = 1024, blockNum = (totalNumSequences*4-4+threadNum-1)/threadNum;
     int threadNum = 1024, blockNum = 1024;
-    initializeDC <<<blockNum, threadNum>>> (
+    initializeDC (
         totalNumSequences*4-4,
         totalNumSequences*2,
         d_closest_dis,
@@ -804,7 +727,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         );
     }
     
-    buildInitialTreeDC <<<1,1>>> (
+    buildInitialTreeDC (
         totalNumSequences,
         d_head,
         d_e,
@@ -820,7 +743,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     Initialize closest nodes by inital tree
     */
     for(int i=0;i<bd;i++){
-        updateClosestNodesDC <<<1,1>>> (
+        updateClosestNodesDC (
             d_head,
             d_nxt,
             d_e,
@@ -836,7 +759,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
  
     std::cerr << "Finished initial tree construction" << std::endl;
     auto backboneStart = std::chrono::high_resolution_clock::now();
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
+    std::vector <std::tuple<int,double,double>> minPos(numSequences*4-4);
 
 
     std::chrono::nanoseconds disTime(0), treeTime(0);
@@ -870,7 +793,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-        calculateBranchLengthDC <<<blockNum,threadNum>>> (
+        calculateBranchLengthDC (
             i,
             d_head,
             d_nxt,
@@ -878,20 +801,20 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
             d_e,
             d_len,
             d_belong,
-            thrust::raw_pointer_cast(minPos.data()),
+            minPos.data(),
             numSequences*4-4,
             d_closest_dis,
             d_closest_id
         );
 
-        auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
-        thrust::tuple<int,double,double> smallest=*iter;
+        auto iter=std::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
+        std::tuple<int,double,double> smallest=*iter;
         /*
         Update Tree (and assign closest nodes to newly added nodes)
         */
-        int eid=thrust::get<0>(smallest);
-        double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
-        updateTreeStructureDC <<<1,1>>>(
+        int eid=std::get<0>(smallest);
+        double fracLen=std::get<1>(smallest),addLen=std::get<2>(smallest);
+        updateTreeStructureDC (
             d_head,
             d_nxt,
             d_e,
@@ -911,7 +834,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         /*
         Update closest nodes
         */
-        updateClosestNodesDC <<<1,1>>> (
+        updateClosestNodesDC (
             d_head,
             d_nxt,
             d_e,
@@ -927,17 +850,14 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
         disTime += disEnd - disStart;
         treeTime += treeEnd - treeStart;
     }
-
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
     auto backboneEnd = std::chrono::high_resolution_clock::now();
     auto backboneTime = backboneEnd - backboneStart;
     std::cerr << "Finished backbone construction in: "<< backboneTime.count()/1000000 << " ms\n";
-    
     return;
 }
 
-/** Assign each non-backbone sequence to k-closest edge (clusterID); batch distance
- * construction and calculateBranchLengthDC per sequence. */
+/** Assign each non-backbone sequence to k-closest edge (clusterID); batch dist + calculateBranchLength. */
 void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     Param& params,
     const MashDeviceArraysDC& mashDeviceArrays,
@@ -945,38 +865,33 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     const MSADeviceArraysDC& msaDeviceArrays,
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost
 ){ 
-    cudaError_t err;
+    // cudaError err;
     int idx=params.backboneSize*4-4;
     
     kplacementDeviceArraysHost.clusterID = new int[totalNumSequences];
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
+    std::vector <std::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
-
     auto clusterStart = std::chrono::high_resolution_clock::now();
-
     uint64_t localBatchSize = params.batchSize;
     for(int i=numSequences;i<totalNumSequences;i+=localBatchSize){
         if (i+localBatchSize>totalNumSequences) localBatchSize=totalNumSequences-i;
         // std::cerr << "Processing batch: "<< i << " to " << i+localBatchSize << "\n";
-        
+
         /* copy data to d_hashListConst or d_compressedSeqsConst */
         if (params.in == "r") 
-            err = cudaMemcpy(mashDeviceArrays.d_hashListConst, mashDeviceArrays.h_hashList+i*params.sketchSize, localBatchSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
+            std::memcpy(mashDeviceArrays.d_hashListConst, mashDeviceArrays.h_hashList+i*params.sketchSize, localBatchSize*params.sketchSize*sizeof(uint64_t));
+            // err = cudaMemcpy(mashDeviceArrays.d_hashListConst, mashDeviceArrays.h_hashList+i*params.sketchSize, localBatchSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
         else if (params.in == "m"){
             size_t maxLengthCompressed = (msaDeviceArrays.d_seqLen + 15) / 16;
-            err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, msaDeviceArrays.h_compressedSeqs+i*maxLengthCompressed, 1ll*localBatchSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
+            std::memcpy(msaDeviceArrays.d_compressedSeqsConst, msaDeviceArrays.h_compressedSeqs+i*maxLengthCompressed, 1ll*localBatchSize*maxLengthCompressed*sizeof(uint64_t));
+            // err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, msaDeviceArrays.h_compressedSeqs+i*maxLengthCompressed, 1ll*localBatchSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
         }
         else {
             std::cerr << "Error: Input type must be unaligned or aligned for clustering based approach\n";
             exit(1);
         }
-        if (err != cudaSuccess) {
-            fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
-            exit(1);
-        }
-
+        
         for (int j=i;j<i+localBatchSize;j++){
-            
             auto disStart = std::chrono::high_resolution_clock::now();
             if(params.in == "r"){
                 mashDeviceArrays.distRangeConstructionOnGpuDC(
@@ -1015,7 +930,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
             auto disEnd = std::chrono::high_resolution_clock::now();
             auto treeStart = std::chrono::high_resolution_clock::now();
             
-            calculateBranchLengthDC <<<blockNum,threadNum>>> (
+            calculateBranchLengthDC (
                 j,
                 d_head,
                 d_nxt,
@@ -1023,20 +938,19 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
                 d_e,
                 d_len,
                 d_belong,
-                thrust::raw_pointer_cast(minPos.data()),
+                minPos.data(),
                 numSequences*4-4,
                 d_closest_dis,
                 d_closest_id
             );
-            auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
-            thrust::tuple<int,double,double> smallest=*iter;
-            kplacementDeviceArraysHost.clusterID[j] = thrust::get<0>(smallest);
+            auto iter=std::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
+            std::tuple<int,double,double> smallest=*iter;
+            kplacementDeviceArraysHost.clusterID[j] = std::get<0>(smallest);
             // std::cerr << "Sequence " << j << " assigned to cluster " << kplacementDeviceArraysHost.clusterID[j] << "\n";
         }
     }
     auto clusterEnd = std::chrono::high_resolution_clock::now();
     auto clusterTime = clusterEnd - clusterStart;
-
 
     std::cerr << "Finished clustering in: "<< clusterTime.count()/1000000 << " ms\n";
 
@@ -1110,7 +1024,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     //     exit(1);
     // }
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 
     std::cerr << "Finished data transfer\n";
     return;
@@ -1125,8 +1039,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
     KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
     const int clusteringBatchIdx
 ){ 
-    cudaError_t err;
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
+    // cudaError err;
+    std::vector <std::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
 
     auto clusterStart = std::chrono::high_resolution_clock::now();
@@ -1165,7 +1079,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
         
-        calculateBranchLengthDC <<<blockNum,threadNum>>> (
+        calculateBranchLengthDC (
             clusteringBatchIdx*params.batchSize + i,
             d_head,
             d_nxt,
@@ -1173,40 +1087,40 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
             d_e,
             d_len,
             d_belong,
-            thrust::raw_pointer_cast(minPos.data()),
+            minPos.data(),
             numSequences*4-4,
             d_closest_dis,
             d_closest_id
         );
-        auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
-        thrust::tuple<int,double,double> smallest=*iter;
-        kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] = thrust::get<0>(smallest);
+        auto iter=std::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
+        std::tuple<int,double,double> smallest=*iter;
+        kplacementDeviceArraysHost.clusterID[clusteringBatchIdx*params.batchSize + i] = std::get<0>(smallest);
 
     }
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 
     return;
 }
 
-__global__ void rearrangeHashListInClusterDC(
+void rearrangeHashListInClusterDC(
     int numSequences,
     int sketchSize,
     uint64_t * original,
     uint64_t * target
 ){
-    int tx = threadIdx.x, bx = blockIdx.x;
-    int bs = blockDim.x;
-    int idx = tx+bs*bx;
+    // int tx = threadIdx.x, bx = blockIdx.x;
+    // int bs = blockDim.x;
+    // int idx = tx+bs*bx;
+    tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){ 
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
     // if(idx>=numSequences) return;
-    for (int idx_=idx; idx_<numSequences; idx_+=bs*gridDim.x){
-        if (idx_ >= numSequences) return;
+    // for (int idx_=idx; idx_<numSequences; idx_+=bs*gridDim.x){
+        // if (idx_ >= numSequences) return;
         for(int i=0;i<sketchSize;i++){
-            target[i*numSequences+idx_] = original[idx_*sketchSize + i];
+            target[i*numSequences+idx_] = original[idx_*sketchSize+i];
         }
     }
-    // for(int i=0;i<sketchSize;i++){
-    //     target[i*numSequences+idx] = original[idx*sketchSize + i];
-    // }
+    });
 }
 
 void transferMashClusterInfoDC(
@@ -1218,88 +1132,25 @@ void transferMashClusterInfoDC(
     uint64_t * hashList = mashDeviceArrays.h_hashList;
     int l=0;
     for (auto &leaf: leafList){
-        memcpy(hashListLocal+l*params.sketchSize, hashList+leaf*params.sketchSize, params.sketchSize*sizeof(uint64_t));
+        std::memcpy(hashListLocal+l*params.sketchSize, hashList+leaf*params.sketchSize, params.sketchSize*sizeof(uint64_t));
         l++;
     }
-
-    auto err = cudaMemcpy(mashDeviceArrays.d_hashListConst, hashListLocal, params.backboneSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
-        exit(1);
-    }
+    std::memcpy(mashDeviceArrays.d_hashListConst, hashListLocal, params.backboneSize*params.sketchSize*sizeof(uint64_t));
 
     /* Rearrange only for backbone tree */
-    uint64_t * temp_hashList;
-    err = cudaMalloc(&temp_hashList, params.sketchSize*params.backboneSize*sizeof(uint64_t));
-    if (err != cudaSuccess){
-        fprintf(stderr, "Gpu_ERROR: temp_hashList cudaMalloc failed!\n");
-        exit(1);
-    }
+    uint64_t * temp_hashList = new uint64_t [params.sketchSize*params.backboneSize];
+    
     int threadsPerBlock = 1024;
     int blocksPerGrid = 1024;
-    rearrangeHashListInClusterDC <<<blocksPerGrid, threadsPerBlock >>>(
+    rearrangeHashListInClusterDC (
         params.backboneSize,
         int(params.sketchSize),
         mashDeviceArrays.d_hashListConst,
         temp_hashList
     );
     std::swap(mashDeviceArrays.d_hashListConst, temp_hashList);
-    cudaFree(temp_hashList);
-    
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-    }
-    cudaDeviceSynchronize();
-    delete[] hashListLocal;
-    return;
-}
-
-void transferMashClusterInfoDCRecursiveBackbone(
-    MashPlacement::MashDeviceArraysDC& mashDeviceArrays,
-    std::vector<int> leafList,
-    MashPlacement::Param& params
-){
-    uint64_t * hashListLocal = new uint64_t[params.backboneSize*params.sketchSize];
-    uint64_t * hashList = mashDeviceArrays.h_hashList;
-    int l=0;
-    for (auto &leaf: leafList){
-        memcpy(hashListLocal+l*params.sketchSize, hashList+leaf*params.sketchSize, params.sketchSize*sizeof(uint64_t));
-        l++;
-    }
-
-    auto gpuMemLoc=mashDeviceArrays.d_hashListBackbone+params.backboneSize*params.sketchSize;
-    auto err = cudaMemcpy(gpuMemLoc, hashListLocal, params.backboneSize*params.sketchSize*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: d_hashListBackbone cudaMemcpy failed!\n");
-        exit(1);
-    }
-
-    uint64_t * temp_hashList;
-    err = cudaMalloc(&temp_hashList, params.sketchSize*params.backboneSize*sizeof(uint64_t));
-    if (err != cudaSuccess){
-        fprintf(stderr, "Gpu_ERROR: temp_hashList cudaMalloc failed!\n");
-        exit(1);
-    }
-    int threadsPerBlock = 1024;
-    int blocksPerGrid = 1024;
-    rearrangeHashListInClusterDC <<<blocksPerGrid, threadsPerBlock >>>(
-        params.backboneSize,
-        int(params.sketchSize),
-        gpuMemLoc,
-        temp_hashList
-    );
-    std::swap(gpuMemLoc, temp_hashList);
-    cudaFree(temp_hashList);
-    
-    err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-    }
-    cudaDeviceSynchronize();
-    delete[] hashListLocal;
+    delete [] temp_hashList;
+    delete [] hashListLocal;
     return;
 }
 
@@ -1318,38 +1169,7 @@ void transferMsaClusterInfoDC(
         memcpy(compressedSeqs_local+1ll*l*maxLengthCompressed, compressedSeqs+1ll*leaf*maxLengthCompressed, 1ll*maxLengthCompressed*sizeof(uint64_t));
         l++;
     }
-    auto err = cudaMemcpy(mashDeviceArrays.d_compressedSeqsConst, compressedSeqs_local, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
-        exit(1);
-    }
-    cudaDeviceSynchronize();
-    delete[] compressedSeqs_local;
-    return;
-}
-
-void transferMsaClusterInfoDCRecursiveBackbone(
-    MashPlacement::MSADeviceArraysDC& mashDeviceArrays,
-    std::vector<int> leafList,
-    MashPlacement::Param& params
-){
-    size_t maxLengthCompressed = (mashDeviceArrays.d_seqLen + 15) / 16;
-    uint64_t * compressedSeqs_local = new uint64_t[params.backboneSize*maxLengthCompressed];
-    uint64_t * compressedSeqs = mashDeviceArrays.h_compressedSeqs;
-
-    int l=0;
-    for (auto &leaf: leafList){
-        memcpy(compressedSeqs_local+1ll*l*maxLengthCompressed, compressedSeqs+1ll*leaf*maxLengthCompressed, 1ll*maxLengthCompressed*sizeof(uint64_t));
-        l++;
-    }
-    auto err = cudaMemcpy(mashDeviceArrays.d_compressedSeqsConst, compressedSeqs_local, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
-        exit(1);
-    }
-    cudaDeviceSynchronize();
+    std::memcpy(mashDeviceArrays.d_compressedSeqsConst, compressedSeqs_local, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t));
     delete[] compressedSeqs_local;
     return;
 }
@@ -1357,7 +1177,6 @@ void transferMsaClusterInfoDCRecursiveBackbone(
 
 
 
-__global__ 
 void print_d_hashListConstDC(
     uint64_t * d_hashListConst,
     int sketchSize,
@@ -1371,107 +1190,73 @@ void print_d_hashListConstDC(
     }
 }
 
-__global__ 
 void resetEdgeMaskIndexDC(int * d_edgeMaskIndex, int size){
-    int tx = threadIdx.x, bx = blockIdx.x;
-    int bs = blockDim.x, gs = gridDim.x;
-    int idx = tx+bs*bx;
+    // int tx = threadIdx.x, bx = blockIdx.x;
+    // int bs = blockDim.x, gs = gridDim.x;
+    // int idx = tx+bs*bx;
     // if(idx>=size) return;
-    for (int idx_=idx; idx_<size; idx_+=bs*gs){
-        if (idx_ >= size) return;
+    tbb::parallel_for(tbb::blocked_range<int>(0, size), [&](tbb::blocked_range<int> range){ 
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+    // for (int idx_=idx; idx_<size; idx_+=bs*gs){
+        // if (idx_ >= size) return;
         d_edgeMaskIndex[idx_] = -1;
     }
+    });
     // d_edgeMaskIndex[idx] = -1;
     
 }
 
-__global__ 
 void resetIdFromDisDC(int * id, int * from, double * dis, int size){
-    int tx = threadIdx.x, bx = blockIdx.x;
-    int bs = blockDim.x;
-    int idx = tx+bs*bx;
-    if(idx>=size) return;
-    id[idx] = -1;
-    from[idx] = -1;
-    dis[idx] = 2.0;   
+    // int tx = threadIdx.x, bx = blockIdx.x;
+    // int bs = blockDim.x;
+    // int idx = tx+bs*bx;
+    // if(idx>=size) return;
+    tbb::parallel_for(tbb::blocked_range<int>(0, size), [&](tbb::blocked_range<int> range){ 
+    for (int idx_ = range.begin(); idx_ < range.end(); ++idx_) {
+        id[idx_] = -1;
+        from[idx_] = -1;
+        dis[idx_] = 2.0;   
+    }
+    });
+    
 }
 
-/** For each cluster: transfer MASH/MSA data, initializeClusterDC, then place each leaf
- * via distSpecialIDConstruction, calculateBranchLengthSpecialIDDC, updateTreeStructureInClusterDC,
- * updateClusterInfoDC, updateClosestNodesInClusterDC. */
+/** For each cluster: transfer MASH/MSA, init, place each leaf; emit Newick. */
 void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
     Param& params,
     MashDeviceArraysDC& mashDeviceArrays,
     MatrixReader& matrixReader,
     MSADeviceArraysDC& msaDeviceArrays,
-    KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
-    std::vector<int>& largeClustersIdx
+    KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost
 ){ 
     int idx=params.backboneSize*4-4;
     int threadNum = 1024, blockNum = 1024;
     int * d_id;
-    auto err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
     int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
     double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
+    d_id = new int [totalNumSequences*2];
+    d_from = new int [totalNumSequences*2];
+    d_dis = new double [totalNumSequences*2];
+    
     auto * cluster_id = kplacementDeviceArraysHost.clusterID;
     std::vector<std::vector <int>> contains(numSequences*4-4);
 
     for(int i=numSequences;i<totalNumSequences;i++) contains[cluster_id[i]].push_back(i);
-
     
     int * d_edgeMask;
-    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    d_edgeMask = new int [totalNumSequences*4];
 
     int * d_edgeMaskIndex;
-    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
+    d_edgeMaskIndex = new int [totalNumSequences*4];
+    
     int * d_leafMask;
-    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    d_leafMask = new int [totalNumSequences*2];
 
     int * d_leafMap;
-    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    d_leafMap = new int [params.backboneSize];
 
     int insertLeafCount=numSequences;
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
-    
+    std::vector <std::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     
     std::vector<int> leafList (params.backboneSize);
     std::unordered_map <int,int> h_leafMap;
@@ -1510,9 +1295,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
         for (int j=startClusterID;j<i;j++) {
 
             if (contains[j].size() == 0) continue;
-            resetEdgeMaskIndexDC<<<blockNum,threadNum>>>(d_edgeMaskIndex, totalNumSequences*4);
-            cudaDeviceSynchronize();
-            initializeClusterDC <<<1,1>>>(
+            resetEdgeMaskIndexDC (d_edgeMaskIndex, totalNumSequences*4);
+            initializeClusterDC (
                 j,
                 d_e,
                 d_belong,
@@ -1527,10 +1311,51 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
             int edgeCount=2, leafCount=10;
             for(auto &leaf:contains[j]) {
                 actual_placement++;
+                // std::cerr << "Processing leaf: "<< leaf << std::endl;
+                // copy d_leafMask to host and print
+                // if (j == 544) {
+
+                //     int * h_leafMask = new int[totalNumSequences*2];
+                //     err = cudaMemcpy(h_leafMask, d_leafMask, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
+                //     if (err != cudaSuccess)
+                //     {
+                //         fprintf(stderr, "Gpu_ERROR: d_leafMask cudaMemcpy failed!\n");
+                //         exit(1);
+                //     }
+                //     for (int z=0;z<leafCount;z++){
+                //         std::cerr << h_leafMask[z] << "\t";
+                //     }
+                //     std::cerr << "\n";
+
+                //     int * h_edgeMask = new int[totalNumSequences*4];
+                //     err = cudaMemcpy(h_edgeMask, d_edgeMask, totalNumSequences*4*sizeof(int),cudaMemcpyDeviceToHost);
+                //     if (err != cudaSuccess)
+                //     {
+                //         fprintf(stderr, "Gpu_ERROR: d_edgeMask cudaMemcpy failed!\n");
+                //         exit(1);
+                //     }
+                //     for (int z=0;z<edgeCount;z++){
+                //         std::cerr << h_edgeMask[z] << "\t";
+                //     }
+                //     std::cerr << "\n";
+
+                //     int * h_edgeMaskIndex = new int[totalNumSequences*4];
+                //     err = cudaMemcpy(h_edgeMaskIndex, d_edgeMaskIndex, totalNumSequences*4*sizeof(int),cudaMemcpyDeviceToHost);
+                //     if (err != cudaSuccess)
+                //     {
+                //         fprintf(stderr, "Gpu_ERROR: d_edgeMaskIndex cudaMemcpy failed!\n");
+                //         exit(1);
+                //     }
+                //     for (int z=0;z<edgeCount;z++){
+                //         std::cerr << h_edgeMaskIndex[h_edgeMask[z]] << "\t";
+                //     }
+                //     std::cerr << "\n";
+                // }
+
+
 
                 int leaf_idx_in_cluster = h_leafMap[leaf];
                 if(params.in == "r"){
-                    
                     mashDeviceArrays.distSpecialIDConstructionOnGpuDC(
                         params,
                         localCount_,
@@ -1552,7 +1377,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
                 } 
                 localCount_++;    
 
-                calculateBranchLengthSpecialIDDC <<<blockNum,threadNum>>> (
+                calculateBranchLengthSpecialIDDC (
                     j,
                     d_head,
                     d_nxt,
@@ -1560,24 +1385,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
                     d_e,
                     d_len,
                     d_belong,
-                    thrust::raw_pointer_cast(minPos.data()),
+                    minPos.data(),
                     numSequences*4-4,
                     d_closest_dis,
                     d_closest_id,
                     edgeCount,
                     d_edgeMask
                 );
-                auto iter=thrust::min_element(minPos.begin(),minPos.begin()+edgeCount,compare_tupleDC());
-                thrust::tuple<int,double,double> smallest=*iter;
+                auto iter=std::min_element(minPos.begin(),minPos.begin()+edgeCount,compare_tupleDC());
+                std::tuple<int,double,double> smallest=*iter;
 
                 /*
                 Update Tree Structure
                 */
 
-                int eid=thrust::get<0>(smallest);
-                double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
+                int eid=std::get<0>(smallest);
+                double fracLen=std::get<1>(smallest),addLen=std::get<2>(smallest);
                 // std::cerr << "eid: " << eid << " Cluster ID: " << j << " dist " << addLen << " dist2 " << fracLen << "\n";
-                updateTreeStructureInClusterDC <<<1,1>>>(
+                updateTreeStructureInClusterDC (
                     d_head,
                     d_nxt,
                     d_e,
@@ -1599,7 +1424,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
                 Update edgeMask and leafMask
                 */
 
-                updateClusterInfoDC<<<1,1>>> (
+                updateClusterInfoDC (
                     leaf,
                     idx,
                     d_leafMask,
@@ -1615,7 +1440,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
                 Update closest nodes
                 */
 
-                updateClosestNodesInClusterDC <<<1,1>>> (
+                updateClosestNodesInClusterDC (
                     d_head,
                     d_nxt,
                     d_e,
@@ -1641,8 +1466,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC(
         assert(localCount_==batchSize);
         
     }
-
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 
 }
 
@@ -1674,6 +1498,7 @@ bool read_binary_blob(gzFile file, size_t n, uint64_t* out_data) {
     return true;
 }
 
+/** Batch variant of findClusterTreeDC (cluster data from dir, isCluster filter). */
 void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     Param& params,
     MashDeviceArraysDC& mashDeviceArrays,
@@ -1683,73 +1508,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
     const std::string dir,
     std::vector<bool>& isCluster
 ){ 
-    cudaError_t err;
     int idx=params.backboneSize*4-4;
     int threadNum = 1024, blockNum = 1024;
-    int * d_id;
-    err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
+    int * d_id = new int [totalNumSequences*2];
+    int * d_from = new int [totalNumSequences*2];
+    double * d_dis = new double [totalNumSequences*2];
     auto * cluster_id = kplacementDeviceArraysHost.clusterID;
     std::vector<std::vector <int>> contains(numSequences*4-4);
 
     for(int i=numSequences;i<totalNumSequences;i++) contains[cluster_id[i]].push_back(i);
     
    
-    int * d_edgeMask;
-    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_edgeMaskIndex;
-    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_leafMask;
-    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_leafMap;
-    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
+    int * d_edgeMask = new int [totalNumSequences*4];
+    int * d_edgeMaskIndex = new int [totalNumSequences*4];
+    int * d_leafMask = new int [totalNumSequences*2];
+    int * d_leafMap = new int [params.backboneSize];
+    
     int insertLeafCount=numSequences;
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
-    
-    
+    std::vector <std::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     std::vector<int> leafList (params.backboneSize);
     std::unordered_map <int,int> h_leafMap;
     
@@ -1830,22 +1606,16 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
             }
 
             if(params.in == "m") {
-                auto err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
-                if (err != cudaSuccess)
-                {
-                    fprintf(stderr, "Gpu_ERROR: d_hashListConst cudaMemcpy failed!\n");
-                    exit(1);
-                }
-                cudaDeviceSynchronize();
+                memcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t));
+                // auto err = cudaMemcpy(msaDeviceArrays.d_compressedSeqsConst, compressedSeqs_local_per_cluster, 1ll*params.backboneSize*maxLengthCompressed*sizeof(uint64_t),cudaMemcpyHostToDevice);
             }
             
 
             if (contains[i].size() == 0) continue;
             int localCount_=0;
 
-            resetEdgeMaskIndexDC<<<blockNum,threadNum>>>(d_edgeMaskIndex, totalNumSequences*4);
-            cudaDeviceSynchronize();
-            initializeClusterDC <<<1,1>>>(
+            resetEdgeMaskIndexDC (d_edgeMaskIndex, totalNumSequences*4);
+            initializeClusterDC (
                 i,
                 d_e,
                 d_belong,
@@ -1873,7 +1643,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
                 } 
                 localCount_++;
 
-                calculateBranchLengthSpecialIDDC <<<blockNum,threadNum>>> (
+                calculateBranchLengthSpecialIDDC (
                     i,
                     d_head,
                     d_nxt,
@@ -1881,24 +1651,24 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
                     d_e,
                     d_len,
                     d_belong,
-                    thrust::raw_pointer_cast(minPos.data()),
+                    minPos.data(),
                     numSequences*4-4,
                     d_closest_dis,
                     d_closest_id,
                     edgeCount,
                     d_edgeMask
                 );
-                auto iter=thrust::min_element(minPos.begin(),minPos.begin()+edgeCount,compare_tupleDC());
-                thrust::tuple<int,double,double> smallest=*iter;
+                auto iter=std::min_element(minPos.begin(),minPos.begin()+edgeCount,compare_tupleDC());
+                std::tuple<int,double,double> smallest=*iter;
 
                 /*
                 Update Tree Structure
                 */
 
-                int eid=thrust::get<0>(smallest);
-                double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
+                int eid=std::get<0>(smallest);
+                double fracLen=std::get<1>(smallest),addLen=std::get<2>(smallest);
                 // std::cerr << "eid: " << eid << " Cluster ID: " << j << " dist " << addLen << " dist2 " << fracLen << "\n";
-                updateTreeStructureInClusterDC <<<1,1>>>(
+                updateTreeStructureInClusterDC (
                     d_head,
                     d_nxt,
                     d_e,
@@ -1920,7 +1690,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
                 Update edgeMask and leafMask
                 */
 
-                updateClusterInfoDC<<<1,1>>> (
+                updateClusterInfoDC (
                     leaf,
                     idx,
                     d_leafMask,
@@ -1936,7 +1706,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
                 Update closest nodes
                 */
 
-                updateClosestNodesInClusterDC <<<1,1>>> (
+                updateClosestNodesInClusterDC (
                     d_head,
                     d_nxt,
                     d_e,
@@ -1963,212 +1733,9 @@ void MashPlacement::KPlacementDeviceArraysDC::findClusterTreeDC_batch(
 
         delete[] compressedSeqs_local;
     }
-    cudaDeviceSynchronize();
-
-
-    return;
-}
-
-
-void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDCRecursive(
-    Param& params,
-    MashDeviceArraysDC& mashDeviceArrays,
-    MatrixReader& matrixReader,
-    MSADeviceArraysDC& msaDeviceArrays,
-    const KPlacementDeviceArraysHostDC& kplacementDeviceArraysHost,
-    int clusterIdx
-){ 
-    cudaError_t err;
-    
-    int * d_id;
-    err = cudaMalloc(&d_id, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 1!\n");
-        exit(1);
-    }
-    int * d_from;
-    err = cudaMalloc(&d_from, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 2 !\n");
-        exit(1);
-    }
-    double * d_dis;
-    err = cudaMalloc(&d_dis, totalNumSequences*2*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed 3!\n");
-        exit(1);
-    }
-
-    int * d_edgeMask;
-    err = cudaMalloc(&d_edgeMask, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_edgeMaskIndex;
-    err = cudaMalloc(&d_edgeMaskIndex, totalNumSequences*4*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_leafMask;
-    err = cudaMalloc(&d_leafMask, totalNumSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    int * d_leafMap;
-    err = cudaMalloc(&d_leafMap, params.backboneSize*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-
-    auto * cluster_id = kplacementDeviceArraysHost.clusterID;
-    std::vector<std::vector <int>> contains(numSequences*4-4);
-
-    for(int i=numSequences;i<totalNumSequences;i++) contains[cluster_id[i]].push_back(i);
-
-    std::vector<int> leafList (params.backboneSize);
-    std::unordered_map <int,int> h_leafMap;
-
-    int newBackboneSize=params.backboneSize;
-
-    for (auto i: contains[clusterIdx]){
-        if (newBackboneSize==2*params.backboneSize) break;
-        h_leafMap[contains[clusterIdx][i]]=newBackboneSize;
-        leafList[newBackboneSize-params.backboneSize]=contains[clusterIdx][i];
-        newBackboneSize++;
-    }
-
-    if(params.in == "r")
-        transferMashClusterInfoDC(mashDeviceArrays, leafList, params);
-    else if (params.in == "m")
-        transferMsaClusterInfoDC(msaDeviceArrays, leafList, params);
-    else {
-        std::cerr << "Error: Input type must be unaligned or aligned for clustering based approach\n";
-        exit(1);
-    }
-
-
-
-    // int threadNum = 1024, blockNum = 1024;
-    // initializeClusterDC <<<1,1>>>(
-    //     clusterIdx,
-    //     d_e,
-    //     d_belong,
-    //     d_head,
-    //     d_nxt,
-    //     d_closest_id,
-    //     d_edgeMask,
-    //     d_leafMask,
-    //     d_edgeMaskIndex,
-    //     d_leafMap
-    // );
-    
-    // std::chrono::nanoseconds disTime(0), treeTime(0);
-    // for(int i=bd;i<numSequences;i++){
-    //     auto disStart = std::chrono::high_resolution_clock::now();
-    //     if(params.in == "r"){
-    //         mashDeviceArrays.distRangeConstructionOnGpuDC(
-    //             params,
-    //             i,
-    //             d_dist,
-    //             0,
-    //             i-1
-    //         );
-    //     }
-    //     else if(params.in == "d"){
-    //         matrixReader.distConstructionOnGpu(
-    //             params,
-    //             i,
-    //             d_dist
-    //         );
-    //     }
-    //     else if(params.in == "m"){
-    //         msaDeviceArrays.distRangeConstructionOnGpuDC(
-    //             params,
-    //             i,
-    //             d_dist,
-    //             0,
-    //             i-1
-    //         );
-    //     }
-
-    //     auto disEnd = std::chrono::high_resolution_clock::now();
-    //     auto treeStart = std::chrono::high_resolution_clock::now();
-    //     calculateBranchLengthDC <<<blockNum,threadNum>>> (
-    //         i,
-    //         d_head,
-    //         d_nxt,
-    //         d_dist,
-    //         d_e,
-    //         d_len,
-    //         d_belong,
-    //         thrust::raw_pointer_cast(minPos.data()),
-    //         numSequences*4-4,
-    //         d_closest_dis,
-    //         d_closest_id
-    //     );
-
-    //     auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
-    //     thrust::tuple<int,double,double> smallest=*iter;
-    //     /*
-    //     Update Tree (and assign closest nodes to newly added nodes)
-    //     */
-    //     int eid=thrust::get<0>(smallest);
-    //     double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
-    //     updateTreeStructureDC <<<1,1>>>(
-    //         d_head,
-    //         d_nxt,
-    //         d_e,
-    //         d_len,
-    //         d_closest_dis,
-    //         d_closest_id,
-    //         d_belong,
-    //         eid,
-    //         fracLen,
-    //         addLen,
-    //         i,
-    //         idx,
-    //         totalNumSequences
-    //     );
-    //     idx+=4;
-
-    //     /*
-    //     Update closest nodes
-    //     */
-    //     updateClosestNodesDC <<<1,1>>> (
-    //         d_head,
-    //         d_nxt,
-    //         d_e,
-    //         d_len,
-    //         d_closest_dis,
-    //         d_closest_id,
-    //         i,
-    //         d_id,
-    //         d_from,
-    //         d_dis
-    //     );
-    //     auto treeEnd = std::chrono::high_resolution_clock::now();
-    //     disTime += disEnd - disStart;
-    //     treeTime += treeEnd - treeStart;
-    // }
-
     // cudaDeviceSynchronize();
-    // auto backboneEnd = std::chrono::high_resolution_clock::now();
-    // auto backboneTime = backboneEnd - backboneStart;
-    // std::cerr << "Finished backbone construction in: "<< backboneTime.count()/1000000 << " ms\n";
-    
+
+
     return;
 }
+

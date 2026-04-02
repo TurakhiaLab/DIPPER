@@ -57,7 +57,7 @@ void MashPlacement::MashDeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_com
     }
     // std::cerr << "Allocated for d_hashListConst: "<< d_hashListConst << std::endl;
 
-    err = cudaMalloc(&d_hashListBackbone, params.sketchSize*params.backboneSize*sizeof(uint64_t));
+    err = cudaMalloc(&d_hashListBackbone, 2*params.sketchSize*params.backboneSize*sizeof(uint64_t));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: d_hashListBackbone cudaMalloc failed!\n");

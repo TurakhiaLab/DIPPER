@@ -65,7 +65,7 @@ void MashPlacement::MSADeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_comp
     
     size_t maxLengthCompressed = (this->d_seqLen + 15) / 16;
 
-    err = cudaMalloc(&d_compressedSeqsBackBone, maxLengthCompressed*this->backboneSize*sizeof(uint64_t));
+    err = cudaMalloc(&d_compressedSeqsBackBone, 2*maxLengthCompressed*this->backboneSize*sizeof(uint64_t));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");

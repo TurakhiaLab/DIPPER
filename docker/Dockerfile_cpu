@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.2.2-devel-ubuntu22.04
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND noninteractive
 RUN chmod 1777 /tmp
@@ -8,6 +8,7 @@ WORKDIR /home/
 # install dependencies
 RUN apt-get update && \
     apt-get install -y \
+       	apt-utils \
        	wget \
 	    git \
         vim \
@@ -17,16 +18,14 @@ RUN apt-get update && \
 	    cmake && \
 	apt-get clean
 
-
 # Clone and install DIPPER inside the dipper environment
 RUN wget https://github.com/TurakhiaLab/DIPPER/archive/refs/tags/v0.1.3.tar.gz && \
     tar -xzf v0.1.3.tar.gz && \
     mv DIPPER-0.1.3 DIPPER && \
     rm v0.1.3.tar.gz && \
     cd /home/DIPPER/install && \
-    ./installDIPPER.sh cuda
+    ./installDIPPER.sh cpu
 
 ENV PATH="/home/DIPPER/bin:$PATH"
-
 
 CMD ["/bin/bash"]

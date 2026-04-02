@@ -1,21 +1,23 @@
-/* placement.cu: Exact placement mode. Sequential GPU placement: distances -> lim updates ->
- * best-branch choice -> tree structure update (adjacency, depth, BFS/DFS, levelst/leveled). */
+/**
+ * cpu/placement.cpp
+ *
+ * CPU exact placement mode. Same logic as GPU placement.cu: sequential placement
+ * with lim-based updates (BFS/DFS, levelst/leveled), TBB-parallel loops over
+ * adjacency/levels. Host arrays (d_* allocated via new); no k-closest.
+ */
 
-#include "mash_placement.cuh"
+#include "mash_placement.hpp"
 
 #include <stdio.h>
 #include <queue>
-#include <thrust/sort.h>
-#include <thrust/scan.h>
-#include <thrust/binary_search.h>
-#include <thrust/host_vector.h>
-#include <thrust/device_vector.h>
 #include <chrono>
 #include <iostream>
+#include <cassert>
 #include <fstream>
-#include <cub/cub.cuh>
+#include <tbb/parallel_for.h>
+#include <functional>
 
-/** Check CUDA errors and sync; exit on failure. */
+/*
 void checkCudaErrorsHere(const char* location) {
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -28,100 +30,30 @@ void checkCudaErrorsHere(const char* location) {
         exit(-1);
     }
 }
+*/
 
-/* Allocate GPU arrays for exact placement: adjacency, BFS/DFS/depth/levels, dist, len, lim. */
+/** Allocate host arrays for exact placement: adjacency, BFS/DFS/depth/levels, dist, len, lim. */
 void MashPlacement::PlacementDeviceArrays::allocateDeviceArrays(size_t num){
-    cudaError_t err;
     numSequences = int(num);
     bd = 2, idx = 0;
-    err = cudaMalloc(&d_head, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_e, numSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_nxt, numSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_belong, numSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_rev, numSequences*8*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_bfsorder, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_dfsorder, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_dep, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_dfsrk, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_levelst, numSequences*sizeof(int)*2);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_leveled, numSequences*sizeof(int)*2);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_dist, numSequences*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_len, numSequences*8*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
-    err = cudaMalloc(&d_lim, numSequences*8*sizeof(double));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    d_head = new int [numSequences*2];
+    d_e = new int [numSequences*8];
+    d_nxt = new int [numSequences*8];
+    d_belong = new int [numSequences*8];
+    d_rev = new int [numSequences*8];
+    d_bfsorder = new int [numSequences*2];
+    d_dfsorder = new int [numSequences*2];
+    d_dep = new int [numSequences*2];
+    d_dfsrk = new int [numSequences*2];
+    d_levelst = new int [numSequences*2];
+    d_leveled = new int [numSequences*2];
+    d_dist = new double [numSequences];
+    d_len = new double [numSequences*8];
+    d_lim = new double [numSequences*8];
 }
 
-/** Reset adjacency slots and node metadata (head, dep, dfsrk, levelst, leveled) to sentinels. */
-__global__ void initialize(
+/** Reset adjacency and node metadata (head, dep, dfsrk, levelst, leveled) to sentinels. */
+void initialize(
     int lim,
     int nodes,
     int * head,
@@ -133,34 +65,30 @@ __global__ void initialize(
     int * levelst,
     int * leveled
 ){
-    int tx=threadIdx.x,bs=blockDim.x;
-    int bx=blockIdx.x,gs=gridDim.x;
-    int idx=tx+bs*bx;
-    if(idx<lim){
-        nxt[idx] = -1;
-        e[idx] = -1;
-        belong[idx] = -1;
+    int larger = std::max(lim, nodes);
+    tbb::parallel_for(tbb::blocked_range<int>(0, larger), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if(idx<lim){
+            nxt[idx] = -1;
+            e[idx] = -1;
+            belong[idx] = -1;
+        }
+        if(idx<nodes) head[idx] = -1, dep[idx]=nodes*10, dfsrk[idx]=levelst[idx]=leveled[idx]=-1;
     }
-    if(idx<nodes) head[idx] = -1, dep[idx]=nodes*10, dfsrk[idx]=levelst[idx]=leveled[idx]=-1;
+    });
 }
 
+/** Compare placement tuples by addLen (third element). */
 struct compare_tuple {
-  __host__ __device__
-  bool operator()(thrust::tuple<int,double,double> lhs, thrust::tuple<int,double,double> rhs)
+  bool operator()(std::tuple<int,double,double> lhs, std::tuple<int,double,double> rhs)
   {
-    return thrust::get<2>(lhs) < thrust::get<2>(rhs);
-    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
+    return std::get<2>(lhs) < std::get<2>(rhs);
   }
 };
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
+/* Tuple: (edge_id, fracLen, addLen). */
 
-/** For each candidate edge, compute fracLen and addLen from lim; output (eid, fracLen, addLen). */
-__global__ void calculateBranchLength(
+/** For each candidate edge, compute (eid, fracLen, addLen) from lim. */
+void calculateBranchLength(
     int num, // should be bd, not numSequences 
     int * head,
     int * nxt,
@@ -168,12 +96,45 @@ __global__ void calculateBranchLength(
     int * e, 
     double * len, 
     int * belong,
-    thrust::tuple<int,double,double> * minPos,
+    std::vector<std::tuple<int,double,double>>& minPos,
     int lim,
     int totSeqNum,
     double * d_lim,
     int * d_dep
 ){
+
+    int blockNum = (totSeqNum*4-4 + 255) / 256;
+    int threadNum = 256;
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, lim), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if (idx>=num*4-4||d_dep[belong[idx]]>d_dep[e[idx]]) {
+            minPos[idx] = {0,0,2};
+        }
+        else {
+            int x=belong[idx],oth=e[idx];
+            int eid=idx,otheid;
+            double dis1=0, dis2=0, val;
+            dis1 = d_lim[eid];
+            otheid=head[oth];
+            while(e[otheid]!=x) assert(otheid!=-1),otheid=nxt[otheid];
+            dis2 = d_lim[otheid];
+            double additional_dis=(dis1+dis2-len[eid])/2;
+            // printf("%d %d %d %lf %lf %lf\n",eid, x,oth,dis1,dis2,additional_dis);
+            if(additional_dis<0) additional_dis=0;
+            dis1-=additional_dis,dis2-=additional_dis;
+            if(dis1<0) dis1=0;
+            if(dis2<0) dis2=0;
+            if(dis1>len[eid]) additional_dis+=dis1-len[eid],dis1=len[eid];
+            if(dis2>len[eid]) additional_dis+=dis2-len[eid],dis2=len[eid];
+            // assert(dis1+dis2-1e-6<=len[eid]);
+            double rest=len[eid]-dis1-dis2;
+            dis1+=rest/2,dis2+=rest/2;
+            minPos[idx]={eid,dis1,additional_dis};
+        }
+    }
+    });
+    /*
     int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
     int idx=tx+bs*bx;
     if(idx>=lim) return;
@@ -202,10 +163,11 @@ __global__ void calculateBranchLength(
     dis1+=rest/2,dis2+=rest/2;
     thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
     minPos[bx*bs+tx]=minTuple;
+    */
 }
 
-/** Insert new leaf on edge eid: split edge, add middle node, attach outside (placeId). Update rev. */
-__global__ void updateTreeStructure(
+/** Insert new leaf on edge eid; split edge, add middle, attach placeId; update rev. */
+void updateTreeStructure(
     int * head,
     int * nxt,
     int * e,
@@ -257,11 +219,11 @@ __global__ void updateTreeStructure(
     }
     dfsrk[middle]=dfsrk[y];
     dfsrk[outside]=dfsrk[middle]+1;
-    dep[middle]=dep[x],     dep[outside]=dep[middle]+1;
+    dep[middle]=dep[x], dep[outside]=dep[middle]+1;
 }
 
-/** Build 3-node tree: nodes 0, 1, and nv=numSequences; two edges of length dis[0]/2. */
-__global__ void buildInitialTree(
+/** Build 3-node tree (0, 1, nv) with two edges of length dis[0]/2. */
+void buildInitialTree(
     int numSequences,
     int * head,
     int * e,
@@ -302,8 +264,8 @@ __global__ void buildInitialTree(
     dfsrk[0]=1, dfsrk[1]=2, dfsrk[nv]=0;
 }
 
-
-__global__ void updateFromBottomToTop(
+/** Propagate lim from children toward root. */
+void updateFromBottomToTop(
     int tot,
     int level,
     int * head,
@@ -318,6 +280,31 @@ __global__ void updateFromBottomToTop(
     int * rev,
     int * dep
 ){
+    int blockNum = (leveled[level]-levelst[level]+1+255)/256;
+    int threadNum = 256;
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, blockNum*threadNum), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        int idx_1 = levelst[level]+idx;
+        if(idx_1 <= leveled[level]) {
+            int idx_2 = bfsorder[idx_1];
+            double mx = 0;
+            if (idx_2 < tot) mx = dist[idx_2];
+            for(int i = head[idx_2]; i!=-1; i=nxt[i]){
+                if(dep[e[i]]>dep[idx_2]){
+                    double req=lim[rev[i]]-len[i];
+                    if(req>mx) mx=req;
+                }
+            }
+            for(int i=head[idx_2]; i!=-1; i=nxt[i]) {
+                if(dep[e[i]]<dep[idx_2])
+                    lim[i]=mx;
+            }   
+        }   
+    }
+    });
+    
+    /*
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int idx=tx+bs*bx;
     idx=levelst[level]+idx;
@@ -334,10 +321,11 @@ __global__ void updateFromBottomToTop(
     for(int i=head[idx];i!=-1;i=nxt[i])
         if(dep[e[i]]<dep[idx])
             lim[i]=mx;
+    */
 }
 
-/** Propagate lim from root toward children: sibling max of (lim - len). */
-__global__ void updateFromTopToBottom(
+/** Propagate lim from root toward children (sibling max). */
+void updateFromTopToBottom(
     int tot,
     int level,
     int * head,
@@ -352,6 +340,32 @@ __global__ void updateFromTopToBottom(
     int * rev,
     int * dep
 ){
+    int blockNum = (leveled[level]-levelst[level]+1+255)/256;
+    int threadNum = 256;
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, blockNum*threadNum), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        int idx_1 = levelst[level] + idx;
+        if (idx_1 <= leveled[level]) {
+            int idx_2 = bfsorder[idx_1];
+            for(int i = head[idx_2]; i!=-1; i=nxt[i]){
+                if(dep[e[i]]>dep[idx_2]){
+                    double mx = 0;
+                    for(int j=head[idx_2]; j!=-1; j=nxt[j]){
+                        if(e[j]!=e[i]){
+                            double req=lim[rev[j]]-len[j];
+                            if(req>mx) mx=req;
+                        }
+                    }
+                    lim[i]=mx;
+                    // printf("%d %lf\n",i,lim[i]);
+                }
+            }
+        }
+    }
+    });
+    
+    /*
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int idx=tx+bs*bx;
     idx=levelst[level]+idx;
@@ -370,10 +384,11 @@ __global__ void updateFromTopToBottom(
             // printf("%d %lf\n",i,lim[i]);
         }
     }
+    */
 }
 
-/** Shift DFS ranks >= dfsrk[ex1] by 2 for nodes in [id, num), excluding ex1/ex2. */
-__global__ void updateDfsRk(
+/** Shift DFS ranks >= dfsrk[ex1] by 2, excluding ex1/ex2 and [id,num). */
+void updateDfsRk(
     int tot,
     int * dfsrk,
     int ex1,
@@ -381,15 +396,28 @@ __global__ void updateDfsRk(
     int id,
     int num
 ){
+    int blockNum = (tot+255)/256;
+    int threadNum = 256;
+
+    tbb::parallel_for(tbb::blocked_range<int>(0, tot), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if(!(idx>id&&idx<num) && !(idx==ex1||idx==ex2)) {
+            if(dfsrk[idx]>=dfsrk[ex1]) dfsrk[idx]+=2;
+        }
+    }
+    });
+
+    /*
     int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
     int idx=tx+bs*bx;
     if(idx>id&&idx<num) return;
     if(idx>=tot||idx==ex1||idx==ex2) return;
     if(dfsrk[idx]>=dfsrk[ex1]) dfsrk[idx]+=2;
+    */
 }
 
 /** Write temp[idx] = dfsrk[idx]-1 for valid insertion-range nodes, else sentinel. */
-__global__ void findEndRk(
+void findEndRk(
     int tot,
     int * dfsrk,
     int * dep,
@@ -398,16 +426,23 @@ __global__ void findEndRk(
     int id,
     int num
 ){
-    int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
-    int idx=tx+bs*bx;
-    if(idx>=tot) return;
+    // int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
+    // int idx=tx+bs*bx;
+    // if(idx>=tot) return;
+    tbb::parallel_for(tbb::blocked_range<int>(0, tot), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if(idx>id&&idx<num) temp[idx]=1000000000;
+        else if(dfsrk[idx]<=dfsrk[ref]+2||dep[idx]>dep[ref]+1) temp[idx]=1000000000;
+        else temp[idx]=dfsrk[idx]-1;
+    }
+    });
     // printf("%d %d %d %d\n",idx,dfsrk[idx],dep[idx],dep[ref]);
-    if(idx>id&&idx<num) temp[idx]=1000000000;
-    else if(dfsrk[idx]<=dfsrk[ref]+2||dep[idx]>dep[ref]+1) temp[idx]=1000000000;
-    else temp[idx]=dfsrk[idx]-1;
+    // if(idx>id&&idx<num) temp[idx]=1000000000;
+    // else if(dfsrk[idx]<=dfsrk[ref]+2||dep[idx]>dep[ref]+1) temp[idx]=1000000000;
+    // else temp[idx]=dfsrk[idx]-1;
 }
 
-__global__ void updateDepth(
+void updateDepth(
     int tot,
     int * dep,
     int * dfsrk,
@@ -417,16 +452,25 @@ __global__ void updateDepth(
     int id,
     int num
 ){
-    int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
-    int idx=tx+bs*bx;
-    if(idx>id&&idx<num) return;
-    if(idx>=tot) return;
-    bfsorder[idx]=idx;
-    if(dfsrk[idx]<=edrk&&dfsrk[idx]>=dfsrk[ref]) dep[idx]++;
+    tbb::parallel_for(tbb::blocked_range<int>(0, tot), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if(!(idx>id&&idx<num)) {
+            bfsorder[idx]=idx;
+            if(dfsrk[idx]<=edrk&&dfsrk[idx]>=dfsrk[ref]) dep[idx]++;
+        }
+    }
+    });
+
+    // int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
+    // int idx=tx+bs*bx;
+    // if(idx>id&&idx<num) return;
+    // if(idx>=tot) return;
+    // bfsorder[idx]=idx;
+    // if(dfsrk[idx]<=edrk&&dfsrk[idx]>=dfsrk[ref]) dep[idx]++;
 }
 
-/** Update levelst[level] and leveled[level] from BFS order and depth. */
-__global__ void updateLevelStEd(
+/** Update levelst/leveled from BFS order and depth. */
+void updateLevelStEd(
     int tot,
     int * bfsorder,
     int * dep,
@@ -435,36 +479,71 @@ __global__ void updateLevelStEd(
     int id,
     int num
 ){
-    int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
-    int idx=tx+bs*bx;
-    if(idx>=id*2+1) return;
+    // int tx=threadIdx.x, bs=blockDim.x, bx=blockIdx.x;
+    // int idx=tx+bs*bx;
+    // if(idx>=id*2+1) return;
+    tbb::parallel_for(tbb::blocked_range<int>(0, id*2+1), [&](tbb::blocked_range<int> range){ 
+    for (int idx = range.begin(); idx < range.end(); ++idx) {
+        if(idx==0||dep[bfsorder[idx-1]]!=dep[bfsorder[idx]]) levelst[dep[bfsorder[idx]]]=idx;
+        if(idx+1==id*2+1||dep[bfsorder[idx+1]]!=dep[bfsorder[idx]]) leveled[dep[bfsorder[idx]]]=idx;
+    }
+    });
     // printf("%d %d %d\n",idx,bfsorder[idx],dep[bfsorder[idx]]);
-    if(idx==0||dep[bfsorder[idx-1]]!=dep[bfsorder[idx]]) levelst[dep[bfsorder[idx]]]=idx;
-    if(idx+1==id*2+1||dep[bfsorder[idx+1]]!=dep[bfsorder[idx]]) leveled[dep[bfsorder[idx]]]=idx;
+    // if(idx==0||dep[bfsorder[idx-1]]!=dep[bfsorder[idx]]) levelst[dep[bfsorder[idx]]]=idx;
+    // if(idx+1==id*2+1||dep[bfsorder[idx+1]]!=dep[bfsorder[idx]]) leveled[dep[bfsorder[idx]]]=idx;
 }
+
 
 void MashPlacement::PlacementDeviceArrays::deallocateDeviceArrays(){
-    cudaFree(d_head);
-    cudaFree(d_e);
-    cudaFree(d_nxt);
-    cudaFree(d_belong);
-    cudaFree(d_bfsorder);
-    cudaFree(d_dfsorder);
-    cudaFree(d_dep);
-    cudaFree(d_dist);
-    cudaFree(d_len);
-    cudaFree(d_lim);
-    cudaFree(d_dfsrk);
-    cudaFree(d_levelst);
-    cudaFree(d_leveled);
+    delete [] d_head;
+    delete [] d_e;
+    delete [] d_nxt;
+    delete [] d_belong;
+    delete [] d_bfsorder;
+    delete [] d_dfsorder;
+    delete [] d_dep;
+    delete [] d_dist;
+    delete [] d_len;
+    delete [] d_lim;
+    delete [] d_dfsrk;
+    delete [] d_levelst;
+    delete [] d_leveled;
 }
 
-/** Copy tree arrays to host and emit Newick via recursive DFS over adjacency. */
+
 void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_){
     int * h_head = new int[numSequences*2];
     int * h_e = new int[numSequences*8];
     int * h_nxt = new int[numSequences*8];
     double * h_len = new double[numSequences*8];
+    std::function<void(int,int)>  print=[&](int node, int from){
+        if(h_nxt[h_head[node]]!=-1){
+            output_ << "(";
+            // printf("(");
+
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print(h_e[pos[i]],node);
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
+            }
+        }
+        // else std::cout<<name[node];
+        else output_ << name[node];
+    };
+    for (int i = 0; i < numSequences*2; i++) h_head[i] = d_head[i];
+    for (int i = 0; i < numSequences*8; i++) {
+        h_e[i] = d_e[i];
+        h_nxt[i] = d_nxt[i];
+        h_len[i] = d_len[i];
+    }
+    
+    /*
     auto err = cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
     {
@@ -489,9 +568,10 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
         fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
         exit(1);
     }
-    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
-                                 g_printBinaryNewick);
-    output_ << ";\n";
+    */
+    print(numSequences+bd-2,-1);
+    // std::cout<<";\n";
+    output_<<";\n";
 }
 
 /** Exact placement loop: init, build initial tree, then for each taxon compute distances,
@@ -505,9 +585,12 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     if(params.in == "d"){
         matrixReader.distConstructionOnGpu(params, 0, d_dist);
     }
-
-    int threadNum = 1024, blockNum = 1024;
-    initialize <<<blockNum, threadNum>>> (
+    
+    /*
+    Initialize closest nodes by inifinite
+    */
+    int threadNum = 256, blockNum = (numSequences*4-4+threadNum-1)/threadNum;
+    initialize (
         numSequences*4-4,
         numSequences*2-1,
         d_head,
@@ -543,11 +626,12 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             d_dist
         );
     }
+    std::cout << "Distance Matrix\n";
     // double * h_dis = new double[numSequences];
     // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
     // fprintf(stderr, "%d\n",1);
     // for(int j=0;j<1;j++) fprintf(stderr,"%.8lf ",h_dis[j]);std::cerr<<'\n';
-    buildInitialTree <<<1,1>>> (
+    buildInitialTree (
         numSequences,
         d_head,
         d_e,
@@ -564,23 +648,26 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         d_leveled,
         d_rev
     );
+    std::cout << "Built Initial Tree\n";
     idx += 4;
     // cudaDeviceSynchronize();
     // std::cerr<<"FFFF\n";
-    thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
+    std::vector <std::tuple<int,double,double>> minPos(numSequences*4-4);
+    // thrust::device_vector <thrust::tuple<int,double,double>> minPos(numSequences*4-4);
     std::chrono::nanoseconds disTime(0), treeTime(0);
     int *id_maxdep=new int[1], *maxdep=new int[1];
     int *levelst=new int[numSequences], *leveled=new int[numSequences];
     int * d_temp;
-    auto err = cudaMalloc(&d_temp, numSequences*2*sizeof(int));
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
-        exit(1);
-    }
+    d_temp = new int [numSequences*2];
+    // auto err = cudaMalloc(&d_temp, numSequences*2*sizeof(int));
+    // if (err != cudaSuccess)
+    // {
+    //     fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
+    //     exit(1);
+    // }
     for(int i=bd;i<numSequences;i++){
         auto disStart = std::chrono::high_resolution_clock::now();
-
+        blockNum = (i + 255) / 256;
         if(params.in == "r"){
             mashDeviceArrays.distConstructionOnGpu(
                 params,
@@ -611,18 +698,27 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
 
         auto disEnd = std::chrono::high_resolution_clock::now();
         auto treeStart = std::chrono::high_resolution_clock::now();
-
-        cudaMemcpy(id_maxdep, d_bfsorder+i*2-2, sizeof(int), cudaMemcpyDeviceToHost);
+        /*
+        Calculate Lim from bottom to top, then from top to bottom
+        */
+        id_maxdep[0] = d_bfsorder[i*2-2];
+        // cudaMemcpy(id_maxdep, d_bfsorder+i*2-2, sizeof(int), cudaMemcpyDeviceToHost);
         int id=*id_maxdep;
-        cudaMemcpy(maxdep, d_dep+id,sizeof(int),cudaMemcpyDeviceToHost);
+        maxdep[0] = d_dep[id];
+        // cudaMemcpy(maxdep, d_dep+id,sizeof(int),cudaMemcpyDeviceToHost);
+        
         int mx=*maxdep;
         // std::cerr<<"-------"<<mx<<'\n';
-        cudaMemcpy(levelst, d_levelst, sizeof(int)*(mx+1), cudaMemcpyDeviceToHost);
-        cudaMemcpy(leveled, d_leveled, sizeof(int)*(mx+1), cudaMemcpyDeviceToHost);
+        for (int x = 0; x < mx+1; ++x) {
+            levelst[x] = d_levelst[x];
+            leveled[x] = d_leveled[x];
+        }
+        // cudaMemcpy(levelst, d_levelst, sizeof(int)*(mx+1), cudaMemcpyDeviceToHost);
+        // cudaMemcpy(leveled, d_leveled, sizeof(int)*(mx+1), cudaMemcpyDeviceToHost);
         for(int j=mx;j>=0;j--){
             // std::cerr<<j<<" "<<levelst[j]<<" "<<leveled[j]<<'\n';
             blockNum = (leveled[j]-levelst[j]+1+255)/256;
-            updateFromBottomToTop <<<blockNum, threadNum>>> (
+            updateFromBottomToTop (
                 numSequences,
                 j,
                 d_head,
@@ -640,7 +736,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         }
         for(int j=0;j<=mx;j++){
             blockNum = (leveled[j]-levelst[j]+1+255)/256;
-            updateFromTopToBottom <<<blockNum, threadNum>>> (
+            updateFromTopToBottom (
                 numSequences,
                 j,
                 d_head,
@@ -657,7 +753,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             );
         }
         blockNum = (numSequences*4-4 + 255) / 256;
-        calculateBranchLength <<<blockNum,threadNum>>> (
+        calculateBranchLength (
             i,
             d_head,
             d_nxt,
@@ -665,19 +761,21 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
             d_e,
             d_len,
             d_belong,
-            thrust::raw_pointer_cast(minPos.data()),
+            minPos,
             numSequences*4-4,
             numSequences,
             d_lim,
             d_dep
         );
-        auto iter=thrust::min_element(minPos.begin(),minPos.end(),compare_tuple());
-        thrust::tuple<int,double,double> smallest=*iter;
-
-        int eid=thrust::get<0>(smallest);
-        double fracLen=thrust::get<1>(smallest),addLen=thrust::get<2>(smallest);
+        auto iter=std::min_element(minPos.begin(),minPos.end(),compare_tuple());
+        std::tuple<int,double,double> smallest=*iter;
+        /*
+        Update Tree
+        */
+        int eid=std::get<0>(smallest);
+        double fracLen=std::get<1>(smallest),addLen=std::get<2>(smallest);
         // std::cerr<<eid<<" "<<fracLen<<" "<<addLen<<'\n';
-        updateTreeStructure <<<1,1>>>(
+        updateTreeStructure (
             d_head,
             d_nxt,
             d_e,
@@ -695,11 +793,13 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         idx+=4;
 
-        /* Update DFS rank (exclude new nodes), then depth, BFS order, levelst/leveled. */
+        /*
+        Update DFS order and DFS rank, new nodes excluded
+        */
         // cudaMemcpy(levelst, d_dfsrk, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
         blockNum = (numSequences+i+255)/256;
-        updateDfsRk <<<blockNum,threadNum>>>(
+        updateDfsRk (
             numSequences+i,
             d_dfsrk,
             numSequences+i-1,
@@ -714,7 +814,7 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         /*
         Update depth based on DFS order, new nodes included
         */
-        findEndRk <<<blockNum, threadNum>>>(
+        findEndRk (
             numSequences+i,
             d_dfsrk,
             d_dep,
@@ -725,12 +825,12 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         // cudaMemcpy(levelst, d_temp, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
-        int small = thrust::reduce(thrust::device, d_temp,d_temp+numSequences+i,numSequences+i-1, thrust::minimum<int>());
+        // int small = thrust::reduce(thrust::device, d_temp,d_temp+numSequences+i,numSequences+i-1, thrust::minimum<int>());
+        int small = *std::min_element(d_temp, d_temp + numSequences + i);
         // std::cerr<<small<<'\n';
         // cudaMemcpy(levelst, d_dep, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
-        /* Update depth from DFS range, then BFS order and levelst/leveled. */
-        updateDepth <<<blockNum, threadNum>>>(
+        updateDepth (
             numSequences+i,
             d_dep,
             d_dfsrk,
@@ -742,15 +842,28 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
         );
         // cudaMemcpy(levelst, d_dep, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
-        thrust::copy(thrust::device, d_dep, d_dep+numSequences+i, d_temp);
-        thrust::stable_sort_by_key(thrust::device, d_temp, d_temp+numSequences+i, d_bfsorder);
+        /*
+        Update BFS order based on depth
+        */
+        std::copy(d_dep, d_dep + numSequences + i, d_temp);
+        std::vector<std::pair<int, int>> key_value_pairs(numSequences + i);
+        for (int j = 0; j < numSequences + i; ++j) key_value_pairs[j] = {d_temp[j], d_bfsorder[j]};
+        std::stable_sort(key_value_pairs.begin(), key_value_pairs.end(), [](const auto& a, const auto& b) {
+            return a.first < b.first;
+        });
+        for (int j = 0; j < numSequences + i; ++j) {
+            d_temp[j] = key_value_pairs[j].first;
+            d_bfsorder[j] = key_value_pairs[j].second;
+        }
+        // thrust::copy(thrust::device, d_dep, d_dep+numSequences+i, d_temp);
+        // thrust::stable_sort_by_key(thrust::device, d_temp, d_temp+numSequences+i, d_bfsorder);
         /*
         Update level st/ed
         */
         // std::cerr<<"#########\n";
         // cudaMemcpy(levelst, d_bfsorder, (numSequences+i)*sizeof(int), cudaMemcpyDeviceToHost);
         // for(int j=0;j<numSequences+i;j++) std::cerr<<levelst[j]<<' ';std::cerr<<'\n';
-        updateLevelStEd <<<blockNum, threadNum>>>(
+        updateLevelStEd (
             numSequences+i,
             d_bfsorder,
             d_dep,
@@ -766,5 +879,4 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     }
     std::cerr << "Distance Operation Time " <<  disTime.count()/1000000 << " ms\n";
     std::cerr << "Tree Operation Time " <<  treeTime.count()/1000000 << " ms\n";
-}
 }
