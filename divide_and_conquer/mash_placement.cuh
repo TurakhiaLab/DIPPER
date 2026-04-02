@@ -1,3 +1,12 @@
+/**
+ * divide_and_conquer/mash_placement.cuh
+ *
+ * Declarations for divide-and-conquer mode: Param, MashDeviceArraysDC,
+ * MSADeviceArraysDC, MatrixReader, PlacementDeviceArrays, KPlacementDeviceArraysHostDC,
+ * NJDeviceArrays, KPlacementDeviceArraysDC. Used by placement_close_k.cu for
+ * backbone construction, clustering, and per-cluster tree building.
+ */
+
 #ifndef MASHDC_CUH
 #define MASHDC_CUH
 
@@ -8,9 +17,6 @@
 #include <vector>
 #include <cstdio>
 #include <string>
-
-// typedef uint64_t hash_t;
-
 
 namespace MashPlacement
 {
@@ -33,7 +39,7 @@ namespace MashPlacement
             in = t_in, out = t_out; 
         };
     };
-    
+
     struct MashDeviceArraysDC{
         uint64_t * d_compressedSeqs;
         uint64_t * d_prefixCompressed;
@@ -70,7 +76,6 @@ namespace MashPlacement
     };
     static MashDeviceArraysDC mashDeviceArraysDC;
 
-
     struct MSADeviceArraysDC{
         uint64_t * d_compressedSeqsBackBone;
         uint64_t * d_compressedSeqsConst;
@@ -93,7 +98,6 @@ namespace MashPlacement
     };
     static MSADeviceArraysDC msaDeviceArraysDC;
 
-
     struct MatrixReader{
         int numSequences;
         double * h_dist;
@@ -104,7 +108,6 @@ namespace MashPlacement
         void distConstructionOnGpu(Param& params, int rowId, double* d_dist);
     };
     static MatrixReader matrixReader;
-
 
     struct PlacementDeviceArrays{
         int idx, bd;

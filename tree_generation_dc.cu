@@ -104,6 +104,12 @@ void parseArguments(int argc, char** argv)
         ("shuffle,S",       po::value<std::string>(),
         "Shuffle input sequences")
 
+        ("cluster-archieve,C",       po::value<std::string>(),
+        "Cluster archieve directory path")
+
+        ("rename,R",       
+        "Cluster archieve directory path")
+
         ("help,h",
         "Print this help message")
         
@@ -327,6 +333,15 @@ bool append_to_gzip_without_open_close(gzFile gz, const std::string &gzip_path, 
 
 }
 
+bool read_line_local(gzFile file, std::string& line, int maxLength) {
+    char buffer[maxLength];
+    if (gzgets(file, buffer, maxLength) == Z_NULL) {
+        return false;
+    }
+    line = buffer;
+    if (!line.empty() && line.back() == '\n') line.pop_back();
+    return true;
+}
 
 int main(int argc, char** argv) {
     auto inputStart = std::chrono::high_resolution_clock::now();
@@ -440,6 +455,13 @@ int main(int argc, char** argv) {
     bool shuffle = false;
     if (vm.count("shuffle")) shuffle = true;
 
+    bool rename = false;
+    if (vm.count("rename")) rename = true;
+
+    std::string inClusterArchieve = "";
+    try {inClusterArchieve = vm["cluster-archieve"].as<std::string>();}
+    catch(std::exception &e){}
+
     std::string treeFile = "";
     try {treeFile = vm["input-tree"].as<std::string>();}
     catch(std::exception &e){}
@@ -453,9 +475,29 @@ int main(int argc, char** argv) {
 
     int placement_thr = 30000; 
     int dc_thr = 1000000; 
-    bool optimized = true;
+    bool optimized = false;
+    bool merge_cluster = true;
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+
+    if (rename) {
+        // Load the tree from the file
+        std::ifstream treeFileStream(treeFile);
+        if (!treeFileStream) {
+            std::cerr << "ERROR: Unable to open input tree file: " << treeFile << "\n";
+            return 1;
+        }
+
+        std::string newickTree;
+        std::getline(treeFileStream, newickTree);
+        Tree *t = new Tree(newickTree);
+        std::cerr << "Tree loaded successfully with "<< t->allNodes.size()<<" nodes and root " << t->root->name << ".\n";
+
+        t->updateNewick();
+        std::string out=t->getNewickString(t->root);
+        return;
+
+    }
 
     if (shuffle) {
         std::cerr << "Shuffling input sequences" << std::endl;
@@ -587,7 +629,11 @@ int main(int argc, char** argv) {
         kseq_t* kseq_rd = kseq_init(f_rd);
 
         int totalSequences = 0;
-        while (kseq_read(kseq_rd) >= 0) totalSequences++;
+        std::unordered_map<std::string, int> globalNameToIdx;
+        while (kseq_read(kseq_rd) >= 0) {
+            globalNameToIdx[std::string(kseq_rd->name.s, kseq_rd->name.l)] = totalSequences;
+            totalSequences++;
+        }
         kseq_destroy(kseq_rd);
         gzclose(f_rd);
 
@@ -599,12 +645,15 @@ int main(int argc, char** argv) {
         globalNames.resize(totalSequences);
         int got = read_next_batch(batchReader, batchsize, seqs, names);
         size_t numSequences = seqs.size();
+
+        
         
         // Compress Sequences (2-bit compressor)
         auto compressStart = std::chrono::high_resolution_clock::now();
         
         uint64_t ** fourBitCompressedSeqs = new uint64_t*[numSequences];
         uint64_t * seqLengths = new uint64_t[numSequences];
+        size_t maxLengthCompressed = 0;
 
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
@@ -659,16 +708,8 @@ int main(int argc, char** argv) {
             std::cerr << "Backbone tree created in: " <<  createTreeTime.count()/1000000 << " ms" << std::endl;
         }});
 
-        // prepare directory and files
-        int clusterPerBatchFile = 1000;
-        int clusterFiles = (batchsize*4-4)/clusterPerBatchFile + ((batchsize*4-4)%clusterPerBatchFile!=0);
-        auto dir = make_temp_dir_mkdtemp();
-        std::cerr << "Created temporary directory: " << dir << std::endl;
-        for (int i=0; i<clusterFiles; i++){
-            std::string filename = dir + "/" + std::to_string(i) + ".gz";
-            std::ofstream ofs(filename, std::ios::binary);
-            ofs.close();
-        }
+        maxLengthCompressed=(seqLengths[0]+15)/16;
+
         
         /* Delete pointers */
         for (uint64_t i=0; i<numSequences; i++){
@@ -681,7 +722,64 @@ int main(int argc, char** argv) {
         int clusteringSeqIdx = 0; // seq idx within the batch
         int numClusteres = totalNumSequences/backboneSize + (totalNumSequences%backboneSize!=0);
         MashPlacement::kplacementDeviceArraysHostDC.clusterID = new int[totalNumSequences];
+        
+        if(merge_cluster){
+            cudaSetDevice(1);
+            std::vector<bool> isCluster(backboneSize*4-4, false);
+
+            /* iterate over all files in the archieve */
+            int test_var = 0;
+            int actual_placement = 0;
+            int clustersPerBatchFile = 1000;
+            int clusterFiles = (numSequences*4-4)/clustersPerBatchFile + ((numSequences*4-4)%clustersPerBatchFile != 0);
+            for (int bc=0; bc<clusterFiles;bc++){
+                std::string file = inClusterArchieve + "/" + std::to_string(bc) + ".gz";
+                /* if file exist */
+                gzFile gzfile = gzopen(file.c_str(), "rb");
+                if (gzfile != Z_NULL){
+                    uint64_t counter=0;
+                    std::string line;
+                    std::string name, id, cluster;
+                    while (read_line_local(gzfile, line, maxLengthCompressed)) {
+                        if (line.empty() || line[0] != '>') continue;
+
+                        std::istringstream ss(line.substr(1));
+                        std::getline(ss, name, '\t');
+                        std::getline(ss, cluster, '\t');
+                        std::getline(ss, id, '\t');
+                        MashPlacement::kplacementDeviceArraysHostDC.clusterID[globalNameToIdx[name]] = std::stoi(cluster);
+                        if (std::stoi(cluster) < 0 or std::stoi(cluster) > backboneSize*4-4){
+                            std::cerr << "Error in cluster archieve file: " << file << " for " << name << "\t" << cluster << std::endl;
+                        }
+                        isCluster[std::stoi(cluster)] = true;
+                        counter++;
+                    }
+                }
+                gzclose(gzfile);
+            }
+            kplacementDeviceArraysDCs[1].findClusterTreeDC_batch(params, 
+                                                                MashPlacement::mashDeviceArraysDC, 
+                                                                MashPlacement::matrixReader, 
+                                                                msaDeviceArraysDCs[1], 
+                                                                MashPlacement::kplacementDeviceArraysHostDC, 
+                                                                inClusterArchieve, 
+                                                                isCluster);
+            return;
+        }
+        
         std::cerr << "Total clusters to be processed: " << numClusteres << std::endl;
+        
+
+        // prepare directory and files
+        int clusterPerBatchFile = 1000;
+        int clusterFiles = (batchsize*4-4)/clusterPerBatchFile + ((batchsize*4-4)%clusterPerBatchFile!=0);
+        auto dir = make_temp_dir_mkdtemp();
+        std::cerr << "Created temporary directory: " << dir << std::endl;
+        for (int i=0; i<clusterFiles; i++){
+            std::string filename = dir + "/" + std::to_string(i) + ".gz";
+            std::ofstream ofs(filename, std::ios::binary);
+            ofs.close();
+        }
 
         int cpuBatchCount = 6;
 
@@ -767,6 +865,7 @@ int main(int argc, char** argv) {
                         isCluster[cluster] = true;
                         tmp_totalSeq_write++;
                         std::string header = ">"+names[f]+"\t"
+                                                +std::to_string(cluster)+"\t"
                                                 +std::to_string(globalSeqIdx+f)+ "\n";
                         append_to_gzip_without_open_close(gz, filename, header.c_str(), header.size());
                         size_t byteCount = static_cast<size_t>(fourBitCompressedSize) * sizeof(uint64_t);
@@ -807,6 +906,7 @@ int main(int argc, char** argv) {
         delete[] fourBitCompressedSeqsCluster;
         delete[] seqLengthsCluster;
         close_gz_fasta_reader(batchReader);
+    
 
         auto seqReadStartG = std::chrono::high_resolution_clock::now();
         cudaSetDevice(1);
@@ -817,13 +917,7 @@ int main(int argc, char** argv) {
                                                             MashPlacement::kplacementDeviceArraysHostDC, 
                                                             dir, 
                                                             isCluster);
-        //MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC_batch(params, 
-                                                                        // MashPlacement::mashDeviceArraysDC, 
-                                                                        // MashPlacement::matrixReader, 
-                                                                        // MashPlacement::msaDeviceArraysDC, 
-                                                                        // MashPlacement::kplacementDeviceArraysHostDC, 
-                                                                        // dir,
-                                                                        // isCluster);
+        
         auto seqReadEndG = std::chrono::high_resolution_clock::now();
         std::chrono::nanoseconds seqReadTimeG = seqReadEndG - seqReadStartG;
         std::cerr << "Restricted placedment done in: " <<  seqReadTimeG.count() << " ns" << std::endl;
@@ -831,23 +925,19 @@ int main(int argc, char** argv) {
         kplacementDeviceArraysDCs[1].printTreeDC(globalNames, output_);
         msaDeviceArraysDCs[1].deallocateDeviceArraysDC();
         kplacementDeviceArraysDCs[1].deallocateDeviceArraysDC();
-        // MashPlacement::kplacementDeviceArraysDC.printTreeDC(globalNames, output_);
-        // MashPlacement::msaDeviceArraysDC.deallocateDeviceArraysDC();
-        // MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
 
-        std::cerr << "Removing files" << std::endl;
-        std::error_code ec;
-        bool removed = std::filesystem::remove_all(dir, ec);
-        if (!ec && removed) {
-            std::cerr << "Removed: " << dir << "\n";
-        } else if (ec) {
-            std::cerr << "Failed to remove " << dir << ": " << ec.message() << "\n";
-            return 1;
-        } else {
-            std::cerr << dir << " did not exist or was not removable (maybe not empty)\n";
-        }
-        
-        
+        // std::cerr << "Removing files" << std::endl;
+        // std::error_code ec;
+        // bool removed = std::filesystem::remove_all(dir, ec);
+        // if (!ec && removed) {
+        //     std::cerr << "Removed: " << dir << "\n";
+        // } else if (ec) {
+        //     std::cerr << "Failed to remove " << dir << ": " << ec.message() << "\n";
+        //     return 1;
+        // } else {
+        //     std::cerr << dir << " did not exist or was not removable (maybe not empty)\n";
+        // }
+        return 0;
     } else if (in == "m" && out == "t"){
         std::vector<std::string> seqs,names_, names;
 
@@ -857,8 +947,8 @@ int main(int argc, char** argv) {
         names.resize(numSequences);
         std::vector<int> ids(numSequences);
         for(int i=0;i<numSequences;i++) ids[i]=i;
-        // std::mt19937 rnd(time(NULL));
-        // std::shuffle(ids.begin(),ids.end(),rnd);
+        std::mt19937 rnd(time(NULL));
+        std::shuffle(ids.begin(),ids.end(),rnd);
 
     
         // Compress Sequences (2-bit compressor)
@@ -890,8 +980,9 @@ int main(int argc, char** argv) {
         // fprintf(stdout, "\nAllocating Gpu device arrays.\n");
         // std::cerr<<"########\n";
         // std::cerr<<"########\n";
-        MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
+        
         if(algo=="1"||algo=="0"&&numSequences>=placement_thr&&numSequences<dc_thr){
+            MashPlacement::msaDeviceArrays.allocateDeviceArrays(fourBitCompressedSeqs, seqLengths, numSequences, params);
             std::cerr<<"Using ";
             if(placemode=="-1"){
                 std::cerr<<" exact placement mode\n";
@@ -952,7 +1043,7 @@ int main(int argc, char** argv) {
             auto createTreeStart = std::chrono::high_resolution_clock::now();
             MashPlacement::kplacementDeviceArraysDC.findBackboneTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
             MashPlacement::kplacementDeviceArraysDC.findClustersDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDCRecursive(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
 
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart; 
@@ -1084,7 +1175,7 @@ int main(int argc, char** argv) {
             auto createTreeEnd = std::chrono::high_resolution_clock::now();
             std::chrono::nanoseconds createTreeTime = createTreeEnd - createTreeStart;
 
-            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDC(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
+            MashPlacement::kplacementDeviceArraysDC.findClusterTreeDCRecursive(params, MashPlacement::mashDeviceArraysDC, MashPlacement::matrixReader, MashPlacement::msaDeviceArraysDC, MashPlacement::kplacementDeviceArraysHostDC);
             MashPlacement::kplacementDeviceArraysDC.printTreeDC(names, output_);
             MashPlacement::kplacementDeviceArraysDC.deallocateDeviceArraysDC();
             MashPlacement::mashDeviceArraysDC.deallocateDeviceArraysDC();

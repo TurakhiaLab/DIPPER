@@ -1,3 +1,13 @@
+/**
+ * mash_placement.cu
+ *
+ * MASH sketch construction on GPU and k-closest placement. Allocates device arrays for
+ * 2-bit compressed sequences, hash lists, prefix sums; builds MinHash sketches via
+ * MurmurHash3; computes MASH distances; maintains k-closest backbone nodes per edge
+ * and runs placement (build tree or add query onto backbone). Also holds 
+ * DeviceArrays / findPlacementTree k-closest logic.
+ */
+
 #ifndef MASHPL_CUH
 #include "mash_placement.cuh"
 #endif
@@ -13,10 +23,7 @@
 #include <iostream>
 #include <cub/cub.cuh>
 
-/* Note: d_aggseqLengths is the aggregated compressed length of original string (h_seqLengths)
-Ex: ["dog", "mouse", "cat"] 
-h_seqLengths -> [3, 5, 3] 
-d_aggseqLengths -> [1, 2, 3] */
+/* d_aggseqLengths = prefix sum of compressed lengths, e.g. [3,5,3] -> [1,2,3]. */
 void MashPlacement::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedSeqs, uint64_t * h_seqLengths, size_t num, Param& params)
 {
     cudaError_t err;
@@ -40,7 +47,6 @@ void MashPlacement::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedS
         exit(1);
     }
 
-    /* Flatten data */
     uint64_t * h_aggseqLengths = new uint64_t[numSequences];
     uint64_t flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+31)/32;
@@ -111,7 +117,6 @@ void MashPlacement::DeviceArrays::allocateDeviceArrays(uint64_t ** h_compressedS
         exit(1);
     }
 
-    // generate prefix array    
     thrust::device_ptr<uint64_t> dev_seqLengths(d_seqLengths);
     thrust::device_ptr<uint64_t> dev_prefixComp(d_prefixCompressed);
 
@@ -200,6 +205,7 @@ __device__ uint64_t getblock64 ( const uint64_t * p, int i )
     return p[i];
 }
 
+/** MurmurHash3 64-bit mix (fmix). */
 __device__ uint64_t fmix64 ( uint64_t k )
 {
     k ^= k >> 33;
@@ -211,7 +217,7 @@ __device__ uint64_t fmix64 ( uint64_t k )
     return k;
 }
 
-// First hashing function using raw sequence
+/** MurmurHash3 x64 128-bit on raw k-mer; used for MASH MinHash. */
 __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
                            const uint32_t seed, void * out)
 {
@@ -292,6 +298,7 @@ __device__ void MurmurHash3_x64_128_MASH ( void * key, const int len,
 }
 
 
+/** Decode 2-bit compressed k-mer into forward and reverse complement char arrays. */
 __device__ void decompress(uint64_t compressedSeq, uint64_t kmerSize, char * decompressedSeq_fwd, char * decompressedSeq_rev) {
     static const char lookupTable[4] = {'A', 'C', 'G', 'T'};
     for (int i = kmerSize - 1; i >= 0; i--) {
@@ -301,6 +308,7 @@ __device__ void decompress(uint64_t compressedSeq, uint64_t kmerSize, char * dec
     }
 }
 
+/** Lexicographic compare of forward vs reverse k-mer; used to pick canonical form. */
 __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kmerSize) {
     for (int i = 0; i < kmerSize; i++) {
         if (kmer_fwd[i] < kmer_rev[i]) {
@@ -313,6 +321,8 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     return 0;
 }
 
+/** Build MinHash sketch per sequence: slide over 2-bit compressed seq, canonical k-mer ->
+ * MurmurHash3, block radix sort, keep top sketchSize hashes per sequence. */
 __global__ void sketchConstruction(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,
@@ -424,7 +434,7 @@ __global__ void sketchConstruction(
 
 }
 
-
+/** Launch sketchConstruction for all sequences (single block per sequence in current impl). */
 void MashPlacement::sketchConstructionOnGpu
 (
     uint64_t * d_compressedSeqs,
@@ -504,6 +514,7 @@ void MashPlacement::sketchConstructionOnGpu
 //     d_mashDist[idx] = mashDist;
 // }
 
+/** Compute MASH distances from row rowId to rows 0..rowId-1 using Jaccard via sketch overlap. */
 __global__ void mashDistConstruction(
     int rowId,
     uint64_t * d_hashList,
@@ -593,6 +604,7 @@ void MashPlacement::DeviceArrays::printMashDist(uint64_t h_numSequences, std::ve
 }
 
 
+/** Reset adjacency and closest_id/closest_dis to sentinels. */
 __global__ void initialize(
     int lim,
     int nodes,
@@ -618,21 +630,16 @@ __global__ void initialize(
     if(idx<nodes) head[idx] = -1;
 }
 
+/** Compare placement tuples by addLen (third element). */
 struct compare_tuple
 {
   __host__ __device__
   bool operator()(thrust::tuple<int,double,double> lhs, thrust::tuple<int,double,double> rhs)
   {
     return thrust::get<2>(lhs) < thrust::get<2>(rhs);
-    //Always find the tuple whose third value (the criteria we want to minimize) is minimized
   }
 };
-/*
-Three variables in tuple:
-ID of branch in linked list,
-distance to new node inserted on branch from starting vertex (belong[id]),
-distance from new node inserted on branch to new node inserted outside branch
-*/
+/* Tuple: (edge_id, fracLen, addLen). */
 
 __global__ void calculateBranchLength(
     int num, // should be bd, not numSequences 
@@ -685,6 +692,7 @@ __global__ void calculateBranchLength(
     minPos[bx*bs+tx]=minTuple;
 }
 
+/** BFS from x: update closest_id/closest_dis per edge when improving. */
 __global__ void updateClosestNodes(
     int * head,
     int * nxt,
@@ -722,6 +730,7 @@ __global__ void updateClosestNodes(
     }
 }
 
+/** Insert new leaf on edge eid; update closest_id/closest_dis for new edges. */
 __global__ void updateTreeStructure(
     int * head,
     int * nxt,
@@ -733,8 +742,8 @@ __global__ void updateTreeStructure(
     int eid,
     double fracLen,
     double addLen,
-    int placeId, // Id of the newly placed node
-    int edgeCount, // Position to insert a new edge in linked list
+    int placeId,
+    int edgeCount,
     int numSequences
 ){
     int middle=placeId+numSequences-1, outside=placeId;
@@ -806,6 +815,7 @@ __global__ void updateTreeStructure(
     edgeCount++;
 }
 
+/** Build 3-node tree (0, 1, nv) with two edges of length dis[0]/2. */
 __global__ void buildInitialTree(
     int numSequences,
     int * head,
@@ -832,6 +842,7 @@ __global__ void buildInitialTree(
     edgeCount++;
 }
 
+/** Transpose hash list from [seq][sketch] to [sketch][seq] for distance kernel. */
 __global__ void rearrangeHashList(
     int numSequences,
     int sketchSize,
@@ -847,12 +858,12 @@ __global__ void rearrangeHashList(
     }
 }
 
-
-
+/** K-closest placement: rearrange hashes, init, build initial tree, updateClosestNodes;
+ * then for each new taxon: MASH dist -> calculateBranchLength -> updateTree -> updateClosestNodes. */
 void MashPlacement::findPlacementTree(
     int numSequences,
-    int bd, // id to place
-    int idx, // id of linked-list position
+    int bd,
+    int idx,
     double * d_dist,
     int * d_head,
     int * d_e,
