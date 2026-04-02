@@ -7,17 +7,15 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
 #include <iostream>
-#include <string>
-#include <vector>
 #include <queue>
 #include <set>
 #include <stack>
 #include <string>
 #include <unordered_map>
-#include <cstdint>
-#include <algorithm>
-#include <bits/stdc++.h>
+#include <vector>
 
 
 class Node 

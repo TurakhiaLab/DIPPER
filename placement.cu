@@ -767,4 +767,3 @@ void MashPlacement::PlacementDeviceArrays::findPlacementTree(
     std::cerr << "Distance Operation Time " <<  disTime.count()/1000000 << " ms\n";
     std::cerr << "Tree Operation Time " <<  treeTime.count()/1000000 << " ms\n";
 }
-}
