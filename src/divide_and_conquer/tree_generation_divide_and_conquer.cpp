@@ -1,8 +1,12 @@
-#include <iostream>
-#include <fstream>
-#include <string>
+#include <algorithm>
 #include <chrono>
-#include <bits/stdc++.h>
+#include <cstdint>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <random>
+#include <string>
+#include <vector>
 #include <boost/program_options.hpp> 
 #include "../../src/kseq.h"
 #include "zlib.h"

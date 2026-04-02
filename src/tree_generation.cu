@@ -7,12 +7,19 @@
  * Orchestrates sequence I/O, compression, GPU sketch construction, and tree building.
  */
 
-#include <iostream>
-#include <sstream>
-#include <fstream>
-#include <string>
+#include <cassert>
 #include <chrono>
-#include <bits/stdc++.h>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <random>
+#include <set>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 #include <boost/program_options.hpp> 
 #include "../src/kseq.h"
 #include "zlib.h"

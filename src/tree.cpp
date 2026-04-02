@@ -6,6 +6,7 @@
  */
 
 #include "tree.hpp"
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <map>

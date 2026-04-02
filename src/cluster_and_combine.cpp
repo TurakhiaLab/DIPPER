@@ -1,4 +1,14 @@
-#include <bits/stdc++.h>
+#include <algorithm>
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <iostream>
+#include <random>
+#include <string>
+#include <utility>
+#include <vector>
+
 using namespace std;
 const int N=16000;
 double dis[N+5][N+5];
