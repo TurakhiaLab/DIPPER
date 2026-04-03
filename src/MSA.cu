@@ -32,7 +32,7 @@ void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compress
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    // std::cerr<<"????????\n";
+
     /* Flatten data */
     uint64_t flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) flatStringLength+= params.isProtein ? (h_seqLengths[i]+7)/8 : (h_seqLengths[i]+15)/16;
@@ -50,7 +50,7 @@ void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compress
         h_flattenCompressSeqs += flatStringLengthLocal;
     }
     h_flattenCompressSeqs -= flatStringLength;
-    // std::cerr<<"?????????\n";
+
 
     err = cudaMalloc(&d_compressedSeqs, 1ll*flatStringLength*sizeof(uint64_t));
     if (err != cudaSuccess)
@@ -505,7 +505,6 @@ __global__ void MSADistConstruction(
 /** Launch MSADistConstruction for row rowId; threadNum 1024 used internally for distance logic. */
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const {
     int threadNum = 1024, blockNum = 1024;
-    // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
     MSADistConstruction <<<blockNum, threadNum>>> (
         rowId, 
         d_compressedSeqs, 

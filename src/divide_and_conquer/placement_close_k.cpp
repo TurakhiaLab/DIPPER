@@ -611,7 +611,7 @@ void MashPlacement::KPlacementDeviceArraysHostDC::printTreeCpuDC(std::vector <st
     };
     
     print(totalNumSequences+bd-2,-1, print);
-    std::cout<<";\n";
+    std::cout<<";";
 }
 
 /* Clusterting function on CPU - > might need modification

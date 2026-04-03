@@ -169,3 +169,7 @@ if (USE_CPU)
         target_link_libraries(dipper_cpu PRIVATE ${Boost_LIBRARIES} ${ZLIB_LIBRARIES} TBB::tbb)
         install(TARGETS dipper_cpu RUNTIME DESTINATION bin)
 endif()
+
+# ---- API examples -----------------------------------------------------------
+# The library integration example is built separately from examples/CMakeLists.txt.
+# See examples/README.md for instructions.

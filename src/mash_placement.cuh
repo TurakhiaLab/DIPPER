@@ -213,6 +213,114 @@ namespace MashPlacement
             MatrixReader& matrixReader,
             const MSADeviceArrays& msaDeviceArrays
         );
+
+        // ---- Iterative (one-at-a-time) placement API -------------------------
+        /** Temporary device arrays and cursor used by the iterative placement API.
+         *  Populated by beginIterativePlacement(); freed by endIterativePlacement(). */
+        int*    d_id_iter   = nullptr;
+        int*    d_from_iter = nullptr;
+        double* d_dis_iter  = nullptr;
+        /** Index of the next query sequence to place (backboneSize after begin). */
+        int     m_nextQueryIdx = -1;
+
+        /** Allocate iterative-placement temp buffers and set the internal cursor
+         *  to the first query sequence (index == backboneSize).
+         *  Use when a backbone tree has already been loaded via initializeDeviceArrays(). */
+        void beginIterativePlacement();
+
+        /** Build the initial two-sequence tree from scratch (no backbone tree),
+         *  allocate temp buffers, and set the cursor to sequence index 2.
+         *  Use when no backbone tree is provided — the first two sequences in
+         *  the dataset seed the tree, and all remaining sequences are queries. */
+        void beginIterativePlacementFromScratch(
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays
+        );
+
+        /** Describes the edge split performed when one query sequence is placed.
+         *
+         *  Before placement, edge (splitNodeA ↔ splitNodeB) exists in the tree.
+         *  Placement inserts a new internal node and a new tip node, producing:
+         *
+         *    splitNodeA ──[lenA]── internal ──[lenB]── splitNodeB
+         *                              └──[lenTip]── tip (query)
+         *
+         *  The internal and tip DIPPER node indices are also provided so that
+         *  callers can build or update their own node-pointer representation. */
+        struct PlacementInfo {
+            int    splitNodeA;      ///< DIPPER node index: "from" end of the split edge
+            int    splitNodeB;      ///< DIPPER node index: "to"   end of the split edge
+            int    internalNodeIdx; ///< DIPPER index of the newly inserted internal node
+            int    tipNodeIdx;      ///< DIPPER index of the newly inserted tip (= seqIdx)
+            double lenA;            ///< branch length: splitNodeA  → internal
+            double lenB;            ///< branch length: splitNodeB  → internal
+            double lenTip;          ///< branch length: internal    → tip
+        };
+
+        // ---- Two-phase placement (find / commit) --------------------------------
+        /** Pending state saved between findBestEdge() and commitQuery(). */
+        int    m_pendingSeqIdx  = -1;
+        int    m_pendingEid     = -1;
+        double m_pendingFracLen = 0.0;
+        double m_pendingAddLen  = 0.0;
+        /** Host-side per-edge fracLen/addLen computed by calculateBranchLength.
+         *  Indexed by edge id; only entries with belong[eid] >= e[eid] are valid.
+         *  Used by commitQuery(overrideEid) to look up lengths for an arbitrary edge. */
+        std::vector<double> m_hostFracLen;
+        std::vector<double> m_hostAddLen;
+
+        /** Phase 1: compute distances and run calculateBranchLength for @p seqIdx,
+         *  find the globally optimal edge, save its id/lengths in pending state,
+         *  and return a PlacementInfo describing the would-be split.
+         *  Does NOT call updateTreeStructure — call commitQuery() to finalise. */
+        PlacementInfo findBestEdge(
+            int seqIdx,
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays
+        );
+
+        /** Return a PlacementInfo describing the split if @p seqIdx were placed
+         *  on the given edge @p eid.  Reads edge geometry from GPU and looks up
+         *  pre-computed branch lengths from the last findBestEdge() call.
+         *  Must be called after findBestEdge() for the same seqIdx. */
+        PlacementInfo getEdgeInfo(int eid, int seqIdx) const;
+
+        /** Search the current GPU adjacency list for an edge between @p nodeA and
+         *  @p nodeB.  Returns the canonical edge id (belong[eid] >= e[eid]) used
+         *  by calculateBranchLength and updateTreeStructure, or -1 if not found. */
+        int findEdgeBetween(int nodeA, int nodeB) const;
+
+        /** Phase 2: apply the pending placement (updateTreeStructure then
+         *  updateClosestNodes) for @p seqIdx.
+         *  @param overrideEid  >= 0: place on this edge instead of the DIPPER-chosen
+         *                      one.  The edge must be present in the current tree and
+         *                      findBestEdge() must have been called for the same seqIdx.
+         *                      Pass -1 (default) to use the edge DIPPER selected. */
+        void commitQuery(int seqIdx, int overrideEid = -1);
+        // -------------------------------------------------------------------------
+
+        /** Place the single query sequence at position @p seqIdx into the tree.
+         *  Convenience wrapper: calls findBestEdge() then commitQuery() in one step.
+         *
+         *  @param out  If non-null, filled with the edge-split details.
+         *  @return true if there are still more query sequences to place. */
+        bool placeSingleQuery(
+            int seqIdx,
+            Param& params,
+            const MashDeviceArrays& mashDeviceArrays,
+            MatrixReader& matrixReader,
+            const MSADeviceArrays& msaDeviceArrays,
+            PlacementInfo* out = nullptr
+        );
+
+        /** Free iterative-placement temp buffers and reset the cursor. */
+        void endIterativePlacement();
+        // ----------------------------------------------------------------------
+
         void updateBranchLengthsFromTopology(
             Tree* t,
             double* h_mashDist,
