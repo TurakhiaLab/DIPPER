@@ -603,28 +603,37 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
         exit(1);
     }
 
-    // print h_head, h_e, h_nxt, h_len
-    // std::cerr<<"Tree: ";
-    // for(int i=0;i<numSequences*2;i++){
-    //     std::cerr << h_head[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_e[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_nxt[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_len[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-
-
-    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
-                                 g_printBinaryNewick);
+    std::function<void(int,int)> print = [&](int node, int from) {
+        if (h_nxt[h_head[node]] != -1) {
+            output_ << "(";
+            std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
+            for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
+                if (h_e[i] != from) {
+                    if (h_len[i] == 0) {
+                        int collapsed = h_e[i];
+                        if (h_head[collapsed] != -1) {
+                            for (int j = h_head[collapsed]; j != -1; j = h_nxt[j]) {
+                                if (h_e[j] != node) {
+                                    pos.push_back({j, collapsed});
+                                }
+                            }
+                        }
+                    } else {
+                        pos.push_back({i, node});
+                    }
+                }
+            }
+            for (size_t i = 0; i < pos.size(); i++) {
+                auto [edgeIdx, parent] = pos[i];
+                print(h_e[edgeIdx], parent);
+                output_ << ":";
+                output_ << h_len[edgeIdx] << (i+1 == pos.size() ? ')' : ',');
+            }
+        } else {
+            output_ << name[node];
+        }
+    };
+    print(numSequences + bd - 2, -1);
     output_ << ";\n";
 }
 

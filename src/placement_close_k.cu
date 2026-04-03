@@ -646,62 +646,60 @@ void MashPlacement::KPlacementDeviceArrays::deallocateDeviceArrays()
 
 
 void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_){
-    int * h_head = new int[numSequences*2];
-    int * h_e = new int[numSequences*8];
-    int * h_nxt = new int[numSequences*8];
-    double * h_len = new double[numSequences*8];
-    
-    double * h_closest_dis = new double[numSequences*20];
-    int * h_closest_id = new int[numSequences*20];
-    auto err = cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_e, d_e, numSequences * 8 * sizeof(int), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_nxt, d_nxt, numSequences * 8 * sizeof(int), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
-    err = cudaMemcpy(h_len, d_len, numSequences * 8 * sizeof(double), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
-        exit(1);
-    }
+    int    * h_head = new int[numSequences*2];
+    int    * h_e    = new int[numSequences*8];
+    int    * h_nxt  = new int[numSequences*8];
+    double * h_len  = new double[numSequences*8];
 
+    auto checkCopy = [](cudaError_t err) {
+        if (err != cudaSuccess) {
+            fprintf(stderr, "Gpu_ERROR: cudaMemcpy failed!\n");
+            exit(1);
+        }
+    };
+    checkCopy(cudaMemcpy(h_head, d_head, numSequences*2*sizeof(int),    cudaMemcpyDeviceToHost));
+    checkCopy(cudaMemcpy(h_e,    d_e,    numSequences*8*sizeof(int),    cudaMemcpyDeviceToHost));
+    checkCopy(cudaMemcpy(h_nxt,  d_nxt,  numSequences*8*sizeof(int),    cudaMemcpyDeviceToHost));
+    checkCopy(cudaMemcpy(h_len,  d_len,  numSequences*8*sizeof(double), cudaMemcpyDeviceToHost));
 
-    // print h_head, h_e, h_nxt, h_len
-    // std::cerr<<"Tree: ";
-    // for(int i=0;i<numSequences*2;i++){
-    //     std::cerr << h_head[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_e[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_nxt[i] << "\t";
-    // }
-    // std::cerr<<"\n";
-    // for(int i=0;i<numSequences*8;i++){
-    //     std::cerr << h_len[i] << "\t";
-    // }
-    // std::cerr<<"\n";
+    std::function<void(int,int)> print = [&](int node, int from) {
+        if (h_nxt[h_head[node]] != -1) {
+            output_ << "(";
+            std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
+            for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
+                if (h_e[i] != from) {
+                    if (h_len[i] == 0) {
+                        int collapsed = h_e[i];
+                        if (h_head[collapsed] != -1) {
+                            for (int j = h_head[collapsed]; j != -1; j = h_nxt[j]) {
+                                if (h_e[j] != node) {
+                                    pos.push_back({j, collapsed});
+                                }
+                            }
+                        }
+                    } else {
+                        pos.push_back({i, node});
+                    }
+                }
+            }
+            for (size_t i = 0; i < pos.size(); i++) {
+                auto [edgeIdx, parent] = pos[i];
+                print(h_e[edgeIdx], parent);
+                output_ << ":";
+                output_ << h_len[edgeIdx] << (i+1 == pos.size() ? ')' : ',');
+            }
+        } else {
+            output_ << name[node];
+        }
+    };
 
-
-    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
-                                 g_printBinaryNewick);
+    print(numSequences + bd - 2, -1);
     output_ << ";\n";
+
+    delete[] h_head;
+    delete[] h_e;
+    delete[] h_nxt;
+    delete[] h_len;
 }
 
 void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> name, std::ofstream& output_, UnrootedTree* t, std::vector<int>& edgeIdsMappingToNewTreeEdges){
