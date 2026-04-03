@@ -480,37 +480,81 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
         exit(1);
     }
     std::function<void(int,int)> print = [&](int node, int from) {
-        if (h_nxt[h_head[node]] != -1) {
-            output_ << "(";
-            std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
-            for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
-                if (h_e[i] != from) {
+        // Build pos first, before deciding if this is a leaf or internal node
+        std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
+    
+        if (h_head[node] != -1) {
+            // Use a queue to recursively collapse chains of zero-length edges
+            std::queue<std::pair<int,int>> toExpand; // {collapsed_node, came_from}
+            toExpand.push({node, from});
+    
+            while (!toExpand.empty()) {
+                auto [cur, curFrom] = toExpand.front();
+                toExpand.pop();
+    
+                for (int i = h_head[cur]; i != -1; i = h_nxt[i]) {
+                    if (h_e[i] == curFrom) continue; // skip parent direction
+    
                     if (h_len[i] == 0) {
                         int collapsed = h_e[i];
-                        if (h_head[collapsed] != -1) {
-                            for (int j = h_head[collapsed]; j != -1; j = h_nxt[j]) {
-                                if (h_e[j] != node) {
-                                    pos.push_back({j, collapsed});
-                                }
-                            }
+                        // Check if collapsed is a leaf (only edge is back to cur)
+                        bool isLeaf = (h_head[collapsed] == -1 ||
+                                       h_nxt[h_head[collapsed]] == -1);
+                        if (isLeaf) {
+                            // Zero-length edge to a leaf: still include it
+                            pos.push_back({i, cur});
+                        } else {
+                            // Internal collapsed node: expand it further
+                            toExpand.push({collapsed, cur});
                         }
                     } else {
-                        pos.push_back({i, node});
+                        pos.push_back({i, cur});
                     }
                 }
             }
+        }
+    
+        if (pos.empty()) {
+            // Leaf node (or degenerate case): just print name
+            output_ << name[node];
+        } else {
+            output_ << "(";
             for (size_t i = 0; i < pos.size(); i++) {
                 auto [edgeIdx, parent] = pos[i];
                 print(h_e[edgeIdx], parent);
-                output_ << ":";
-                output_ << h_len[edgeIdx] << (i+1 == pos.size() ? ')' : ',');
+                output_ << ":" << h_len[edgeIdx];
+                output_ << (i + 1 == pos.size() ? ')' : ',');
             }
-        } else {
-            output_ << name[node];
         }
     };
-    print(numSequences + bd - 2, -1);
-    output_ << ";\n";
+
+    std::function<void(int,int)>  print_binary=[&](int node, int from){
+        if(h_nxt[h_head[node]]!=-1){
+            // printf("(");
+            output_ << "(";
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print_binary(h_e[pos[i]],node);
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                // output_ << "%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',';
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
+            }
+        }
+        // else std::cout<<name[node];
+        else output_<<name[node];
+    };
+
+    if (!g_printBinaryNewick) {
+        print(numSequences + bd - 2, -1);
+    } else {
+        print_binary(numSequences + bd - 2, -1);
+    }
+    output_ << ";";
 }
 
 

@@ -663,38 +663,81 @@ void MashPlacement::KPlacementDeviceArrays::printTree(std::vector <std::string> 
     checkCopy(cudaMemcpy(h_len,  d_len,  numSequences*8*sizeof(double), cudaMemcpyDeviceToHost));
 
     std::function<void(int,int)> print = [&](int node, int from) {
-        if (h_nxt[h_head[node]] != -1) {
-            output_ << "(";
-            std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
-            for (int i = h_head[node]; i != -1; i = h_nxt[i]) {
-                if (h_e[i] != from) {
+        // Build pos first, before deciding if this is a leaf or internal node
+        std::vector<std::pair<int,int>> pos; // {edge_index, parent_node}
+    
+        if (h_head[node] != -1) {
+            // Use a queue to recursively collapse chains of zero-length edges
+            std::queue<std::pair<int,int>> toExpand; // {collapsed_node, came_from}
+            toExpand.push({node, from});
+    
+            while (!toExpand.empty()) {
+                auto [cur, curFrom] = toExpand.front();
+                toExpand.pop();
+    
+                for (int i = h_head[cur]; i != -1; i = h_nxt[i]) {
+                    if (h_e[i] == curFrom) continue; // skip parent direction
+    
                     if (h_len[i] == 0) {
                         int collapsed = h_e[i];
-                        if (h_head[collapsed] != -1) {
-                            for (int j = h_head[collapsed]; j != -1; j = h_nxt[j]) {
-                                if (h_e[j] != node) {
-                                    pos.push_back({j, collapsed});
-                                }
-                            }
+                        // Check if collapsed is a leaf (only edge is back to cur)
+                        bool isLeaf = (h_head[collapsed] == -1 ||
+                                       h_nxt[h_head[collapsed]] == -1);
+                        if (isLeaf) {
+                            // Zero-length edge to a leaf: still include it
+                            pos.push_back({i, cur});
+                        } else {
+                            // Internal collapsed node: expand it further
+                            toExpand.push({collapsed, cur});
                         }
                     } else {
-                        pos.push_back({i, node});
+                        pos.push_back({i, cur});
                     }
                 }
             }
+        }
+    
+        if (pos.empty()) {
+            // Leaf node (or degenerate case): just print name
+            output_ << name[node];
+        } else {
+            output_ << "(";
             for (size_t i = 0; i < pos.size(); i++) {
                 auto [edgeIdx, parent] = pos[i];
                 print(h_e[edgeIdx], parent);
-                output_ << ":";
-                output_ << h_len[edgeIdx] << (i+1 == pos.size() ? ')' : ',');
+                output_ << ":" << h_len[edgeIdx];
+                output_ << (i + 1 == pos.size() ? ')' : ',');
             }
-        } else {
-            output_ << name[node];
         }
     };
 
-    print(numSequences + bd - 2, -1);
-    output_ << ";\n";
+    std::function<void(int,int)>  print_binary=[&](int node, int from){
+        if(h_nxt[h_head[node]]!=-1){
+            // printf("(");
+            output_ << "(";
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print_binary(h_e[pos[i]],node);
+                // printf(":");
+                // printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+                output_ << ":";
+                // output_ << "%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',';
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
+            }
+        }
+        // else std::cout<<name[node];
+        else output_<<name[node];
+    };
+
+    if (!g_printBinaryNewick) {
+        print(numSequences + bd - 2, -1);
+    } else {
+        print_binary(numSequences + bd - 2, -1);
+    }
+    output_ << ";";
 
     delete[] h_head;
     delete[] h_e;
@@ -1073,6 +1116,245 @@ void MashPlacement::KPlacementDeviceArrays::addQuery(
     std::cerr << "Tree Operation Time " <<  treeTime.count()/1000000 << " ms\n";
 
 }
+
+// ---- Iterative (one-at-a-time) placement API --------------------------------
+
+void MashPlacement::KPlacementDeviceArrays::beginIterativePlacement()
+{
+    cudaError_t err;
+    err = cudaMalloc(&d_id_iter, numSequences * 2 * sizeof(int));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_id_iter)!\n"); exit(1); }
+    err = cudaMalloc(&d_from_iter, numSequences * 2 * sizeof(int));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_from_iter)!\n"); exit(1); }
+    err = cudaMalloc(&d_dis_iter, numSequences * 2 * sizeof(double));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_dis_iter)!\n"); exit(1); }
+
+    /* Mirror the idx adjustment from addQuery: skip the backbone's edge slots. */
+    idx += 4 * this->backboneSize - 4;
+    m_nextQueryIdx = this->backboneSize;
+}
+
+void MashPlacement::KPlacementDeviceArrays::beginIterativePlacementFromScratch(
+    Param& params,
+    const MashDeviceArrays& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    const MSADeviceArrays& msaDeviceArrays)
+{
+    cudaError_t err;
+    err = cudaMalloc(&d_id_iter, numSequences * 2 * sizeof(int));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_id_iter)!\n"); exit(1); }
+    err = cudaMalloc(&d_from_iter, numSequences * 2 * sizeof(int));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_from_iter)!\n"); exit(1); }
+    err = cudaMalloc(&d_dis_iter, numSequences * 2 * sizeof(double));
+    if (err != cudaSuccess) { fprintf(stderr, "Gpu_ERROR: cudaMalloc failed (d_dis_iter)!\n"); exit(1); }
+
+    /* Initialize k-closest arrays and adjacency lists to sentinel values. */
+    int threadNum = 1024, blockNum = 1024;
+    initialize<<<blockNum, threadNum>>>(
+        numSequences * 4 - 4,
+        numSequences * 2,
+        d_closest_dis,
+        d_closest_id,
+        d_head,
+        d_nxt,
+        d_belong,
+        d_e);
+
+    /* Compute distances from seq 1 to seq 0 to seed the initial two-node tree. */
+    if (params.in == "r") {
+        mashDeviceArrays.distConstructionOnGpu(params, 1, d_dist);
+    } else if (params.in == "d") {
+        matrixReader.distConstructionOnGpu(params, 1, d_dist);
+    } else if (params.in == "m") {
+        msaDeviceArrays.distConstructionOnGpu(params, 1, d_dist);
+    }
+
+    /* Build the initial two-sequence tree (seq 0 and seq 1). */
+    buildInitialTree<<<1, 1>>>(
+        numSequences,
+        d_head,
+        d_e,
+        d_len,
+        d_nxt,
+        d_belong,
+        d_dist,
+        idx);
+    idx += 4;   /* bd == 2: two nodes × 2 directed edges each. */
+
+    /* Seed the k-closest lists from the initial two-node tree. */
+    for (int i = 0; i < bd; i++) {
+        updateClosestNodes<<<1, 1>>>(
+            d_head,
+            d_nxt,
+            d_e,
+            d_len,
+            d_closest_dis,
+            d_closest_id,
+            i,
+            d_id_iter,
+            d_from_iter,
+            d_dis_iter);
+    }
+
+    /* All sequences from index bd onward are queries. */
+    m_nextQueryIdx = bd;
+}
+
+// -----------------------------------------------------------------------------
+// Two-phase placement: findBestEdge / getEdgeInfo / findEdgeBetween / commitQuery
+// -----------------------------------------------------------------------------
+
+MashPlacement::KPlacementDeviceArrays::PlacementInfo
+MashPlacement::KPlacementDeviceArrays::findBestEdge(
+    int seqIdx,
+    Param& params,
+    const MashDeviceArrays& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    const MSADeviceArrays& msaDeviceArrays)
+{
+    /* Compute pairwise distances from seqIdx to all currently-placed nodes. */
+    if (params.in == "r")
+        mashDeviceArrays.distConstructionOnGpu(params, seqIdx, d_dist);
+    else if (params.in == "d")
+        matrixReader.distConstructionOnGpu(params, seqIdx, d_dist);
+    else if (params.in == "m")
+        msaDeviceArrays.distConstructionOnGpu(params, seqIdx, d_dist);
+    cudaDeviceSynchronize();
+
+    /* Run calculateBranchLength over every edge slot. */
+    const int edgeCount = numSequences * 4 - 4;
+    int threadNum = 256, blockNum = 1024;
+    thrust::device_vector<thrust::tuple<int, double, double>> minPos(edgeCount);
+
+    calculateBranchLength<<<blockNum, threadNum>>>(
+        seqIdx,
+        d_head, d_nxt, d_dist, d_e, d_len, d_belong,
+        thrust::raw_pointer_cast(minPos.data()),
+        edgeCount,
+        d_closest_dis, d_closest_id,
+        numSequences);
+
+    /* Find globally optimal edge. */
+    auto iter = thrust::min_element(minPos.begin(), minPos.end(), compare_tuple());
+    thrust::tuple<int, double, double> smallest = *iter;
+    m_pendingEid     = thrust::get<0>(smallest);
+    m_pendingFracLen = thrust::get<1>(smallest);
+    m_pendingAddLen  = thrust::get<2>(smallest);
+    m_pendingSeqIdx  = seqIdx;
+
+    /* Save host-side copy of fracLen/addLen for every edge slot so that
+     * commitQuery(overrideEid) can serve arbitrary edge overrides. */
+    {
+        std::vector<thrust::tuple<int, double, double>> h_minPos(edgeCount);
+        cudaMemcpy(h_minPos.data(),
+                   thrust::raw_pointer_cast(minPos.data()),
+                   edgeCount * sizeof(thrust::tuple<int, double, double>),
+                   cudaMemcpyDeviceToHost);
+        m_hostFracLen.resize(edgeCount);
+        m_hostAddLen.resize(edgeCount);
+        for (int i = 0; i < edgeCount; ++i) {
+            m_hostFracLen[i] = thrust::get<1>(h_minPos[i]);
+            m_hostAddLen[i]  = thrust::get<2>(h_minPos[i]);
+        }
+    }
+
+    return getEdgeInfo(m_pendingEid, seqIdx);
+}
+
+MashPlacement::KPlacementDeviceArrays::PlacementInfo
+MashPlacement::KPlacementDeviceArrays::getEdgeInfo(int eid, int seqIdx) const
+{
+    int    h_nodeA, h_nodeB;
+    double h_origLen;
+    cudaMemcpy(&h_nodeA,   d_belong + eid, sizeof(int),    cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_nodeB,   d_e      + eid, sizeof(int),    cudaMemcpyDeviceToHost);
+    cudaMemcpy(&h_origLen, d_len    + eid, sizeof(double), cudaMemcpyDeviceToHost);
+
+    const double frac = m_hostFracLen[eid];
+    const double add  = m_hostAddLen[eid];
+
+    PlacementInfo info{};
+    info.splitNodeA      = h_nodeA;
+    info.splitNodeB      = h_nodeB;
+    info.internalNodeIdx = seqIdx + numSequences - 1;
+    info.tipNodeIdx      = seqIdx;
+    info.lenA            = frac;
+    info.lenB            = h_origLen - frac;
+    info.lenTip          = add;
+    return info;
+}
+
+int MashPlacement::KPlacementDeviceArrays::findEdgeBetween(int nodeA, int nodeB) const
+{
+    /* Copy the full d_belong and d_e arrays to host and search linearly.
+     * These arrays are sized numSequences*8, typically a few thousand ints. */
+    const int edgeSlots = numSequences * 8;
+    const int edgeCount = numSequences * 4 - 4;
+    std::vector<int> h_belong(edgeSlots), h_e(edgeSlots);
+    cudaMemcpy(h_belong.data(), d_belong, edgeSlots * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_e.data(),      d_e,      edgeSlots * sizeof(int), cudaMemcpyDeviceToHost);
+
+    /* Return the canonical direction eid where belong[eid] >= e[eid].
+     * This is the direction that calculateBranchLength writes valid results for. */
+    for (int i = 0; i < edgeCount; ++i) {
+        if (((h_belong[i] == nodeA && h_e[i] == nodeB) ||
+             (h_belong[i] == nodeB && h_e[i] == nodeA)) &&
+            h_belong[i] >= h_e[i])
+        {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void MashPlacement::KPlacementDeviceArrays::commitQuery(int seqIdx, int overrideEid)
+{
+    const int    eid     = (overrideEid >= 0) ? overrideEid : m_pendingEid;
+    const double fracLen = (overrideEid >= 0) ? m_hostFracLen[eid] : m_pendingFracLen;
+    const double addLen  = (overrideEid >= 0) ? m_hostAddLen[eid]  : m_pendingAddLen;
+
+    updateTreeStructure<<<1, 1>>>(
+        d_head, d_nxt, d_e, d_len,
+        d_closest_dis, d_closest_id, d_belong,
+        eid, fracLen, addLen,
+        seqIdx, idx, numSequences);
+    idx += 4;
+
+    updateClosestNodes<<<1, 1>>>(
+        d_head, d_nxt, d_e, d_len,
+        d_closest_dis, d_closest_id,
+        seqIdx,
+        d_id_iter, d_from_iter, d_dis_iter);
+
+    m_nextQueryIdx = seqIdx + 1;
+}
+
+// -----------------------------------------------------------------------------
+
+bool MashPlacement::KPlacementDeviceArrays::placeSingleQuery(
+    int seqIdx,
+    Param& params,
+    const MashDeviceArrays& mashDeviceArrays,
+    MatrixReader& matrixReader,
+    const MSADeviceArrays& msaDeviceArrays,
+    PlacementInfo* out)
+{
+    if (seqIdx >= numSequences) return false;
+    PlacementInfo info = findBestEdge(seqIdx, params, mashDeviceArrays, matrixReader, msaDeviceArrays);
+    if (out) *out = info;
+    commitQuery(seqIdx);
+    return m_nextQueryIdx < numSequences;
+}
+
+void MashPlacement::KPlacementDeviceArrays::endIterativePlacement()
+{
+    if (d_id_iter)   { cudaFree(d_id_iter);   d_id_iter   = nullptr; }
+    if (d_from_iter) { cudaFree(d_from_iter); d_from_iter = nullptr; }
+    if (d_dis_iter)  { cudaFree(d_dis_iter);  d_dis_iter  = nullptr; }
+    m_nextQueryIdx = -1;
+}
+
+// -----------------------------------------------------------------------------
 
 void MashPlacement::KPlacementDeviceArrays::estimateBranchLengthsFromTopology(
     Param& params,
