@@ -594,10 +594,24 @@ void MashPlacement::KPlacementDeviceArraysHostDC::deallocateHostArraysDC(){
 
 
 void MashPlacement::KPlacementDeviceArraysHostDC::printTreeCpuDC(std::vector <std::string> name){
-    std::ostringstream oss;
-    printNewickFromHostAdjacency(oss, name, h_head, h_e, h_nxt, h_len, totalNumSequences + bd - 2,
-                                 g_printBinaryNewick);
-    std::cout << oss.str() << ";\n";
+    auto print=[&](int node, int from, auto&& print)->void {
+        if(h_nxt[h_head[node]]!=-1){
+            printf("(");
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print(h_e[pos[i]],node, print);
+                printf(":");
+                printf("%.5g%c",h_len[pos[i]],i+1==pos.size()?')':',');
+            }
+        }
+        else std::cout<<name[node];
+    };
+    
+    print(totalNumSequences+bd-2,-1, print);
+    std::cout<<";\n";
 }
 
 /* Clusterting function on CPU - > might need modification

@@ -481,8 +481,22 @@ void MashPlacement::PlacementDeviceArrays::printTree(std::vector <std::string> n
         fprintf(stderr, "Gpu_ERROR: hipMemcpy failed!\n");
         exit(1);
     }
-    printNewickFromHostAdjacency(output_, name, h_head, h_e, h_nxt, h_len, numSequences + bd - 2,
-                                 g_printBinaryNewick);
+    std::function<void(int,int)>  print=[&](int node, int from){
+        if(h_nxt[h_head[node]]!=-1){
+            output_ << "(";
+            std::vector <int> pos;
+            for(int i=h_head[node];i!=-1;i=h_nxt[i])
+                if(h_e[i]!=from)
+                    pos.push_back(i);
+            for(size_t i=0;i<pos.size();i++){
+                print(h_e[pos[i]],node);
+                output_ << ":";
+                output_ << h_len[pos[i]] << (i+1==pos.size()?')':',');
+            }
+        }
+        else output_ << name[node];
+    };
+    print(numSequences + bd - 2, -1);
     output_ << ";\n";
 }
 
