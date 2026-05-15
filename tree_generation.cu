@@ -105,8 +105,15 @@ void parseArguments(int argc, char** argv)
         ("add,a",
         "Add query to backbone using k-closest placement")
 
-        // ("protein,p",
-        // "Input sequences are protein sequences (default: DNA/RNA sequences)")
+        ("protein,p",
+        "Input sequences are protein sequences (default: DNA/RNA sequences)")
+        
+        ("protein-reduced",
+        "Use reduced 4-group 2-bit protein alphabet for raw input (-i r): "
+        "L=LVIMC, A=AGSTP, F=FYW, E=EDNQKRH")
+        
+        ("protein-murphy8",
+        "Use Murphy8 3-bit protein alphabet for raw input (-i r)")
 
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
@@ -124,6 +131,9 @@ void parseArguments(int argc, char** argv)
 
         ("node-dist",           po::value<std::string>(),
         "find distance between a tip into trees, differ by one placement")
+
+        ("max-cluster-size, C",           po::value<std::string>(),
+        "cluster size for divide-and-conquer")
         
         ("help,h",
         "Print this help message")
@@ -279,6 +289,18 @@ int main(int argc, char** argv) {
 
     bool isProtein = false;
     if (vm.count("protein")) isProtein = true;
+    bool useReducedProtein = vm.count("protein-reduced") > 0;
+    bool useMurphy8 = vm.count("protein-murphy8") > 0;
+    if (useReducedProtein && useMurphy8) {
+        std::cerr << "ERROR: --protein-reduced and --protein-murphy8 are mutually exclusive.\n";
+        return 1;
+    }
+    if (useReducedProtein) isProtein = true;
+    if (useMurphy8) isProtein = true;
+
+    uint64_t clusterSize = 0;
+    try {clusterSize = std::stoull(vm["cluster-size"].as<std::string>());}
+    catch(std::exception &e){}
 
     std::pair<int, int> range({-1,-1});
     if (vm.count("range")) {
@@ -334,6 +356,17 @@ int main(int argc, char** argv) {
     params.range.first = range.first;
     params.range.second = range.second;
     params.isProtein = isProtein;
+    params.useReducedProtein = useReducedProtein;
+    params.useMurphy8 = useMurphy8;
+
+    if (in == "r" && isProtein && useReducedProtein && k > 32) {
+        std::cerr << "ERROR: --protein-reduced supports k-mer size up to 32.\n";
+        return 1;
+    }
+    if (in == "r" && isProtein && useMurphy8 && k > 21) {
+        std::cerr << "ERROR: --protein-murphy8 supports k-mer size up to 21.\n";
+        return 1;
+    }
 
     bool updateBranchLengths = false;
     bool updateBranchLengths_old = false;
@@ -681,9 +714,12 @@ int main(int argc, char** argv) {
             tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
             for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
                 uint64_t i = static_cast<uint64_t>(idx_);
-                uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+                uint64_t twoBitCompressedSize = (isProtein && !useReducedProtein && !useMurphy8)
+                    ? (seqs[i].size()+7)/8
+                    : (isProtein && useMurphy8) ? (seqs[i].size()+20)/21
+                    : (seqs[i].size()+31)/32;
                 uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-                twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+                twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein, useReducedProtein, useMurphy8);
 
                 int newId = idMap[i];
                 seqLengths[newId] = seqs[i].size();
@@ -836,9 +872,16 @@ int main(int argc, char** argv) {
             /* Divide-and-conquer: backbone tree, cluster non-backbone, then place per cluster. */
             std::cerr<<"Using divide-and-conquer mode\n";
             int totalNumSequences = numSequences;
-	    int backboneSize = numSequences/100;
-	    if (totalNumSequences < 30000)
-		    backboneSize = numSequences/4;
+	        int backboneSize = numSequences/20;
+            
+            if (clusterSize < backboneSize) {
+                std::cerr << "Warning: cluster size set to too small, setting to default " << backboneSize << std::endl;
+            } else {
+                backboneSize = clusterSize;
+            }
+            
+            if (totalNumSequences < 30000) backboneSize = numSequences/4;
+
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
 
@@ -908,9 +951,12 @@ int main(int argc, char** argv) {
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
             uint64_t i = static_cast<uint64_t>(idx_);
-            uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+            uint64_t twoBitCompressedSize = (isProtein && !useReducedProtein && !useMurphy8)
+                ? (seqs[i].size()+7)/8
+                : (isProtein && useMurphy8) ? (seqs[i].size()+20)/21
+                : (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein, useReducedProtein, useMurphy8);
 
             seqLengths[ids[i]] = seqs[i].size();
             twoBitCompressedSeqs[ids[i]] = twoBitCompressed;
@@ -968,9 +1014,17 @@ int main(int argc, char** argv) {
             std::cerr<<"Using divide-and-conquer mode\n";
             
             int totalNumSequences = numSequences;
-            int backboneSize = numSequences/100;
-            if (totalNumSequences < 30000)
-		    backboneSize = numSequences/4;
+
+            int backboneSize = numSequences/20;
+            
+            if (clusterSize < backboneSize) {
+                std::cerr << "Warning: cluster size set to too small, setting to default " << backboneSize << std::endl;
+            } else {
+                backboneSize = clusterSize;
+            }
+            
+            if (totalNumSequences < 30000) backboneSize = numSequences/4;
+
 	        params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
             std::vector<int> largeClustersIdx;

@@ -116,6 +116,9 @@ void parseArguments(int argc, char** argv)
         ("rename,R",       
         "Cluster archieve directory path")
 
+        ("protein,p",
+        "Input sequences are protein sequences (default: DNA/RNA sequences)")
+
         ("help,h",
         "Print this help message")
         
@@ -464,6 +467,9 @@ int main(int argc, char** argv) {
     bool rename = false;
     if (vm.count("rename")) rename = true;
 
+    bool isProtein = false;
+    if (vm.count("protein")) isProtein = true;
+
     std::string inClusterArchieve = "";
     try {inClusterArchieve = vm["cluster-archieve"].as<std::string>();}
     catch(std::exception &e){}
@@ -485,6 +491,7 @@ int main(int argc, char** argv) {
     bool merge_cluster = true;
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+    params.isProtein = isProtein;
 
     if (rename) {
         // Load the tree from the file
@@ -565,9 +572,9 @@ int main(int argc, char** argv) {
             tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
             for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
                 uint64_t i = static_cast<uint64_t>(idx_);
-                uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+                uint64_t twoBitCompressedSize = isProtein ? (seqs[i].size()+7)/8 : (seqs[i].size()+31)/32;
                 uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-                twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+                twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein);
 
                 int newId = idMap[i];
                 seqLengths[newId] = seqs[i].size();
@@ -1094,9 +1101,9 @@ int main(int argc, char** argv) {
         tbb::parallel_for(tbb::blocked_range<int>(0, numSequences), [&](tbb::blocked_range<int> range){
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) {
             uint64_t i = static_cast<uint64_t>(idx_);
-            uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+            uint64_t twoBitCompressedSize = isProtein ? (seqs[i].size()+7)/8 : (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein);
 
             seqLengths[ids[i]] = seqs[i].size();
             twoBitCompressedSeqs[ids[i]] = twoBitCompressed;
