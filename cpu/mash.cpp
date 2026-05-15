@@ -44,13 +44,16 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t **h_compress
     /* Flatten data */
     uint64_t *h_aggseqLengths = new uint64_t[numSequences];
     uint64_t flatStringLength = 0;
+    auto wordsPerSeq = [&](uint64_t len) -> uint64_t {
+        return params.isProtein ? (len + 7) / 8 : (len + 31) / 32;
+    };
     for (size_t i = 0; i < numSequences; i++)
-        flatStringLength += (h_seqLengths[i] + 31) / 32;
+        flatStringLength += wordsPerSeq(h_seqLengths[i]);
     uint64_t *h_flattenCompressSeqs = new uint64_t[flatStringLength];
     flatStringLength = 0;
     for (size_t i = 0; i < numSequences; i++)
     {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i] + 31) / 32;
+        uint64_t flatStringLengthLocal = wordsPerSeq(h_seqLengths[i]);
         hashListLength += h_seqLengths[i] - kmerSize + 1;
         flatStringLength += flatStringLengthLocal;
         for (size_t j = 0; j < flatStringLengthLocal; j++)
@@ -81,10 +84,10 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t **h_compress
         d_compressedSeqs[i] = h_flattenCompressSeqs[i];
     }
 
-    // generate prefix array
+    // generate prefix array (per-sequence word count)
     for (int i = 0; i < numSequences; i++)
     {
-        d_prefixCompressed[i] = (d_seqLengths[i] + 31) / 32;
+        d_prefixCompressed[i] = params.isProtein ? (d_seqLengths[i] + 7) / 8 : (d_seqLengths[i] + 31) / 32;
     }
     exclusive_scan(d_prefixCompressed, numSequences);
 }
@@ -279,6 +282,23 @@ int memcmpCPU(const char *kmer_fwd, const char *kmer_rev, int kmerSize)
     return 0;
 }
 
+static void decompress_protein_kmer_cpu(
+    uint64_t *compressedSeqs, uint64_t j, uint64_t kmerSize, char *kmer_fwd)
+{
+    static const char dec[21] = {
+        'A','C','G','T','D','E','F','H','I','K','L','M','N','P','Q','R','S','V','W','Y','X'
+    };
+    for (uint64_t p = 0; p < kmerSize; p++)
+    {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 8;
+        int sh = (int)((pos % 8) * 8);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0xFFULL;
+        if (val > 20) val = 20;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
 /** Build MinHash sketch per sequence (TBB over seqs); sort, keep top sketchSize. */
 void sketchConstruction(
     uint64_t *d_compressedSeqs,
@@ -286,7 +306,8 @@ void sketchConstruction(
     uint64_t *d_prefixCompressed, // offsets in words into d_compressedSeqs
     size_t numSequences,
     uint64_t *d_hashList, // output: numSequences * 1000
-    uint64_t kmerSize     // in bases
+    uint64_t kmerSize,    // in bases / residues
+    bool isProtein
 )
 {
 
@@ -318,22 +339,31 @@ void sketchConstruction(
                     char kmer_fwd[32] = {0};
                     char kmer_rev[32] = {0};
                     uint8_t out[16];
-                    uint64_t index = j/32;
-                    uint64_t shift1 = 2*(j%32);
-                    if (shift1>0) {
-                        uint64_t shift2 = 64-shift1;
-                        kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)); //& mask;
+                    if (isProtein) {
+                        decompress_protein_kmer_cpu(compressedSeqs, j, kmerSize, kmer_fwd);
+                        MurmurHash3_x64_128_MASH_CPU(
+                            kmer_fwd,
+                            static_cast<int>(kmerSize),
+                            42,
+                            out);
+                    } else {
+                        uint64_t index = j/32;
+                        uint64_t shift1 = 2*(j%32);
+                        if (shift1>0) {
+                            uint64_t shift2 = 64-shift1;
+                            kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2));
+                        }
+                        else {
+                            kmer = compressedSeqs[index];
+                        }
+                        decompressCPU(kmer, kmerSize, kmer_fwd, kmer_rev);
+                        MurmurHash3_x64_128_MASH_CPU(
+                            (memcmpCPU(kmer_fwd, kmer_rev, static_cast<int>(kmerSize)) <= 0) ? kmer_fwd : kmer_rev,
+                            static_cast<int>(kmerSize),
+                            42,
+                            out
+                        );
                     }
-                    else {   
-                        kmer = compressedSeqs[index];// & mask;
-                    }
-                    decompressCPU(kmer, kmerSize, kmer_fwd, kmer_rev);
-                    MurmurHash3_x64_128_MASH_CPU(
-                        (memcmpCPU(kmer_fwd, kmer_rev, static_cast<int>(kmerSize)) <= 0) ? kmer_fwd : kmer_rev,
-                        static_cast<int>(kmerSize),
-                        42,
-                        out
-                    );
                     uint64_t hash = *((uint64_t *)out);
                     // Combine stored and computed to sort and rank
                     keys[3*tx+0] = (tx < 500) ? stored[tx] : 0xFFFFFFFFFFFFFFFF;
@@ -439,7 +469,8 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(
         d_prefixCompressed,
         numSequences,
         d_hashList,
-        kmerSize);
+        kmerSize,
+        params.isProtein);
 
     // Rearrange hashes on CPU
     uint64_t *temp_hashList = new uint64_t[numSequences * sketchSize];

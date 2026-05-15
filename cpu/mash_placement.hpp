@@ -19,6 +19,7 @@
 #include <string>
 #include <cstring>
 #include <cerrno>
+#include <utility>
 #include "../src/tree.hpp"
 
 namespace MashPlacement
@@ -40,6 +41,8 @@ namespace MashPlacement
         // Added
         uint64_t flatStringLength;
         int threads;
+        std::pair<int, int> range = {-1, -1};
+        bool isProtein = false;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out, int t_threads)
         {

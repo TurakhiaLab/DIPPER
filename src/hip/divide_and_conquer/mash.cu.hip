@@ -25,7 +25,7 @@ void MashPlacement::MashDeviceArraysDC::allocateDeviceArraysDC(uint64_t ** h_com
         if (h_seqLengths[i] > maxLength)
             maxLength = h_seqLengths[i];
     }
-    size_t maxLengthCompressed = (maxLength + 31) / 32;
+    size_t maxLengthCompressed = params.isProtein ? (maxLength + 7) / 8 : (maxLength + 31) / 32;
 
     err = hipMalloc(&d_seqLengths, params.batchSize*sizeof(uint64_t));
     if (err != hipSuccess)
@@ -209,13 +209,28 @@ __device__ int memcmp_deviceDC(const char* kmer_fwd, const char* kmer_rev, int k
     return 0;
 }
 
+__device__ void decompress_protein_kmerDC(uint64_t * compressedSeqs, uint64_t j, uint64_t kmerSize, char * kmer_fwd) {
+    static const char dec[21] = {
+        'A','C','G','T','D','E','F','H','I','K','L','M','N','P','Q','R','S','V','W','Y','X'
+    };
+    for (uint64_t p = 0; p < kmerSize; p++) {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 8;
+        int sh = (int)((pos % 8) * 8);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0xFFULL;
+        if (val > 20) val = 20;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
 __global__ void sketchConstructionDC(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,
     size_t maxLengthCompressed,
     size_t numSequences,
     uint64_t * d_hashList,
-    uint64_t kmerSize
+    uint64_t kmerSize,
+    int isProtein
 ) {
     extern __shared__ uint64_t stored[];
 
@@ -252,29 +267,26 @@ __global__ void sketchConstructionDC(
 
             if (j <= seqLength - kmerSize) {
 
-                uint64_t index = j/32;
-                uint64_t shift1 = 2*(j%32);
+                if (isProtein) {
+                    decompress_protein_kmerDC(compressedSeqs, j, kmerSize, kmer_fwd);
+                    MurmurHash3_x64_128_MASHDC(kmer_fwd, (int)kmerSize, 42, out);
+                } else {
+                    uint64_t index = j/32;
+                    uint64_t shift1 = 2*(j%32);
 
-                if (shift1>0) {
-                    uint64_t shift2 = 64-shift1;
-                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)); //& mask;
+                    if (shift1>0) {
+                        uint64_t shift2 = 64-shift1;
+                        kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2));
+                    }
+                    else {
+                        kmer = compressedSeqs[index];
+                    }
+
+                    decompressDC(kmer, kmerSize, kmer_fwd, kmer_rev);
+                    MurmurHash3_x64_128_MASHDC( (memcmp_deviceDC(kmer_fwd, kmer_rev, kmerSize) <= 0)
+                        ? kmer_fwd : kmer_rev, kmerSize, 42, out);
                 }
-                else {   
-                    kmer = compressedSeqs[index];// & mask;
-                }
 
-                decompressDC(kmer, kmerSize, kmer_fwd, kmer_rev);
-
-                // if ((i == 0) && (tx == 0)) {
-                //     for (char c : kmer_fwd) printf("%c", c);   
-                
-                //     printf("\n");
-                // }
-
-                // convert to char representation and call w/ original
-                MurmurHash3_x64_128_MASHDC( (memcmp_deviceDC(kmer_fwd, kmer_rev, kmerSize) <= 0) 
-                    ? kmer_fwd : kmer_rev, kmerSize, 42, out);
-                
                 uint64_t hash = *((uint64_t *)out);
 
                 // Combine stored and computed to sort and rank
@@ -344,7 +356,7 @@ void MashPlacement::MashDeviceArraysDC::sketchConstructionOnGpuDC(Param& params,
         if (seqLengths[i] > maxLength)
             maxLength = seqLengths[i];
     }
-    size_t maxLengthCompressed = (maxLength + 31) / 32;
+    size_t maxLengthCompressed = params.isProtein ? (maxLength + 7) / 8 : (maxLength + 31) / 32;
     const uint64_t kmerSize = params.kmerSize; // Extract kmerSize
     auto timerStart = std::chrono::high_resolution_clock::now();
 
@@ -357,7 +369,8 @@ void MashPlacement::MashDeviceArraysDC::sketchConstructionOnGpuDC(Param& params,
             localBatchSize = numSequences - i;
         }
         for (auto j=i; j<i+localBatchSize && j<numSequences; j++) {
-            for (size_t k=0; k<(seqLengths[j]+31)/32;k++)  
+            size_t nWords = params.isProtein ? (seqLengths[j]+7)/8 : (seqLengths[j]+31)/32;
+            for (size_t k=0; k<nWords; k++)
             {
                 h_flattenCompressSeqs[(j-i)*maxLengthCompressed+k] = h_compressedSeqs[j][k];
                 
@@ -387,7 +400,8 @@ void MashPlacement::MashDeviceArraysDC::sketchConstructionOnGpuDC(Param& params,
         int blocksPerGrid = 1024;
         size_t sharedMemorySize = sizeof(uint64_t) * (2000);
         sketchConstructionDC<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
-            d_compressedSeqs, d_seqLengths, maxLengthCompressed, localBatchSize, d_hashList, kmerSize
+            d_compressedSeqs, d_seqLengths, maxLengthCompressed, localBatchSize, d_hashList, kmerSize,
+            params.isProtein ? 1 : 0
         );
 
         hipDeviceSynchronize();

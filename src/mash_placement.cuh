@@ -37,6 +37,9 @@ namespace MashPlacement
         uint64_t totalNumSeqs;
         std::pair<int, int> range;
         bool isProtein=false;
+        bool useReducedProtein=false;
+        bool useMurphy8=false;
+        uint64_t clusterSize=0;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {

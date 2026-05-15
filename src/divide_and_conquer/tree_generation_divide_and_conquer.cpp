@@ -49,6 +49,7 @@ void parseArguments(int argc, char** argv)
         // ("batch-size,b", po::value<std::string>(), "Batch size for GPU processing (Default = 100000)")
         ("print-binary-newick",
          "Print fully resolved binary Newick with explicit :0 branches; default collapses near-zero internal edges")
+        ("protein", "Input sequences are protein (for -i r raw sequences; default DNA/RNA)")
         ("help,h", "Print help messages");
 
 }
@@ -243,7 +244,10 @@ int main(int argc, char** argv) {
 
     int defau_thre = 10000; // Default threshold between conventional NJ and placement
 
+    bool isProtein = vm.count("protein") > 0;
+
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
+    params.isProtein = isProtein;
 
     size_t totalNumSequences = 0;
     size_t backboneSize = 0;
@@ -438,9 +442,9 @@ int main(int argc, char** argv) {
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) 
         {   
             int i = idx_;
-            uint64_t twoBitCompressedSize = (seqs[i].size()+31)/32;
+            uint64_t twoBitCompressedSize = isProtein ? (seqs[i].size()+7)/8 : (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed);
+            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein);
 
             seqLengths[ids[i]] = seqs[i].size();
             twoBitCompressedSeqs[ids[i]] = twoBitCompressed;

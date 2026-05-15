@@ -34,15 +34,20 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
         exit(1);
     }
 
-    /* Flatten data */
+    /* Flatten data: word count per sequence is DNA (seq+31)/32 or protein (seq+7)/8. */
     uint64_t * h_aggseqLengths = new uint64_t[numSequences];
     uint64_t flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+31)/32;
+    auto wordsPerSeq = [&](uint64_t len) -> uint64_t {
+        return (params.isProtein && !params.useReducedProtein && !params.useMurphy8) ? (len + 7) / 8
+            : (params.isProtein && params.useMurphy8) ? (len + 20) / 21
+            : (len + 31) / 32;
+    };
+    for (size_t i =0; i<numSequences; i++) flatStringLength+= wordsPerSeq(h_seqLengths[i]);
     uint64_t * h_flattenCompressSeqs = new uint64_t[flatStringLength];
     flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) 
     {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i]+31)/32;
+        uint64_t flatStringLengthLocal = wordsPerSeq(h_seqLengths[i]);
         hashListLength += h_seqLengths[i] - kmerSize + 1;
         flatStringLength+=flatStringLengthLocal;
         for (size_t j=0; j<flatStringLengthLocal;j++)  
@@ -105,16 +110,23 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t ** h_compres
         exit(1);
     }
 
-    // generate prefix array    
+    // generate prefix array (per-sequence compressed word count)
     thrust::device_ptr<uint64_t> dev_seqLengths(d_seqLengths);
     thrust::device_ptr<uint64_t> dev_prefixComp(d_prefixCompressed);
 
-    thrust::transform(thrust::device,
-        dev_seqLengths, dev_seqLengths + numSequences, dev_prefixComp, 
-        [] __device__ (const uint64_t& x) -> uint64_t { 
-            return (x + 31) / 32;
-        }
-    );
+    if (params.isProtein && !params.useReducedProtein && !params.useMurphy8) {
+        thrust::transform(thrust::device,
+            dev_seqLengths, dev_seqLengths + numSequences, dev_prefixComp,
+            [] __device__ (const uint64_t& x) -> uint64_t { return (x + 7) / 8; });
+    } else if (params.isProtein && params.useMurphy8) {
+        thrust::transform(thrust::device,
+            dev_seqLengths, dev_seqLengths + numSequences, dev_prefixComp,
+            [] __device__ (const uint64_t& x) -> uint64_t { return (x + 20) / 21; });
+    } else {
+        thrust::transform(thrust::device,
+            dev_seqLengths, dev_seqLengths + numSequences, dev_prefixComp,
+            [] __device__ (const uint64_t& x) -> uint64_t { return (x + 31) / 32; });
+    }
 
     thrust::exclusive_scan(dev_prefixComp, dev_prefixComp + numSequences, dev_prefixComp);
 
@@ -257,13 +269,55 @@ __device__ int memcmp_device(const char* kmer_fwd, const char* kmer_rev, int kme
     return 0;
 }
 
+/** Decode 8-bit packed protein k-mer at sequence offset j (forward order); matches twoBitCompressor/fourBit protein codes. */
+__device__ void decompress_protein_kmer(uint64_t * compressedSeqs, uint64_t j, uint64_t kmerSize, char * kmer_fwd) {
+    static const char dec[21] = {
+        'A','C','G','T','D','E','F','H','I','K','L','M','N','P','Q','R','S','V','W','Y','X'
+    };
+    for (uint64_t p = 0; p < kmerSize; p++) {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 8;
+        int sh = (int)((pos % 8) * 8);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0xFFULL;
+        if (val > 20) val = 20;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
+/** Decode reduced 2-bit protein k-mer at sequence offset j (forward order). */
+__device__ void decompress_protein_reduced_kmer(uint64_t * compressedSeqs, uint64_t j, uint64_t kmerSize, char * kmer_fwd) {
+    static const char dec[4] = {'L', 'A', 'F', 'E'};
+    for (uint64_t p = 0; p < kmerSize; p++) {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 32;
+        int sh = (int)((pos % 32) * 2);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0x3ULL;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
+/** Decode Murphy8 3-bit protein k-mer at sequence offset j (forward order). */
+__device__ void decompress_protein_murphy8_kmer(uint64_t * compressedSeqs, uint64_t j, uint64_t kmerSize, char * kmer_fwd) {
+    static const char dec[8] = {'L', 'A', 'S', 'F', 'E', 'K', 'P', 'X'};
+    for (uint64_t p = 0; p < kmerSize; p++) {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 21;
+        int sh = (int)((pos % 21) * 3);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0x7ULL;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
 __global__ void sketchConstruction(
     uint64_t * d_compressedSeqs,
     uint64_t * d_seqLengths,
     uint64_t * d_prefixCompressed,
     size_t numSequences,
     uint64_t * d_hashList,
-    uint64_t kmerSize
+    uint64_t kmerSize,
+    int isProtein,
+    int useReducedProtein,
+    int useMurphy8
 ) {
     extern __shared__ uint64_t stored[];
 
@@ -297,29 +351,32 @@ __global__ void sketchConstruction(
 
             if (j <= seqLength - kmerSize) {
 
-                uint64_t index = j/32;
-                uint64_t shift1 = 2*(j%32);
+                if (isProtein && useReducedProtein) {
+                    decompress_protein_reduced_kmer(compressedSeqs, j, kmerSize, kmer_fwd);
+                    MurmurHash3_x64_128_MASH(kmer_fwd, (int)kmerSize, 42, out);
+                } else if (isProtein && useMurphy8) {
+                    decompress_protein_murphy8_kmer(compressedSeqs, j, kmerSize, kmer_fwd);
+                    MurmurHash3_x64_128_MASH(kmer_fwd, (int)kmerSize, 42, out);
+                } else if (isProtein) {
+                    decompress_protein_kmer(compressedSeqs, j, kmerSize, kmer_fwd);
+                    MurmurHash3_x64_128_MASH(kmer_fwd, (int)kmerSize, 42, out);
+                } else {
+                    uint64_t index = j/32;
+                    uint64_t shift1 = 2*(j%32);
 
-                if (shift1>0) {
-                    uint64_t shift2 = 64-shift1;
-                    kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2)); //& mask;
+                    if (shift1>0) {
+                        uint64_t shift2 = 64-shift1;
+                        kmer = ((compressedSeqs[index] >> shift1) | (compressedSeqs[index+1] << shift2));
+                    }
+                    else {
+                        kmer = compressedSeqs[index];
+                    }
+
+                    decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
+                    MurmurHash3_x64_128_MASH( (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0)
+                        ? kmer_fwd : kmer_rev, kmerSize, 42, out);
                 }
-                else {   
-                    kmer = compressedSeqs[index];// & mask;
-                }
 
-                decompress(kmer, kmerSize, kmer_fwd, kmer_rev);
-
-                // if ((i == 0) && (tx == 0)) {
-                //     for (char c : kmer_fwd) printf("%c", c);   
-                
-                //     printf("\n");
-                // }
-
-                // convert to char representation and call w/ original
-                MurmurHash3_x64_128_MASH( (memcmp_device(kmer_fwd, kmer_rev, kmerSize) <= 0) 
-                    ? kmer_fwd : kmer_rev, kmerSize, 42, out);
-                
                 uint64_t hash = *((uint64_t *)out);
 
                 // Combine stored and computed to sort and rank
@@ -394,7 +451,10 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(Param& params){
     int blocksPerGrid = 1024;
     size_t sharedMemorySize = sizeof(uint64_t) * (2000);
     sketchConstruction<<<blocksPerGrid, threadsPerBlock, sharedMemorySize>>>(
-        d_compressedSeqs, d_seqLengths, d_prefixCompressed, numSequences, d_hashList, kmerSize
+        d_compressedSeqs, d_seqLengths, d_prefixCompressed, numSequences, d_hashList, kmerSize,
+        params.isProtein ? 1 : 0,
+        params.useReducedProtein ? 1 : 0,
+        params.useMurphy8 ? 1 : 0
     );
 
     uint64_t * temp_hashList;
