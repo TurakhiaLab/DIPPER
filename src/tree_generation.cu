@@ -299,7 +299,7 @@ int main(int argc, char** argv) {
     if (useMurphy8) isProtein = true;
 
     uint64_t clusterSize = 0;
-    try {clusterSize = std::stoull(vm["cluster-size"].as<std::string>());}
+    try {clusterSize = std::stoull(vm["max-cluster-size"].as<std::string>());}
     catch(std::exception &e){}
 
     std::pair<int, int> range({-1,-1});
@@ -872,16 +872,19 @@ int main(int argc, char** argv) {
             /* Divide-and-conquer: backbone tree, cluster non-backbone, then place per cluster. */
             std::cerr<<"Using divide-and-conquer mode\n";
             int totalNumSequences = numSequences;
-	        int backboneSize = numSequences/20;
+	        int backboneSize = numSequences/100;
             
-            if (clusterSize < backboneSize) {
-                std::cerr << "Warning: cluster size set to too small, setting to default " << backboneSize << std::endl;
+            if (clusterSize != 0) {
+                if (clusterSize < numSequences/1000) {
+                    std::cerr << "Warning: cluster size set to too small, setting to default " << numSequences/100 << std::endl;
+                } else {
+                    backboneSize = clusterSize;
+                    std::cerr << "Cluster size set to " << backboneSize << std::endl;
+                }
             } else {
-                backboneSize = clusterSize;
+                std::cerr << "Cluster size not set, setting to default " << numSequences/100 << std::endl;
             }
             
-            if (totalNumSequences < 30000) backboneSize = numSequences/4;
-
             params.batchSize = backboneSize;
             params.backboneSize = backboneSize;
 
@@ -1015,12 +1018,17 @@ int main(int argc, char** argv) {
             
             int totalNumSequences = numSequences;
 
-            int backboneSize = numSequences/20;
+            int backboneSize = numSequences/100;
             
-            if (clusterSize < backboneSize) {
-                std::cerr << "Warning: cluster size set to too small, setting to default " << backboneSize << std::endl;
+            if (clusterSize != 0) {
+                if (clusterSize < numSequences/1000) {
+                    std::cerr << "Warning: cluster size set to too small, setting to default " << numSequences/100 << std::endl;
+                } else {
+                    backboneSize = clusterSize;
+                    std::cerr << "Cluster size set to " << backboneSize << std::endl;
+                }
             } else {
-                backboneSize = clusterSize;
+                std::cerr << "Cluster size not set, setting to default " << numSequences/100 << std::endl;
             }
             
             if (totalNumSequences < 30000) backboneSize = numSequences/4;
