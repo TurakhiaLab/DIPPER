@@ -19,11 +19,10 @@ RUN apt-get update && \
 
 
 # Clone and install DIPPER inside the dipper environment
-RUN wget https://github.com/TurakhiaLab/DIPPER/archive/refs/tags/v0.1.3.tar.gz && \
-    tar -xzf v0.1.3.tar.gz && \
-    mv DIPPER-0.1.3 DIPPER && \
-    rm v0.1.3.tar.gz && \
-    cd /home/DIPPER/install && \
+RUN git clone https://github.com/TurakhiaLab/DIPPER.git && \
+    cd DIPPER && \
+    git checkout main && \
+    cd install && \
     ./installDIPPER.sh cuda
 
 ENV PATH="/home/DIPPER/bin:$PATH"
