@@ -17,6 +17,12 @@
 
 </div>
 
+## What's New
+
+- **DIPPER v0.1.5**
+  - **Protein sequences:** DIPPER supports reconstruction of phylogenies from protein sequences (unaligned and aligned).
+  - **CPU-only support:** DIPPER now builds on CPU-only systems (Linux and MacOS). 
+
 ## Table of Contents
 - [Introduction](#intro) ([Wiki](https://turakhia.ucsd.edu/DIPPER/))
 - [Installation](#install)
@@ -31,6 +37,7 @@
     - [Using placement technique](#place)
     - [Using divide-and-conquer technique](#dc)
   - [Adding tips to a backbone tree](#add)
+  - [Protein sequence support](#protein)
   - [Reproduce DIPPER results](#reproduce)
 - [Contributions](#contribution)
 - [Citing DIPPER](#cite)
@@ -79,10 +86,10 @@ dipper --help
 ```
 
 ### 2. <a name="dockerimage"></a> Using Docker Image
-To use DIPPER in a docker container, users can create a docker container from a docker image, by following these steps
+To run DIPPER in Docker, create a container from the image by following these steps.
 #### i. Dependencies
 1. [Docker](https://docs.docker.com/engine/install/)
-#### ii. Pull and build the DIPPER docker image from DockerHub
+#### ii. Pull and build the DIPPER Docker image from Docker Hub
 ```bash
 ## Note: If the Docker image already exists locally, make sure to pull the latest version using 
 ## docker pull swalia14/dipper:latest # (NVIDIA-GPUs)
@@ -95,32 +102,32 @@ docker run -it swalia14/dipper_cpu:latest # (CPU-only)
 ```
 #### iii. Run DIPPER
 ```bash
-# Inside the docker container (path: /home/DIPPER/bin)
+# Inside the Docker container (path: /home/DIPPER/bin)
 dipper --help
 # dipper_cpu --help # CPU-only
 ```
 
-### 3. Using DockerFile <a name="dockerfile"></a>
+### 3. Using Dockerfile <a name="dockerfile"></a>
 A Docker container with the preinstalled DIPPER program can also be built from a Dockerfile by following these steps.
 
 #### i. Dependencies
 1. [Docker](https://docs.docker.com/engine/install/)
 2. [Git](https://git-scm.com/downloads)
 
-#### ii. Clone the repository and build a docker image
+#### ii. Clone the repository and build a Docker image
 ```bash
 git clone https://github.com/TurakhiaLab/DIPPER.git
 cd DIPPER/docker
 docker build -t dipper -f  Dockerfile . 
 docker build -t dipper -f  Dockerfile_cpu . # CPU-only 
 ```
-#### iii. Build and run the docker container
+#### iii. Build and run the Docker container
 ```bash
 docker run -it --gpus all dipper
 ```
 #### iv. Run DIPPER
 ```bash
-# Inside the docker container (path: /home/DIPPER/bin)
+# Inside the Docker container (path: /home/DIPPER/bin)
 ./dipper --help
 # dipper_cpu --help # CPU-only
 ```
@@ -175,7 +182,7 @@ For more information about DIPPER's options and instructions, see [wiki](https:/
   in the following commands.
 </div><br>
 
-Enter into the bin directory (assuming `$DIPPER_HOME` directs to the DIPPER repository directory). For the docker container `$DIPPER_HOME` is `/home/DIPPER/bin`   
+Enter into the bin directory (assuming `$DIPPER_HOME` directs to the DIPPER repository directory). For the Docker container `$DIPPER_HOME` is `/home/DIPPER/bin`   
 ```bash
 cd $DIPPER_HOME/bin
 ./dipper -h
@@ -253,11 +260,27 @@ Example
 ./dipper -i r -o t -m 1 --add -I ../dataset/t2.unaligned.fa -O tree.nwk -t ../dataset/backbone.nwk
 ```
 
+
+### Protein sequence support <a name="protein"></a>
+DIPPER supports reconstruction of phylogenies from protein sequences (unaligned and aligned). Add `-p` to enable protein mode; use `-i r` or `-i m` for unaligned or aligned FASTA input, respectively, as shown below.
+Usage syntax (aligned FASTA using the JC model)
+```bash
+./dipper -p -i m -o t -d 2 -I <path to aligned protein sequences FASTA file> -O <path to output file>
+```
+Usage syntax (unaligned FASTA)
+```bash
+./dipper -p -i r -o t -I <path to unaligned protein sequences FASTA file> -O <path to output file>
+```
+Example
+```bash
+./dipper -p -i m -o t -d 2 -m 1 -I ../dataset/t3.aligned.fa -O tree.nwk
+```
+
 ### Reproduce DIPPER results <a name="reproduce"></a>
 To reproduce DIPPER results provided here: [https://zenodo.org/records/17259722](https://zenodo.org/records/17259722), follow the instructions provided in [scripts/reproduce_results.sh](https://github.com/TurakhiaLab/DIPPER/blob/main/scripts/reproduce_results.sh)
 
 ##  <a name="contribution"></a> Contributions
-We welcome contributions from the community to enhance the capabilities of **DIPPER**. If you encounter any issues or have suggestions for improvement, please open an issue on [DIPPER GitHub page](https://github.com/TurakhiaLab/DIPPER/issues). For general inquiries and support, reach out to our team.
+We welcome contributions from the community to enhance the capabilities of **DIPPER**. If you encounter any issues or have suggestions for improvement, please open an issue on the [DIPPER GitHub page](https://github.com/TurakhiaLab/DIPPER/issues). For general inquiries and support, reach out to our team.
 
 ##  <a name="cite"></a> Citing DIPPER
 If you use DIPPER in your research or publications, we kindly request that you cite the following paper: 
