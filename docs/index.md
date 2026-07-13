@@ -277,4 +277,4 @@ We welcome contributions from the community to enhance the capabilities of **DIP
 
 ##  <a name="cite"></a> Citing DIPPER
 If you use DIPPER in your research or publications, we kindly request that you cite the following paper:         
-* Sumit Walia, Zexing Chen, Yu-Hsiang Tseng, Yatish Turakhia, "<i>Ultrafast and Ultralarge Distance-Based Phylogenetics Using DIPPER</i>", bioRxiv 2025.08.12.669583; doi: [https://doi.org/10.1101/2025.08.12.669583](https://doi.org/10.1101/2025.08.12.669583)
+* Sumit Walia, Zexing Chen, Yu-Hsiang Tseng, Yatish Turakhia, "<i>Ultrafast and Ultralarge Distance-Based Phylogenetics Using DIPPER</i>", Nature Computational Science (2026). [https://doi.org/10.1038/s43588-026-01015-8](https://doi.org/10.1038/s43588-026-01015-8)

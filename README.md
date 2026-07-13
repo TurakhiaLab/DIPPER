@@ -5,11 +5,12 @@
 [license-badge]: https://img.shields.io/badge/License-MIT-yellow.svg 
 [license-link]: https://github.com/TurakhiaLab/DIPPER/blob/main/LICENSE
 
+[<img src="https://img.shields.io/badge/Published in-Nature Computational Science-red">](https://doi.org/10.1038/s43588-026-01015-8)
 [<img src="https://img.shields.io/badge/Build with-CMake-green.svg?logo=CMake">](https://cmake.org)
 [<img src="https://img.shields.io/badge/Install with-Docker-informational.svg?logo=Docker">](https://hub.docker.com/r/swalia14/dipper)
 [![DOI](https://img.shields.io/badge/DOI-https://zenodo.org/records/17259722-beige)](https://zenodo.org/records/17259722)
+[<img src="https://img.shields.io/badge/Watch it on-Youtube-FF0000.svg?logo=YouTube">](https://www.youtube.com/watch?v=j_Atot3itu4)
 [![Build Status](https://github.com/TurakhiaLab/panman/actions/workflows/ci.yml/badge.svg)](https://github.com/TurakhiaLab/dipper/actions)
-[<img src="https://img.shields.io/badge/Submitted to-bioRxiv-critical.svg?logo=arXiv">](https://doi.org/10.1101/2025.08.12.669583)
 
 <div align="center">
   <img src="docs/images/logo.png"/ width="300">
@@ -284,4 +285,4 @@ We welcome contributions from the community to enhance the capabilities of **DIP
 
 ##  <a name="cite"></a> Citing DIPPER
 If you use DIPPER in your research or publications, we kindly request that you cite the following paper: 
-* Sumit Walia, Zexing Chen, Yu-Hsiang Tseng, Yatish Turakhia, "<i>Ultrafast and Ultralarge Distance-Based Phylogenetics Using DIPPER</i>", bioRxiv 2025.08.12.669583; doi: [https://doi.org/10.1101/2025.08.12.669583](https://doi.org/10.1101/2025.08.12.669583)
+* Sumit Walia, Zexing Chen, Yu-Hsiang Tseng, Yatish Turakhia, "<i>Ultrafast and Ultralarge Distance-Based Phylogenetics Using DIPPER</i>", Nature Computational Science (2026). [https://doi.org/10.1038/s43588-026-01015-8](https://doi.org/10.1038/s43588-026-01015-8)
