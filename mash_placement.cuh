@@ -383,6 +383,8 @@ namespace MashPlacement
         double * h_closest_dis;
         double * h_closest_dis_cluster;
         int * clusterID;
+        int requestedClusterTopK = 1;
+        std::vector<std::vector<int>> clusterTopEdgeIds;
 
         void allocateHostArraysDC (size_t num, size_t totalNum);
         void deallocateHostArraysDC ();
@@ -414,6 +416,7 @@ namespace MashPlacement
 
         void allocateDeviceArraysDC (size_t num, size_t totalNum, int gpuNum=0);
         void deallocateDeviceArraysDC ();
+        void initializeDeviceArraysFromBackboneTreeDC(Tree* t);
         
         void findBackboneTreeDC(
             Param& params,
@@ -469,7 +472,10 @@ namespace MashPlacement
         );
         
 
-        void printTreeDC(std::vector <std::string> name, std::ofstream& output_);
+        void printTreeDC(
+            std::vector <std::string> name,
+            std::ofstream& output_,
+            int rootNode=-1);
     };
     static KPlacementDeviceArraysDC kplacementDeviceArraysDC;
 

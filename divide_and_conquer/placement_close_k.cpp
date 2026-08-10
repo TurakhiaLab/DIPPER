@@ -22,10 +22,10 @@ void MashPlacement::KPlacementDeviceArraysHostDC::allocateHostArraysDC(size_t nu
     h_len = (double *)malloc(totalNumSequences*8*sizeof(double));
     h_nxt = (int *)malloc(totalNumSequences*8*sizeof(int));
     h_belong = (int *)malloc(totalNumSequences*8*sizeof(int));
-    h_closest_dis = (double *)malloc(totalNumSequences*20*sizeof(double));
-    h_closest_id = (int *)malloc(totalNumSequences*20*sizeof(int));
-    h_closest_dis_cluster = (double *)malloc(totalNumSequences*20*sizeof(double));
-    h_closest_id_cluster = (int *)malloc(totalNumSequences*20*sizeof(int));
+    h_closest_dis = (double *)malloc(totalNumSequences*40*sizeof(double));
+    h_closest_id = (int *)malloc(totalNumSequences*40*sizeof(int));
+    h_closest_dis_cluster = (double *)malloc(totalNumSequences*40*sizeof(double));
+    h_closest_id_cluster = (int *)malloc(totalNumSequences*40*sizeof(int));
 
     return;
 }
@@ -204,13 +204,14 @@ void updateClosestNodesCpu(
     int * h_edgeMaskIndex
 ){
     int l=0,r=-1;
-    id[++r]=x,dis[x]=0,from[x]=-1;
+    id[++r]=x,dis[r]=0,from[r]=-1;
     while(l<=r){
         int node=id[l],fb=from[l];
         double d=dis[l];
         l++;
         // 
-        for(int i=head[node];i!=-1 && h_edgeMaskIndex[head[node]]!=-1;i=nxt[i]){
+        for(int i=head[node];i!=-1;i=nxt[i]){
+            if(h_edgeMaskIndex[i]==-1) continue;
             // std::cerr << "updating " << node << " " << head[node]<< " " << e[head[node]] << " " << h_edgeMask[head[node]] << std::endl;
             if(e[i]==fb) continue;
             for(int j=0;j<5;j++){
@@ -248,7 +249,7 @@ void updateClosestNodesInClusterCpu(
     int * belong
 ){
     int l=0,r=-1;
-    id[++r]=x,dis[x]=0,from[x]=-1;
+    id[++r]=x,dis[r]=0,from[r]=-1;
     int ed1=e[cluster_eid], ed2=belong[cluster_eid];
     while(l<=r){
         int node=id[l],fb=from[l];
@@ -589,6 +590,17 @@ void MashPlacement::KPlacementDeviceArraysHostDC::deallocateHostArraysDC(){
     free(h_closest_dis_cluster);
     free(h_dist);
     free(h_len);
+
+    h_head = nullptr;
+    h_e = nullptr;
+    h_nxt = nullptr;
+    h_belong = nullptr;
+    h_closest_id = nullptr;
+    h_closest_id_cluster = nullptr;
+    h_closest_dis = nullptr;
+    h_closest_dis_cluster = nullptr;
+    h_dist = nullptr;
+    h_len = nullptr;
 
 }
 

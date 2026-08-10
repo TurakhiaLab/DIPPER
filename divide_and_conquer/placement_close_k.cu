@@ -21,6 +21,7 @@
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <chrono>
+#include <cmath>
 #include <iostream>
 #include <cub/cub.cuh>
 #include <cuda_runtime.h>
@@ -69,26 +70,26 @@ void MashPlacement::KPlacementDeviceArraysDC::allocateDeviceArraysDC(size_t num,
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_dis, totalNumSequences*20*sizeof(double));
+    err = cudaMalloc(&d_closest_dis, totalNumSequences*40*sizeof(double));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_id, totalNumSequences*20*sizeof(int));
+    err = cudaMalloc(&d_closest_id, totalNumSequences*40*sizeof(int));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
 
-    err = cudaMalloc(&d_closest_dis_cluster, totalNumSequences*20*sizeof(double));
+    err = cudaMalloc(&d_closest_dis_cluster, totalNumSequences*40*sizeof(double));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
         exit(1);
     }
-    err = cudaMalloc(&d_closest_id_cluster, totalNumSequences*20*sizeof(int));
+    err = cudaMalloc(&d_closest_id_cluster, totalNumSequences*40*sizeof(int));
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Gpu_ERROR: cudaMalloc failed!\n");
@@ -153,8 +154,8 @@ __global__ void calculateBranchLengthDC(
     for (int idx_=idx; idx_<lim; idx_+=gs*bs) {
         if(idx_>=num*4-4||belong[idx_]<e[idx_]){
             thrust::tuple <int,double,double> minTuple(0,0,2);
-            minPos[bx*bs+tx]=minTuple;
-            return;
+            minPos[idx_]=minTuple;
+            continue;
         }
         int x=belong[idx_],oth=e[idx_];
         int eid=idx_,otheid;
@@ -182,7 +183,7 @@ __global__ void calculateBranchLengthDC(
         double rest=len[eid]-dis1-dis2;
         dis1+=rest/2,dis2+=rest/2;
         thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
-        minPos[bx*bs+tx]=minTuple;
+        minPos[idx_]=minTuple;
     }
 }
 
@@ -205,16 +206,15 @@ __global__ void calculateBranchLengthSpecialIDDC(
     int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
     int idx=tx+bs*bx;
     // if(idx>=numToCalculate) return;
-    for (int idx_=idx; idx_<numToCalculate; idx_+=gs*bs) {
-        if(idx_>=numToCalculate) return;
-        idx_ = d_edgeMask[idx_];
-        if(belong[idx_]<e[idx_]){
+    for (int slot=idx; slot<numToCalculate; slot+=gs*bs) {
+        const int edge_idx = d_edgeMask[slot];
+        if(belong[edge_idx]<e[edge_idx]){
             thrust::tuple <int,double,double> minTuple(0,0,2);
-            minPos[bx*bs+tx]=minTuple;
-            return;
+            minPos[slot]=minTuple;
+            continue;
         }
-        int x=belong[idx_],oth=e[idx_];
-        int eid=idx_,otheid;
+        int x=belong[edge_idx],oth=e[edge_idx];
+        int eid=edge_idx,otheid;
         double dis1=0, dis2=0, val;
         for(int i=0;i<5;i++)
             if(closest_id[eid*5+i]!=-1){
@@ -239,7 +239,7 @@ __global__ void calculateBranchLengthSpecialIDDC(
         double rest=len[eid]-dis1-dis2;
         dis1+=rest/2,dis2+=rest/2;
         thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
-        minPos[bx*bs+tx]=minTuple;
+        minPos[slot]=minTuple;
     }
 }
 
@@ -257,7 +257,7 @@ __global__ void updateClosestNodesDC(
     double * dis
 ){
     int l=0,r=-1;
-    id[++r]=x,dis[x]=0,from[x]=-1;
+    id[++r]=x,dis[r]=0,from[r]=-1;
     while(l<=r){
         int node=id[l],fb=from[l];
         double d=dis[l];
@@ -296,12 +296,13 @@ __global__ void updateClosestNodesClusterDC(
     int * d_edgeMaskIndex
 ){
     int l=0,r=-1;
-    id[++r]=x,dis[x]=0,from[x]=-1;
+    id[++r]=x,dis[r]=0,from[r]=-1;
     while(l<=r){
         int node=id[l],fb=from[l];
         double d=dis[l];
         l++;
-        for(int i=head[node];i!=-1&&d_edgeMaskIndex[head[node]]==head[node];i=nxt[i]){
+        for(int i=head[node];i!=-1;i=nxt[i]){
+            if(d_edgeMaskIndex[i]!=i) continue;
             if(e[i]==fb) continue;
             for(int j=0;j<5;j++){
                 double nowd=closest_dis[i*5+j];
@@ -337,7 +338,7 @@ __global__ void updateClosestNodesInClusterDC(
     int * d_edgeMaskIndex
 ){
     int l=0,r=-1;
-    id[++r]=x,dis[x]=0,from[x]=-1;
+    id[++r]=x,dis[r]=0,from[r]=-1;
     int ed1=e[cluster_eid], ed2=belong[cluster_eid];
     while(l<=r){
         int node=id[l],fb=from[l];
@@ -661,20 +662,174 @@ void MashPlacement::KPlacementDeviceArraysDC::deallocateDeviceArraysDC(){
     cudaFree(d_nxt);
     cudaFree(d_belong);
     cudaFree(d_closest_id);
+    cudaFree(d_closest_id_cluster);
     cudaFree(d_dist);
     cudaFree(d_len);
     cudaFree(d_closest_dis);
+    cudaFree(d_closest_dis_cluster);
+
+    d_head = nullptr;
+    d_e = nullptr;
+    d_nxt = nullptr;
+    d_belong = nullptr;
+    d_closest_id = nullptr;
+    d_closest_id_cluster = nullptr;
+    d_dist = nullptr;
+    d_len = nullptr;
+    d_closest_dis = nullptr;
+    d_closest_dis_cluster = nullptr;
+}
+
+void MashPlacement::KPlacementDeviceArraysDC::initializeDeviceArraysFromBackboneTreeDC(Tree *t)
+{
+    if (t == nullptr || t->root == nullptr) {
+        fprintf(stderr, "Error: Backbone tree is null in initializeDeviceArraysFromBackboneTreeDC.\n");
+        exit(1);
+    }
+
+    const size_t node_slots = static_cast<size_t>(totalNumSequences) * 2;
+    const size_t edge_slots = static_cast<size_t>(totalNumSequences) * 8;
+
+    std::vector<int> h_head(node_slots, -1);
+    std::vector<int> h_e(edge_slots, -1);
+    std::vector<int> h_nxt(edge_slots, -1);
+    std::vector<int> h_belong(edge_slots, -1);
+    std::vector<double> h_len(edge_slots, 2.0);
+
+    size_t edgeCount = 0;
+    std::function<void(Node*)> dfs = [&](Node* node) {
+        if (node == nullptr) {
+            return;
+        }
+        for (Node* child : node->children) {
+            dfs(child);
+        }
+        if (node->parent == nullptr) {
+            return;
+        }
+        if (edgeCount + 2 > edge_slots) {
+            fprintf(stderr, "Error: Backbone tree exceeds DC edge capacity.\n");
+            exit(1);
+        }
+        const int child_idx = node->idx;
+        const int parent_idx = node->parent->idx;
+        if (child_idx < 0 || parent_idx < 0 ||
+            child_idx >= static_cast<int>(node_slots) ||
+            parent_idx >= static_cast<int>(node_slots)) {
+            fprintf(stderr, "Error: Backbone tree node index exceeds DC node capacity.\n");
+            exit(1);
+        }
+
+        h_e[edgeCount] = parent_idx;
+        h_len[edgeCount] = node->bl;
+        h_belong[edgeCount] = child_idx;
+        h_nxt[edgeCount] = h_head[static_cast<size_t>(child_idx)];
+        h_head[static_cast<size_t>(child_idx)] = static_cast<int>(edgeCount);
+        ++edgeCount;
+
+        h_e[edgeCount] = child_idx;
+        h_len[edgeCount] = node->bl;
+        h_belong[edgeCount] = parent_idx;
+        h_nxt[edgeCount] = h_head[static_cast<size_t>(parent_idx)];
+        h_head[static_cast<size_t>(parent_idx)] = static_cast<int>(edgeCount);
+        ++edgeCount;
+    };
+    dfs(t->root);
+
+    const size_t expected_edges =
+        static_cast<size_t>(std::max(0, numSequences * 4 - 4));
+    if (edgeCount != expected_edges) {
+        fprintf(stderr,
+                "Error: Fixed-backbone DC expected %zu directed edges, found %zu.\n",
+                expected_edges,
+                edgeCount);
+        exit(1);
+    }
+
+    auto checkCopy = [](cudaError_t err, const char* context) {
+        if (err != cudaSuccess) {
+            fprintf(stderr, "Gpu_ERROR: %s failed: %s\n", context, cudaGetErrorString(err));
+            exit(1);
+        }
+    };
+
+    checkCopy(cudaMemcpy(d_head, h_head.data(), node_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy d_head");
+    checkCopy(cudaMemcpy(d_e, h_e.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy d_e");
+    checkCopy(cudaMemcpy(d_nxt, h_nxt.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy d_nxt");
+    checkCopy(cudaMemcpy(d_belong, h_belong.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy d_belong");
+    checkCopy(cudaMemcpy(d_len, h_len.data(), edge_slots * sizeof(double), cudaMemcpyHostToDevice),
+              "cudaMemcpy d_len");
+
+    int *d_id = nullptr;
+    int *d_from = nullptr;
+    double *d_dis = nullptr;
+    checkCopy(cudaMalloc(&d_id, node_slots * sizeof(int)), "cudaMalloc d_id");
+    checkCopy(cudaMalloc(&d_from, node_slots * sizeof(int)), "cudaMalloc d_from");
+    checkCopy(cudaMalloc(&d_dis, node_slots * sizeof(double)), "cudaMalloc d_dis");
+
+    initializeDC<<<1024, 1024>>>(
+        static_cast<int>(edge_slots),
+        static_cast<int>(node_slots),
+        d_closest_dis,
+        d_closest_id,
+        d_head,
+        d_nxt,
+        d_belong,
+        d_e);
+    checkCopy(cudaGetLastError(), "initializeDC");
+    checkCopy(cudaDeviceSynchronize(), "initializeDC synchronize");
+
+    // Restore the loaded topology after initializeDC reset the adjacency arrays.
+    checkCopy(cudaMemcpy(d_head, h_head.data(), node_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy restore d_head");
+    checkCopy(cudaMemcpy(d_e, h_e.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy restore d_e");
+    checkCopy(cudaMemcpy(d_nxt, h_nxt.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy restore d_nxt");
+    checkCopy(cudaMemcpy(d_belong, h_belong.data(), edge_slots * sizeof(int), cudaMemcpyHostToDevice),
+              "cudaMemcpy restore d_belong");
+    checkCopy(cudaMemcpy(d_len, h_len.data(), edge_slots * sizeof(double), cudaMemcpyHostToDevice),
+              "cudaMemcpy restore d_len");
+
+    for (int tip_id = 0; tip_id < numSequences; ++tip_id) {
+        updateClosestNodesDC<<<1, 1>>>(
+            d_head,
+            d_nxt,
+            d_e,
+            d_len,
+            d_closest_dis,
+            d_closest_id,
+            tip_id,
+            d_id,
+            d_from,
+            d_dis);
+        checkCopy(cudaGetLastError(), "updateClosestNodesDC");
+    }
+    checkCopy(cudaDeviceSynchronize(), "updateClosestNodesDC synchronize");
+    cudaFree(d_id);
+    cudaFree(d_from);
+    cudaFree(d_dis);
+
+    idx = static_cast<int>(edgeCount);
+    bd = numSequences;
 }
 
 
 /** Copy tree arrays to host and emit Newick via recursive DFS. */
-void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::string> name, std::ofstream& output_){
+void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(
+    std::vector <std::string> name,
+    std::ofstream& output_,
+    int rootNode){
     int * h_head = new int[totalNumSequences*2];
     int * h_e = new int[totalNumSequences*8];
     int * h_nxt = new int[totalNumSequences*8];
     double * h_len = new double[totalNumSequences*8];
-    double * h_closest_dis = new double[totalNumSequences*20];
-    int * h_closest_id = new int[totalNumSequences*20];
+    double * h_closest_dis = new double[totalNumSequences*40];
+    int * h_closest_id = new int[totalNumSequences*40];
     auto err = cudaMemcpy(h_head, d_head, totalNumSequences*2*sizeof(int),cudaMemcpyDeviceToHost);
     if (err != cudaSuccess)
     {
@@ -771,10 +926,12 @@ void MashPlacement::KPlacementDeviceArraysDC::printTreeDC(std::vector <std::stri
         else output_<<name[node];
     };
 
+    const int print_root =
+        (rootNode >= 0) ? rootNode : (totalNumSequences + bd - 2);
     if (!g_printBinaryNewick) {
-        print(totalNumSequences + bd - 2, -1);
+        print(print_root, -1);
     } else {
-        print_binary(totalNumSequences + bd - 2, -1);
+        print_binary(print_root, -1);
     }
     output_ << ";";
 }
@@ -837,7 +994,7 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
     // int threadNum = 1024, blockNum = (totalNumSequences*4-4+threadNum-1)/threadNum;
     int threadNum = 1024, blockNum = 1024;
     initializeDC <<<blockNum, threadNum>>> (
-        totalNumSequences*4-4,
+        totalNumSequences*8,
         totalNumSequences*2,
         d_closest_dis,
         d_closest_id,
@@ -1016,7 +1173,11 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     int idx=params.backboneSize*4-4;
     
     kplacementDeviceArraysHost.clusterID = new int[totalNumSequences];
+    kplacementDeviceArraysHost.clusterTopEdgeIds.assign(
+        totalNumSequences, std::vector<int>{});
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
+    thrust::host_vector <thrust::tuple<int,double,double>> hostMinPos(
+        totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
 
     auto clusterStart = std::chrono::high_resolution_clock::now();
@@ -1098,6 +1259,52 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
             auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
             thrust::tuple<int,double,double> smallest=*iter;
             kplacementDeviceArraysHost.clusterID[j] = thrust::get<0>(smallest);
+            const int requested_topk = std::max(
+                1, kplacementDeviceArraysHost.requestedClusterTopK);
+            hostMinPos = minPos;
+            std::vector<std::pair<double, int>> ranked_edges;
+            ranked_edges.reserve(numSequences * 2 - 3);
+            for (int edge_idx = 0;
+                 edge_idx < numSequences * 4 - 4;
+                 ++edge_idx) {
+                const int candidate_id = thrust::get<0>(hostMinPos[edge_idx]);
+                const double additional_distance =
+                    thrust::get<2>(hostMinPos[edge_idx]);
+                if (candidate_id != edge_idx ||
+                    !std::isfinite(additional_distance) ||
+                    additional_distance >= 2.0) {
+                    continue;
+                }
+                ranked_edges.emplace_back(additional_distance, candidate_id);
+            }
+            const int keep = std::min(
+                requested_topk,
+                static_cast<int>(ranked_edges.size()));
+            std::partial_sort(
+                ranked_edges.begin(),
+                ranked_edges.begin() + keep,
+                ranked_edges.end(),
+                [](const auto& lhs, const auto& rhs) {
+                    if (lhs.first != rhs.first) {
+                        return lhs.first < rhs.first;
+                    }
+                    return lhs.second < rhs.second;
+                });
+            auto& top_edges =
+                kplacementDeviceArraysHost.clusterTopEdgeIds[j];
+            top_edges.reserve(requested_topk);
+            const int original_top1 =
+                kplacementDeviceArraysHost.clusterID[j];
+            top_edges.push_back(original_top1);
+            for (int rank = 0; rank < keep; ++rank) {
+                if (ranked_edges[rank].second == original_top1) {
+                    continue;
+                }
+                top_edges.push_back(ranked_edges[rank].second);
+                if (static_cast<int>(top_edges.size()) == requested_topk) {
+                    break;
+                }
+            }
             // std::cerr << "Sequence " << j << " assigned to cluster " << kplacementDeviceArraysHost.clusterID[j] << "\n";
         }
     }
@@ -1149,28 +1356,28 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     //     exit(1);
     // }
 
-    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_dis, d_closest_dis, totalNumSequences*20*sizeof(double),cudaMemcpyDeviceToHost);
+    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_dis, d_closest_dis, totalNumSequences*40*sizeof(double),cudaMemcpyDeviceToHost);
     // if (err != cudaSuccess)
     // {
     //     fprintf(stderr, "Gpu_ERROR: d_closest_dis cudaMemcpy failed!\n");
     //     exit(1);
     // }
 
-    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_id, d_closest_id, totalNumSequences*20*sizeof(int),cudaMemcpyDeviceToHost);
+    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_id, d_closest_id, totalNumSequences*40*sizeof(int),cudaMemcpyDeviceToHost);
     // if (err != cudaSuccess)
     // {
     //     fprintf(stderr, "Gpu_ERROR: d_closest_id cudaMemcpy failed!\n");
     //     exit(1);
     // }
 
-    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_dis_cluster, d_closest_dis_cluster, totalNumSequences*20*sizeof(double),cudaMemcpyDeviceToHost);
+    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_dis_cluster, d_closest_dis_cluster, totalNumSequences*40*sizeof(double),cudaMemcpyDeviceToHost);
     // if (err != cudaSuccess)
     // {
     //     fprintf(stderr, "Gpu_ERROR: d_closest_dis_cluster cudaMemcpy failed!\n");
     //     exit(1);
     // }
 
-    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_id_cluster, d_closest_id_cluster, totalNumSequences*20*sizeof(int),cudaMemcpyDeviceToHost);
+    // err = cudaMemcpy(kplacementDeviceArraysHost.h_closest_id_cluster, d_closest_id_cluster, totalNumSequences*40*sizeof(int),cudaMemcpyDeviceToHost);
     // if (err != cudaSuccess)
     // {
     //     fprintf(stderr, "Gpu_ERROR: d_closest_id_cluster cudaMemcpy failed!\n");

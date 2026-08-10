@@ -119,9 +119,6 @@ __device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, 
     sharedUseful[tx] = 0;
     sharedMatch[tx] = 0;
 
-    if (tx >= compLen) {
-        return; // If thread index is out of bounds, exit early
-    }
     for (int i=tx; i<compLen; i+=1024) {
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
         if (isProtein) {
@@ -210,53 +207,54 @@ __device__ void calculateParamsParallel_TJ(int tarRowId, int curRowId, int seqLe
     __shared__ int sharedFrac3[128];
     __shared__ int sharedMatch[128];
     __shared__ int sharedTotal[128];
-    sharedMatch[tx] = 0;
-    sharedTotal[tx] = 0;
-    sharedP0[tx] = 0;
-    sharedP1[tx] = 0;
-    sharedP2[tx] = 0;
-    sharedP3[tx] = 0;
-    sharedFrac0[tx] = 0;
-    sharedFrac1[tx] = 0;
-    sharedFrac2[tx] = 0;
-    sharedFrac3[tx] = 0;
-
-    if (tx >= compLen) {
-        return; // If thread index is out of bounds, exit early
+    const bool active = tx < 128;
+    if (active) {
+        sharedMatch[tx] = 0;
+        sharedTotal[tx] = 0;
+        sharedP0[tx] = 0;
+        sharedP1[tx] = 0;
+        sharedP2[tx] = 0;
+        sharedP3[tx] = 0;
+        sharedFrac0[tx] = 0;
+        sharedFrac1[tx] = 0;
+        sharedFrac2[tx] = 0;
+        sharedFrac3[tx] = 0;
     }
-    for (int i=tx; i<compLen; i+=128) {
-        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
-        for(int j=0;j<16&&i*16+j<seqLen;j++){
-            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-            if(et>=4||ec>=4) continue;
-            if (ec == 0) sharedFrac0[tx]++;
-            else if (ec == 1) sharedFrac1[tx]++;
-            else if (ec == 2) sharedFrac2[tx]++;
-            else if (ec == 3) sharedFrac3[tx]++;
-            if (et == 0) sharedFrac0[tx]++;
-            else if (et == 1) sharedFrac1[tx]++;
-            else if (et == 2) sharedFrac2[tx]++;
-            else if (et == 3) sharedFrac3[tx]++;
-            sharedTotal[tx]++;
-            if(ec>et){
-                int temp=ec;
-                ec=et,et=temp;
+
+    __syncthreads();
+
+    if (active) {
+        for (int i=tx; i<compLen; i+=128) {
+            long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+            for(int j=0;j<16&&i*16+j<seqLen;j++){
+                int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+                if(et>=4||ec>=4) continue;
+                if (ec == 0) sharedFrac0[tx]++;
+                else if (ec == 1) sharedFrac1[tx]++;
+                else if (ec == 2) sharedFrac2[tx]++;
+                else if (ec == 3) sharedFrac3[tx]++;
+                if (et == 0) sharedFrac0[tx]++;
+                else if (et == 1) sharedFrac1[tx]++;
+                else if (et == 2) sharedFrac2[tx]++;
+                else if (et == 3) sharedFrac3[tx]++;
+                sharedTotal[tx]++;
+                if(ec>et){
+                    int temp=ec;
+                    ec=et,et=temp;
+                }
+                if(ec==et) sharedMatch[tx]++;
+                if(ec==0&&et==2) sharedP0[tx]++;
+                else if(ec==0&&et==3) sharedP1[tx]++;
+                else if(ec==1&&et==2) sharedP2[tx]++;
+                else if(ec==1&&et==3) sharedP3[tx]++;
             }
-            if(ec==et) sharedMatch[tx]++;
-            if(ec==0&&et==2) sharedP0[tx]++;
-            else if(ec==0&&et==3) sharedP1[tx]++;
-            else if(ec==1&&et==2) sharedP2[tx]++;
-            else if(ec==1&&et==3) sharedP3[tx]++;
         }
     }
     __syncthreads();
 
     // reduction
-    if (tx >= 128) {
-        return; // If thread index is out of bounds, exit early
-    }
     for(int stride=128/2; stride>0; stride/=2){
-        if(tx<stride){
+        if(active && tx<stride){
             sharedP0[tx] += sharedP0[tx + stride];
             sharedP1[tx] += sharedP1[tx + stride];
             sharedP2[tx] += sharedP2[tx + stride];
@@ -320,9 +318,6 @@ __device__ void calculateParamsParallel_K2P(int tarRowId, int curRowId, int seqL
     sharedQ[tx] = 0;
     sharedTot[tx] = 0;
 
-    if (tx >= compLen) {
-        return; // If thread index is out of bounds, exit early
-    }
     for (int i=tx; i<compLen; i+=1024) {
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
@@ -384,31 +379,36 @@ __device__ void calculateParamsParallel_TAMURA(int tarRowId, int curRowId, int s
     __shared__ int sharedTot[512];
     __shared__ int sharedGC1[512];
     __shared__ int sharedGC2[512];
-    sharedP[tx] = 0;
-    sharedQ[tx] = 0;
-    sharedTot[tx] = 0;
-    sharedGC1[tx] = 0;
-    sharedGC2[tx] = 0;
-    if (tx >= compLen) {
-        return; // If thread index is out of bounds, exit early
+    const bool active = tx < 512;
+    if (active) {
+        sharedP[tx] = 0;
+        sharedQ[tx] = 0;
+        sharedTot[tx] = 0;
+        sharedGC1[tx] = 0;
+        sharedGC2[tx] = 0;
     }
-    for (int i=tx; i<compLen; i+=512) {
-        long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
-        for(int j=0;j<16&&i*16+j<seqLen;j++){
-            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-            if(et>=4||ec>=4) continue;
-            sharedTot[tx]++;
-            if(et==ec) continue;
-            if(et%2==ec%2) sharedP[tx]++;
-            else sharedQ[tx]++;
-            if(ec==1||ec==2) sharedGC1[tx]++;
-            if(et==1||et==2) sharedGC2[tx]++;
+
+    __syncthreads();
+
+    if (active) {
+        for (int i=tx; i<compLen; i+=512) {
+            long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
+            for(int j=0;j<16&&i*16+j<seqLen;j++){
+                int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+                if(et>=4||ec>=4) continue;
+                sharedTot[tx]++;
+                if(et==ec) continue;
+                if(et%2==ec%2) sharedP[tx]++;
+                else sharedQ[tx]++;
+                if(ec==1||ec==2) sharedGC1[tx]++;
+                if(et==1||et==2) sharedGC2[tx]++;
+            }
         }
     }
     __syncthreads();
     // reduce the results in shared memory
     for (int stride = 512 / 2; stride > 0; stride /= 2) {
-        if (tx < stride) {
+        if (active && tx < stride) {
             sharedP[tx] += sharedP[tx + stride];
             sharedQ[tx] += sharedQ[tx + stride];
             sharedTot[tx] += sharedTot[tx + stride];
@@ -515,5 +515,4 @@ void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int ro
         params.isProtein
     );
 }
-
 

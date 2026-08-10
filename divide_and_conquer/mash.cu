@@ -636,10 +636,10 @@ __global__ void mashDistConstructionSpecialIDDC(
         int uni = 0, bPos = rowId, inter = 0;
         uint64_t aval, bval;
         int idx_const = idx_;
-        if (idx_ > backboneSize) idx_const = mapIdx;
+        if (idx_ >= backboneSize) idx_const = mapIdx;
     
         for(int i=idx_const; uni < sketchSize; i+=backboneSize, uni++){
-            if (idx_ > backboneSize) aval = d_hashListConst[i];
+            if (idx_ >= backboneSize) aval = d_hashListConst[i];
             else aval = d_hashListBackbone[i];
             while(uni < sketchSize && bPos < backboneSize * sketchSize){
                 bval = d_hashListConst[bPos];
@@ -677,7 +677,7 @@ __global__ void mashDistConstructionSpecialIDClusteringDC(
     int idx_const = idx;
 
     for (int i=idx_const*sketchSize; i<idx_const*sketchSize+sketchSize; i++) {
-        if (idx > backboneSize) aval = d_hashListConst[i];
+        if (idx >= backboneSize) aval = d_hashListConst[i];
         else                    aval = d_hashListBackbone[i];
         
         while (bPos < sketchSize && uni < sketchSize) {
