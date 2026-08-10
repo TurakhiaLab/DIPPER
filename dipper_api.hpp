@@ -1101,6 +1101,29 @@ public:
         _resetDivideAndConquerSchedulerState();
     }
 
+    /** Return the current D&C scheduler order without placing any query. */
+    std::vector<std::string> exportDivideAndConquerScheduledQueryNames(
+        size_t limit) const
+    {
+        _ensureDivideAndConquerSchedulerReady();
+        std::vector<std::string> out;
+        const size_t scheduled_count = m_dcScheduledQueryNames.empty()
+            ? m_numSequences - m_dcBackboneSize
+            : m_dcScheduledQueryNames.size();
+        out.reserve(std::min(limit, scheduled_count));
+        for (int cluster_id : m_dcOrderedClusters) {
+            for (int query_idx :
+                 m_dcClusterQueries[static_cast<size_t>(cluster_id)]) {
+                if (out.size() >= limit) {
+                    return out;
+                }
+                out.push_back(m_sortedNames.at(
+                    static_cast<size_t>(query_idx)));
+            }
+        }
+        return out;
+    }
+
     std::vector<std::pair<std::string, int>>
     exportEffectiveQueryClusterAssignments() const
     {
