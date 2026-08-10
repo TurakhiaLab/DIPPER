@@ -1101,6 +1101,19 @@ public:
         _resetDivideAndConquerSchedulerState();
     }
 
+    void setBackboneTipStableLabels(
+        const std::vector<std::pair<std::string, int>>& labels)
+    {
+        m_dcBackboneTipStableLabels.clear();
+        for (const auto& [name, label] : labels) {
+            if (label < 0 ||
+                !m_dcBackboneTipStableLabels.emplace(name, label).second) {
+                throw std::invalid_argument(
+                    "[DIPPER] invalid or duplicate backbone stable label.");
+            }
+        }
+    }
+
     /** Return the current D&C scheduler order without placing any query. */
     std::vector<std::string> exportDivideAndConquerScheduledQueryNames(
         size_t limit) const
@@ -2195,6 +2208,7 @@ private:
     mutable std::vector<std::tuple<int, double, double>> m_dcMinPos;
     mutable std::unordered_map<int, int>  m_dcNodeToLabel;
     mutable std::unordered_map<int, int>  m_dcLabelToNode;
+    std::unordered_map<std::string, int>  m_dcBackboneTipStableLabels;
     mutable int                           m_dcNextLabel = 0;
     mutable int                           m_dcRootNode = -1;
     mutable bool                          m_dcPendingStepReady = false;
@@ -2570,7 +2584,26 @@ private:
         if (existing != m_dcNodeToLabel.end()) {
             return existing->second;
         }
-        const int label = m_dcNextLabel++;
+        int label = -1;
+        if (node_idx >= 0 &&
+            node_idx < static_cast<int>(m_sortedNames.size())) {
+            const std::string& name =
+                m_sortedNames[static_cast<size_t>(node_idx)];
+            const auto tip_it = m_dcBackboneTipStableLabels.find(name);
+            if (tip_it != m_dcBackboneTipStableLabels.end()) {
+                label = tip_it->second;
+            } else if (name.rfind("__mlipper_id_", 0) == 0) {
+                label = std::stoi(name.substr(13));
+            }
+        }
+        if (label < 0) {
+            label = m_dcNextLabel;
+        }
+        if (m_dcLabelToNode.count(label) != 0) {
+            throw std::runtime_error(
+                "[DIPPER] duplicate stable node label in backbone tree.");
+        }
+        m_dcNextLabel = std::max(m_dcNextLabel, label + 1);
         m_dcNodeToLabel[node_idx] = label;
         m_dcLabelToNode[label] = node_idx;
         return label;

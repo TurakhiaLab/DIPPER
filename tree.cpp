@@ -457,6 +457,9 @@ Node* parseNewickSubtree(Tree* tree, const std::string& s, Node* parent) {
         }
         int idx = static_cast<int>(tree->m_currInternalNode + 1);
         std::string nid = tree->newInternalNodeId();
+        if (labelLen.first.rfind("__mlipper_id_", 0) == 0) {
+            nid = labelLen.first;
+        }
         Node* inode = nullptr;
         if (parent == nullptr) {
             inode = new Node(nid, edgeBl);
