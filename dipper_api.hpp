@@ -449,6 +449,7 @@ public:
         m_dcTreeBuilt = false;
         m_queryClusterIds.clear();
         m_queryEffectiveClusterIds.clear();
+        m_dcScheduledQueryNames.clear();
         m_queryClusterIdsReady = false;
         m_computedQueryClusterTopK = 0;
         m_queryClusterBackboneSize = 0;
@@ -908,8 +909,10 @@ public:
                 return false;
             }
             _ensureDivideAndConquerSchedulerReady();
-            return m_dcProcessedQueryCount <
-                   (m_numSequences - m_dcBackboneSize);
+            const size_t scheduled_count = m_dcScheduledQueryNames.empty()
+                ? m_numSequences - m_dcBackboneSize
+                : m_dcScheduledQueryNames.size();
+            return m_dcProcessedQueryCount < scheduled_count;
         }
         if (m_state == State::SeqsLoaded) {
             const int initial_query_idx =
@@ -1064,6 +1067,38 @@ public:
         if (m_dcSchedulerReady) {
             _resetDivideAndConquerSchedulerState();
         }
+    }
+
+    /** Restrict the D&C insertion scheduler to a named query shortlist. */
+    void setDivideAndConquerScheduledQueries(
+        const std::vector<std::string>& query_names)
+    {
+        _ensureDivideAndConquerClustersReady();
+        if (m_dcProcessedQueryCount != 0 || m_dcActiveClusterId >= 0 ||
+            m_dcPendingStepReady) {
+            throw std::logic_error(
+                "[DIPPER] scheduled queries must be installed before query insertion.");
+        }
+        if (query_names.empty()) {
+            throw std::invalid_argument(
+                "[DIPPER] scheduled query shortlist must not be empty.");
+        }
+        std::unordered_set<std::string> available;
+        available.reserve(m_numSequences - m_dcBackboneSize);
+        for (size_t idx = m_dcBackboneSize; idx < m_numSequences; ++idx) {
+            available.insert(m_sortedNames[idx]);
+        }
+        m_dcScheduledQueryNames.clear();
+        m_dcScheduledQueryNames.reserve(query_names.size());
+        for (const std::string& name : query_names) {
+            if (available.count(name) == 0) {
+                throw std::invalid_argument(
+                    "[DIPPER] scheduled query shortlist names an unknown query: " +
+                    name);
+            }
+            m_dcScheduledQueryNames.insert(name);
+        }
+        _resetDivideAndConquerSchedulerState();
     }
 
     std::vector<std::pair<std::string, int>>
@@ -2106,6 +2141,7 @@ private:
     bool                                  m_dcTreeBuilt = false;
     mutable std::vector<int>              m_queryClusterIds;
     mutable std::vector<int>              m_queryEffectiveClusterIds;
+    mutable std::unordered_set<std::string> m_dcScheduledQueryNames;
     mutable int                           m_requestedQueryClusterTopK = 1;
     mutable int                           m_computedQueryClusterTopK = 0;
     mutable bool                          m_queryClusterIdsReady = false;
@@ -2576,6 +2612,10 @@ private:
             static_cast<size_t>(cluster_slots),
             std::pair<int, int>{-1, -1});
         for (size_t idx = m_dcBackboneSize; idx < m_numSequences; ++idx) {
+            if (!m_dcScheduledQueryNames.empty() &&
+                m_dcScheduledQueryNames.count(m_sortedNames[idx]) == 0) {
+                continue;
+            }
             const std::vector<int>& scheduled_cluster_ids =
                 m_queryEffectiveClusterIds.empty()
                     ? m_queryClusterIds
@@ -3673,7 +3713,10 @@ private:
         if (m_dcPendingStepReady) {
             return;
         }
-        if (m_dcProcessedQueryCount >= (m_numSequences - m_dcBackboneSize)) {
+        const size_t scheduled_count = m_dcScheduledQueryNames.empty()
+            ? m_numSequences - m_dcBackboneSize
+            : m_dcScheduledQueryNames.size();
+        if (m_dcProcessedQueryCount >= scheduled_count) {
             return;
         }
         if (m_dcActiveClusterId < 0 && !_startNextDivideAndConquerCluster()) {
