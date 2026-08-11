@@ -322,6 +322,17 @@ public:
         m_rawSeqs      = sequences;
         m_rawNames     = names;
         m_numSequences = sequences.size();
+        m_rawNameToIndex.clear();
+        m_rawNameToIndex.reserve(m_rawNames.size());
+        for (size_t idx = 0; idx < m_rawNames.size(); ++idx) {
+            const auto [_, inserted] =
+                m_rawNameToIndex.emplace(m_rawNames[idx], idx);
+            if (!inserted) {
+                throw std::invalid_argument(
+                    "[DIPPER] loadSequences: duplicate sequence name '" +
+                    m_rawNames[idx] + "'.");
+            }
+        }
 
         if (hasBackbone) {
             // Rebuild the tree with totalLeaves = m_numSequences so that
@@ -962,7 +973,7 @@ public:
                 "[DIPPER] exportBackboneAlignment: sortedNames() is smaller than backboneSize().");
         }
 
-        const std::unordered_map<std::string, size_t> raw_name_to_index =
+        const auto& raw_name_to_index =
             _buildRawNameToIndexMap("exportBackboneAlignment");
         std::vector<NamedSequence> out;
         out.reserve(current_backbone_size);
@@ -993,6 +1004,29 @@ public:
                 m_queryClusterIds[idx]);
         }
         return out;
+    }
+
+    /**
+     * Request the query-clustering candidate depth before the first DC
+     * clustering pass.  Calling exportQueryTopKBackboneCandidates() with a
+     * larger k after clustering is valid, but necessarily recomputes the
+     * full query-to-backbone ranking.  Large-backbone clients should set the
+     * final depth before initialization so the first pass produces all of
+     * the candidates they need.
+     */
+    void setQueryClusterTopK(int k)
+    {
+        if (k <= 0) {
+            throw std::invalid_argument(
+                "[DIPPER] setQueryClusterTopK: k must be positive.");
+        }
+        if (m_queryClusterIdsReady && k > m_computedQueryClusterTopK) {
+            throw std::logic_error(
+                "[DIPPER] setQueryClusterTopK: set the requested depth before "
+                "the first clustering pass.");
+        }
+        m_requestedQueryClusterTopK =
+            std::max(m_requestedQueryClusterTopK, k);
     }
 
     std::vector<QueryTopKBackboneCandidates>
@@ -1183,7 +1217,7 @@ public:
                 "[DIPPER] exportPendingQuery: nextQueryIndex() is out of range for sortedNames().");
         }
 
-        const std::unordered_map<std::string, size_t> raw_name_to_index =
+        const auto& raw_name_to_index =
             _buildRawNameToIndexMap("exportPendingQuery");
         const std::string& name = m_sortedNames[name_idx];
         const auto raw_it = raw_name_to_index.find(name);
@@ -2142,6 +2176,7 @@ private:
     std::string                  m_backboneNewick;            // stored for deferred rebuild
     std::vector<std::string>     m_rawSeqs;
     std::vector<std::string>     m_rawNames;
+    std::unordered_map<std::string, size_t> m_rawNameToIndex;
     std::vector<std::string>     m_sortedNames;
     std::unordered_map<int, int> m_idMap;
     size_t m_numSequences = 0;
@@ -3857,7 +3892,7 @@ private:
                 "[DIPPER] _ensureDivideAndConquerPendingStepReady: candidate-edge labels are unavailable.");
         }
 
-        const std::unordered_map<std::string, size_t> raw_name_to_index =
+        const auto& raw_name_to_index =
             _buildRawNameToIndexMap("exportPendingQuery");
         const std::string& name =
             m_sortedNames[static_cast<size_t>(query_idx)];
@@ -3934,22 +3969,15 @@ private:
             m_dcBackboneSize;
     }
 
-    std::unordered_map<std::string, size_t> _buildRawNameToIndexMap(
+    const std::unordered_map<std::string, size_t>& _buildRawNameToIndexMap(
         const char* context) const
     {
-        std::unordered_map<std::string, size_t> raw_name_to_index;
-        raw_name_to_index.reserve(m_rawNames.size());
-        for (size_t idx = 0; idx < m_rawNames.size(); ++idx) {
-            const auto [it, inserted] =
-                raw_name_to_index.emplace(m_rawNames[idx], idx);
-            if (!inserted) {
-                throw std::runtime_error(
-                    std::string("[DIPPER] ") + context +
-                    ": duplicate sequence name '" + m_rawNames[idx] + "'.");
-            }
-            (void)it;
+        if (m_rawNameToIndex.size() != m_rawNames.size()) {
+            throw std::runtime_error(
+                std::string("[DIPPER] ") + context +
+                ": raw sequence-name index is inconsistent.");
         }
-        return raw_name_to_index;
+        return m_rawNameToIndex;
     }
 
     void _ensureQueryClusterAssignments() const
