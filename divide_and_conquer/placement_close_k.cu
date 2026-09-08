@@ -15,6 +15,8 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
+#include <numeric>
 #include <thrust/sort.h>
 #include <thrust/scan.h>
 #include <thrust/binary_search.h>
@@ -146,7 +148,8 @@ __global__ void calculateBranchLengthDC(
     thrust::tuple<int,double,double> * minPos,
     int lim,
     double * closest_dis,
-    int * closest_id
+    int * closest_id,
+    bool penalize_negative_pendant
 ){
     int tx=threadIdx.x,bs=blockDim.x,bx=blockIdx.x,gs=gridDim.x;
     int idx=tx+bs*bx;
@@ -173,6 +176,9 @@ __global__ void calculateBranchLengthDC(
                 if(val>dis2) dis2=val;
             }
         double additional_dis=(dis1+dis2-len[eid])/2;
+        const double routing_deficit = additional_dis < 0
+            ? -additional_dis
+            : additional_dis;
         if(additional_dis<0) additional_dis=0;
         dis1-=additional_dis,dis2-=additional_dis;
         if(dis1<0) dis1=0;
@@ -182,7 +188,9 @@ __global__ void calculateBranchLengthDC(
         // assert(dis1+dis2-1e-6<=len[eid]);
         double rest=len[eid]-dis1-dis2;
         dis1+=rest/2,dis2+=rest/2;
-        thrust::tuple <int,double,double> minTuple(eid,dis1,additional_dis);
+        thrust::tuple <int,double,double> minTuple(
+            eid, dis1,
+            penalize_negative_pendant ? routing_deficit : additional_dis);
         minPos[idx_]=minTuple;
     }
 }
@@ -1105,7 +1113,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findBackboneTreeDC(
             thrust::raw_pointer_cast(minPos.data()),
             numSequences*4-4,
             d_closest_dis,
-            d_closest_id
+            d_closest_id,
+            false
         );
 
         auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
@@ -1175,12 +1184,38 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
     kplacementDeviceArraysHost.clusterID = new int[totalNumSequences];
     kplacementDeviceArraysHost.clusterTopEdgeIds.assign(
         totalNumSequences, std::vector<int>{});
+    kplacementDeviceArraysHost.clusterTopEdgeAdditionalDistances.assign(
+        totalNumSequences, std::vector<double>{});
     thrust::device_vector <thrust::tuple<int,double,double>> minPos(totalNumSequences*4-4);
     thrust::host_vector <thrust::tuple<int,double,double>> hostMinPos(
         totalNumSequences*4-4);
     int threadNum = 1024, blockNum = 1024;
 
     auto clusterStart = std::chrono::high_resolution_clock::now();
+    const bool audit_distances =
+        std::getenv("DIPPER_DC_DISTANCE_AUDIT") != nullptr;
+    const bool nearest_anchor_routing =
+        std::getenv("DIPPER_DC_NEAREST_ANCHOR_ROUTING") != nullptr;
+    std::vector<int> routing_head;
+    std::vector<int> routing_nxt;
+    std::vector<int> routing_e;
+    std::vector<int> routing_belong;
+    if (nearest_anchor_routing) {
+        routing_head.resize(totalNumSequences * 2);
+        routing_nxt.resize(totalNumSequences * 8);
+        routing_e.resize(totalNumSequences * 8);
+        routing_belong.resize(totalNumSequences * 8);
+        cudaMemcpy(routing_head.data(), d_head,
+                   routing_head.size() * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(routing_nxt.data(), d_nxt,
+                   routing_nxt.size() * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(routing_e.data(), d_e,
+                   routing_e.size() * sizeof(int), cudaMemcpyDeviceToHost);
+        cudaMemcpy(routing_belong.data(), d_belong,
+                   routing_belong.size() * sizeof(int), cudaMemcpyDeviceToHost);
+    }
+    std::vector<size_t> nearest_backbone_counts(
+        audit_distances ? numSequences : 0, 0);
 
     uint64_t localBatchSize = params.batchSize;
     for(int i=numSequences;i<totalNumSequences;i+=localBatchSize){
@@ -1234,6 +1269,47 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
                 );
             }
 
+            std::vector<double> host_dist;
+            if (audit_distances || nearest_anchor_routing) {
+                host_dist.resize(numSequences);
+                cudaMemcpy(
+                    host_dist.data(), d_dist,
+                    numSequences * sizeof(double), cudaMemcpyDeviceToHost);
+            }
+            if (audit_distances) {
+                size_t finite_count = 0;
+                size_t nan_count = 0;
+                size_t inf_count = 0;
+                double min_distance = std::numeric_limits<double>::infinity();
+                int min_index = -1;
+                for (int ref = 0; ref < numSequences; ++ref) {
+                    const double value = host_dist[ref];
+                    if (std::isnan(value)) {
+                        ++nan_count;
+                    } else if (!std::isfinite(value)) {
+                        ++inf_count;
+                    } else {
+                        ++finite_count;
+                        if (value < min_distance) {
+                            min_distance = value;
+                            min_index = ref;
+                        }
+                    }
+                }
+                if (min_index >= 0) {
+                    ++nearest_backbone_counts[static_cast<size_t>(min_index)];
+                }
+                if (j == i || j == i + 1 || j == i + localBatchSize - 1) {
+                    std::cerr
+                        << "[DIPPER] D&C distance audit: query_index=" << j
+                        << " finite=" << finite_count
+                        << " nan=" << nan_count
+                        << " inf=" << inf_count
+                        << " min=" << min_distance
+                        << " min_backbone_index=" << min_index << "\n";
+                }
+            }
+
             // double * h_dis = new double[numSequences];
             // cudaMemcpy(h_dis,d_dist,numSequences*sizeof(double),cudaMemcpyDeviceToHost);
             // fprintf(stderr, "%d\n",i);
@@ -1254,13 +1330,17 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
                 thrust::raw_pointer_cast(minPos.data()),
                 numSequences*4-4,
                 d_closest_dis,
-                d_closest_id
+                d_closest_id,
+                std::getenv("DIPPER_DC_PENALIZE_NEGATIVE_PENDANT") != nullptr
             );
             auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
             thrust::tuple<int,double,double> smallest=*iter;
             kplacementDeviceArraysHost.clusterID[j] = thrust::get<0>(smallest);
-            const int requested_topk = std::max(
+            int requested_topk = std::max(
                 1, kplacementDeviceArraysHost.requestedClusterTopK);
+            if (const char* value = std::getenv("DIPPER_DC_PROVENANCE_TOPK")) {
+                requested_topk = std::max(requested_topk, std::max(1, std::atoi(value)));
+            }
             hostMinPos = minPos;
             std::vector<std::pair<double, int>> ranked_edges;
             ranked_edges.reserve(numSequences * 2 - 3);
@@ -1292,18 +1372,83 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
                 });
             auto& top_edges =
                 kplacementDeviceArraysHost.clusterTopEdgeIds[j];
+            auto& top_distances =
+                kplacementDeviceArraysHost.clusterTopEdgeAdditionalDistances[j];
             top_edges.reserve(requested_topk);
+            top_distances.reserve(requested_topk);
             const int original_top1 =
                 kplacementDeviceArraysHost.clusterID[j];
             top_edges.push_back(original_top1);
+            top_distances.push_back(thrust::get<2>(smallest));
             for (int rank = 0; rank < keep; ++rank) {
                 if (ranked_edges[rank].second == original_top1) {
                     continue;
                 }
                 top_edges.push_back(ranked_edges[rank].second);
+                top_distances.push_back(ranked_edges[rank].first);
                 if (static_cast<int>(top_edges.size()) == requested_topk) {
                     break;
                 }
+            }
+            if (nearest_anchor_routing) {
+                std::vector<int> anchors(numSequences);
+                std::iota(anchors.begin(), anchors.end(), 0);
+                std::partial_sort(
+                    anchors.begin(),
+                    anchors.begin() + std::min(
+                        static_cast<int>(anchors.size()), requested_topk),
+                    anchors.end(),
+                    [&](int lhs, int rhs) {
+                        if (host_dist[lhs] != host_dist[rhs]) {
+                            return host_dist[lhs] < host_dist[rhs];
+                        }
+                        return lhs < rhs;
+                    });
+                top_edges.clear();
+                top_distances.clear();
+                std::unordered_set<int> seen_edges;
+                for (const int anchor : anchors) {
+                    if (!std::isfinite(host_dist[anchor])) continue;
+                    std::vector<int> incident_edges;
+                    for (int edge_idx = routing_head[anchor];
+                         edge_idx != -1;
+                         edge_idx = routing_nxt[edge_idx]) {
+                        int canonical_edge = edge_idx;
+                        if (routing_belong[canonical_edge] <
+                            routing_e[canonical_edge]) {
+                            const int neighbor =
+                                routing_e[canonical_edge];
+                            for (int reverse =
+                                     routing_head[neighbor];
+                                 reverse != -1;
+                                 reverse = routing_nxt[reverse]) {
+                                if (routing_e[reverse] == anchor) {
+                                    canonical_edge = reverse;
+                                    break;
+                                }
+                            }
+                        }
+                        if (seen_edges.insert(canonical_edge).second) {
+                            incident_edges.push_back(canonical_edge);
+                        }
+                    }
+                    std::sort(incident_edges.begin(), incident_edges.end());
+                    for (const int edge_idx : incident_edges) {
+                        top_edges.push_back(edge_idx);
+                        top_distances.push_back(host_dist[anchor]);
+                        if (static_cast<int>(top_edges.size()) == requested_topk) {
+                            break;
+                        }
+                    }
+                    if (static_cast<int>(top_edges.size()) == requested_topk) {
+                        break;
+                    }
+                }
+                if (top_edges.empty()) {
+                    throw std::runtime_error(
+                        "nearest-anchor routing produced no candidate edge");
+                }
+                kplacementDeviceArraysHost.clusterID[j] = top_edges.front();
             }
             // std::cerr << "Sequence " << j << " assigned to cluster " << kplacementDeviceArraysHost.clusterID[j] << "\n";
         }
@@ -1313,6 +1458,58 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC(
 
 
     std::cerr << "Finished clustering in: "<< clusterTime.count()/1000000 << " ms\n";
+    if (const char* provenance_path = std::getenv("DIPPER_DC_PROVENANCE")) {
+        std::ofstream provenance(provenance_path);
+        if (!provenance) {
+            throw std::runtime_error(
+                std::string("failed to open D&C provenance output: ") +
+                provenance_path);
+        }
+        provenance
+            << "query_index\tquery_name\tsector_edge\ttop_edge_ids"
+               "\ttop_edge_scores\ttop1_top2_margin\n";
+        for (int query = numSequences; query < totalNumSequences; ++query) {
+            const auto& edges =
+                kplacementDeviceArraysHost.clusterTopEdgeIds[query];
+            const auto& scores =
+                kplacementDeviceArraysHost.clusterTopEdgeAdditionalDistances[query];
+            provenance << query << '\t';
+            if (query < static_cast<int>(matrixReader.name.size())) {
+                provenance << matrixReader.name[query];
+            }
+            provenance << '\t' << kplacementDeviceArraysHost.clusterID[query]
+                       << '\t';
+            for (size_t rank = 0; rank < edges.size(); ++rank) {
+                if (rank) provenance << ',';
+                provenance << edges[rank];
+            }
+            provenance << '\t';
+            for (size_t rank = 0; rank < scores.size(); ++rank) {
+                if (rank) provenance << ',';
+                provenance << scores[rank];
+            }
+            provenance << '\t';
+            if (scores.size() >= 2) {
+                provenance << scores[1] - scores[0];
+            }
+            provenance << '\n';
+        }
+        std::cerr << "[DIPPER] D&C provenance written to "
+                  << provenance_path << "\n";
+    }
+    if (audit_distances) {
+        size_t distinct_nearest = 0;
+        size_t largest_group = 0;
+        for (const size_t count : nearest_backbone_counts) {
+            if (count > 0) {
+                ++distinct_nearest;
+                largest_group = std::max(largest_group, count);
+            }
+        }
+        std::cerr
+            << "[DIPPER] D&C distance audit summary: distinct_nearest_backbone="
+            << distinct_nearest << " largest_group=" << largest_group << "\n";
+    }
 
     /* Copy data from device to host */
     // err = cudaMemcpy(kplacementDeviceArraysHost.h_dist, d_dist, totalNumSequences*sizeof(double),cudaMemcpyDeviceToHost);
@@ -1450,7 +1647,8 @@ void MashPlacement::KPlacementDeviceArraysDC::findClustersDC_batch(
             thrust::raw_pointer_cast(minPos.data()),
             numSequences*4-4,
             d_closest_dis,
-            d_closest_id
+            d_closest_id,
+            std::getenv("DIPPER_DC_PENALIZE_NEGATIVE_PENDANT") != nullptr
         );
         auto iter=thrust::min_element(minPos.begin(),minPos.begin()+numSequences*4-4,compare_tupleDC());
         thrust::tuple<int,double,double> smallest=*iter;

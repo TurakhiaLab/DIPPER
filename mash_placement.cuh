@@ -292,6 +292,11 @@ namespace MashPlacement
          *  Must be called after findBestEdge() for the same seqIdx. */
         PlacementInfo getEdgeInfo(int eid, int seqIdx) const;
 
+        /** Return the best live edges from the most recent findBestEdge(),
+         * ranked by DIPPER's additional-distance objective. */
+        std::vector<std::pair<PlacementInfo, double>> getTopKEdgeInfo(
+            int seqIdx, int k) const;
+
         /** Search the current GPU adjacency list for an edge between @p nodeA and
          *  @p nodeB.  Returns the canonical edge id (belong[eid] >= e[eid]) used
          *  by calculateBranchLength and updateTreeStructure, or -1 if not found. */
@@ -385,6 +390,7 @@ namespace MashPlacement
         int * clusterID;
         int requestedClusterTopK = 1;
         std::vector<std::vector<int>> clusterTopEdgeIds;
+        std::vector<std::vector<double>> clusterTopEdgeAdditionalDistances;
 
         void allocateHostArraysDC (size_t num, size_t totalNum);
         void deallocateHostArraysDC ();

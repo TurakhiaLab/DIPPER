@@ -29,6 +29,7 @@
 #pragma once
 
 #include "fourBitCompressor.hpp"
+#include "twoBitCompressor.hpp"
 #include "mash_placement.cuh"
 #include "tree.hpp"
 
@@ -180,6 +181,12 @@ struct PlacementResult {
     double lenTip = 0.0;    ///< internalNodeIdx → tipNodeIdx (query)
 };
 
+struct RankedPlacementCandidate {
+    int splitLabelA = -1;
+    int splitLabelB = -1;
+    double additionalDistance = 0.0;
+};
+
 /** Name/sequence pair exported from the current DIPPER session inputs. */
 struct NamedSequence {
     std::string name;
@@ -194,6 +201,17 @@ struct PendingQueryInfo {
     std::string sequence;
     int splitLabelA = -1;   ///< candidate-edge endpoint label A for D&C scheduling
     int splitLabelB = -1;   ///< candidate-edge endpoint label B for D&C scheduling
+    double lenA = 0.0;      ///< endpoint A to the proposed insertion point
+    double lenB = 0.0;      ///< endpoint B to the proposed insertion point
+    double lenTip = 0.0;    ///< proposed query pendant length
+};
+
+struct DivideAndConquerAdvanceResult {
+    int splitLabelA = -1;
+    int splitLabelB = -1;
+    int internalLabel = -1;
+    int tipLabel = -1;
+    std::string tipName;
 };
 
 /** One of DIPPER's ranked immutable-backbone routing candidates. */
@@ -201,6 +219,7 @@ struct RankedDipperCandidate {
     int clusterId = -1;
     int splitLabelA = -1;
     int splitLabelB = -1;
+    double additionalDistance = std::numeric_limits<double>::infinity();
 };
 
 /** Original top-1 assignment plus the requested top-k backbone edges. */
@@ -447,7 +466,9 @@ public:
         }
 
         m_params            = &params;
-        params.in           = "m";
+        const bool use_mash_routing =
+            std::getenv("DIPPER_DC_USE_MASH_ROUTING") != nullptr;
+        params.in           = use_mash_routing ? "r" : "m";
         params.out          = "t";
         params.totalNumSeqs = m_numSequences;
         params.backboneSize = resolved_backbone_size;
@@ -470,15 +491,25 @@ public:
             m_hostDC.clusterID = nullptr;
         }
 
-        std::cerr << "[DIPPER] Compressing sequences (4-bit) for divide-and-conquer...\n";
-        _compressSequences(params);
-
-        std::cerr << "[DIPPER] Uploading sequences to divide-and-conquer GPU buffers...\n";
-        m_msaArraysDC.allocateDeviceArraysDC(
-            m_fourBitSeqs,
-            m_seqLengths,
-            m_numSequences,
-            params);
+        if (use_mash_routing) {
+            std::cerr << "[DIPPER] Compressing sequences (2-bit) and building Mash sketches for divide-and-conquer...\n";
+            _compressSequencesTwoBit(params);
+            m_mashArraysDC.allocateDeviceArraysDC(
+                m_twoBitSeqs, m_seqLengths, m_numSequences, params);
+            m_mashArraysDC.sketchConstructionOnGpuDC(
+                params, m_twoBitSeqs, m_seqLengths, m_numSequences);
+            // Mash owns routing only. Keep an aligned buffer resident for the
+            // subsequent cluster-local placement phase in the same session.
+            _compressSequences(params);
+            m_msaArraysDC.allocateDeviceArraysDC(
+                m_fourBitSeqs, m_seqLengths, m_numSequences, params);
+        } else {
+            std::cerr << "[DIPPER] Compressing sequences (4-bit) for divide-and-conquer...\n";
+            _compressSequences(params);
+            std::cerr << "[DIPPER] Uploading sequences to divide-and-conquer GPU buffers...\n";
+            m_msaArraysDC.allocateDeviceArraysDC(
+                m_fourBitSeqs, m_seqLengths, m_numSequences, params);
+        }
         m_kpArraysDC.allocateDeviceArraysDC(
             resolved_backbone_size,
             m_numSequences);
@@ -510,6 +541,49 @@ public:
 
         m_activePipeline = ActivePipeline::DivideAndConquer;
         m_state = State::GPUReady;
+    }
+
+    void prepareDivideAndConquerAlignedPlacement()
+    {
+        _ensureDivideAndConquerPipeline(
+            "prepareDivideAndConquerAlignedPlacement");
+        _ensureDivideAndConquerClustersReady();
+        if (m_msaArraysDC.h_compressedSeqs == nullptr) {
+            throw std::runtime_error(
+                "[DIPPER] prepareDivideAndConquerAlignedPlacement: aligned sequence buffer is unavailable.");
+        }
+        m_params->in = "m";
+        std::cerr
+            << "[DIPPER] Divide-and-conquer routing frozen; switched to aligned cluster-local placement.\n";
+    }
+
+    /**
+     * Rebuild the complete D&C pipeline from an externally updated tree.
+     *
+     * This is the correctness-first synchronization path for integrations
+     * which modify topology outside DIPPER (for example, MLIPPER local SPR).
+     * Reconstructing the session avoids relying on incremental directed-edge,
+     * closest-leaf, and scheduler-cache repair after a topology rewrite.
+     */
+    void reloadDivideAndConquerGPU(
+        const std::string& newick,
+        const std::vector<std::pair<std::string, int>>& tipStableLabels,
+        MashPlacement::Param& params)
+    {
+        _ensureDivideAndConquerPipeline("reloadDivideAndConquerGPU");
+        const std::vector<std::string> sequences = m_rawSeqs;
+        const std::vector<std::string> names = m_rawNames;
+
+        _cleanup();
+        m_state = State::Empty;
+        m_backboneNewick.clear();
+        m_backboneSize = 0;
+        m_dcBackboneTipStableLabels.clear();
+
+        loadBackboneTree(newick);
+        setBackboneTipStableLabels(tipStableLabels);
+        loadSequences(sequences, names);
+        initializeDivideAndConquerGPU(params, 0);
     }
 
     // =========================================================================
@@ -765,6 +839,30 @@ public:
             std::cerr << "[DIPPER] All query sequences placed.\n";
         }
         return result;
+    }
+
+    std::vector<RankedPlacementCandidate> exportPendingTopKPlacements(int k) const
+    {
+        _requireOneOf({State::GPUReady}, "exportPendingTopKPlacements");
+        _ensureIterativePipeline("exportPendingTopKPlacements");
+        if (!m_placementPending) {
+            throw std::logic_error(
+                "[DIPPER] exportPendingTopKPlacements: call findNextPlacement first.");
+        }
+        if (k <= 0) {
+            throw std::invalid_argument(
+                "[DIPPER] exportPendingTopKPlacements: k must be positive.");
+        }
+        std::vector<RankedPlacementCandidate> out;
+        for (const auto& candidate : m_kpArrays.getTopKEdgeInfo(
+                 m_kpArrays.m_pendingSeqIdx, k)) {
+            out.push_back({
+                nodeLabel(candidate.first.splitNodeA),
+                nodeLabel(candidate.first.splitNodeB),
+                candidate.second,
+            });
+        }
+        return out;
     }
 
     // =========================================================================
@@ -1052,6 +1150,12 @@ public:
             query.name = m_sortedNames[idx];
             query.originalClusterId = m_queryClusterIds[idx];
             const auto& edge_ids = m_hostDC.clusterTopEdgeIds.at(idx);
+            const auto& edge_distances =
+                m_hostDC.clusterTopEdgeAdditionalDistances.at(idx);
+            if (edge_ids.size() != edge_distances.size()) {
+                throw std::runtime_error(
+                    "[DIPPER] top-k edge and distance counts differ.");
+            }
             const size_t keep = std::min(edge_ids.size(), static_cast<size_t>(k));
             query.candidates.reserve(keep);
             for (size_t rank = 0; rank < keep; ++rank) {
@@ -1064,6 +1168,7 @@ public:
                     edge_id,
                     nodeLabel(node_a),
                     nodeLabel(node_b),
+                    edge_distances[rank],
                 });
             }
             out.push_back(std::move(query));
@@ -1244,7 +1349,7 @@ public:
      * divide-and-conquer scheduler synchronized with an external placer such as
      * MLIPPER.
      */
-    void advanceDivideAndConquerStep(
+    DivideAndConquerAdvanceResult advanceDivideAndConquerStep(
         int committedSplitLabelA = -1,
         int committedSplitLabelB = -1,
         double committedLenA = -1.0,
@@ -1259,6 +1364,9 @@ public:
                 "[DIPPER] advanceDivideAndConquerStep: no pending divide-and-conquer query remains.");
         }
         _ensureDivideAndConquerPendingStepReady();
+
+        DivideAndConquerAdvanceResult advance_result;
+        advance_result.tipName = m_dcPendingQueryInfo.name;
 
         int edge_id = m_dcPendingEdgeId;
         double frac_len = m_dcPendingFracLen;
@@ -1302,6 +1410,10 @@ public:
 
         const int new_internal_idx =
             static_cast<int>(m_numSequences) - 1 + m_dcActiveInsertLeafCount;
+        advance_result.splitLabelA =
+            nodeLabel(m_hostDC.h_belong[edge_id]);
+        advance_result.splitLabelB =
+            nodeLabel(m_hostDC.h_e[edge_id]);
         _requireDivideAndConquerPlacementUpdateCapacity(
             edge_id,
             m_dcPendingLeafId,
@@ -1324,6 +1436,8 @@ public:
             m_dcActiveInsertLeafCount);
         _assignDivideAndConquerNodeLabel(new_internal_idx);
         _assignDivideAndConquerNodeLabel(m_dcPendingLeafId);
+        advance_result.internalLabel = nodeLabel(new_internal_idx);
+        advance_result.tipLabel = nodeLabel(m_dcPendingLeafId);
 
         m_dcActiveIdx += 4;
         _requireDivideAndConquerActiveClusterCapacity(
@@ -1391,6 +1505,7 @@ public:
             m_dcActiveClusterId = -1;
             m_dcActiveClusterOffset = 0;
         }
+        return advance_result;
     }
 
     void applyDivideAndConquerSprMove(
@@ -1620,7 +1735,32 @@ public:
                     "[DIPPER] applyDivideAndConquerSprMove: SPR rewiring would reuse the same edge slot more than once.");
             }
         }
+        // Capture the complete pruned component before changing its boundary.
+        // A local SPR repair unit may be a multi-query subtree, not one tip.
+        std::vector<int> moved_nodes{prune_root};
+        std::vector<int> moved_parents{prune_parent};
+        std::vector<int> moved_leaves;
+        for (size_t i = 0; i < moved_nodes.size(); ++i) {
+            const int node = moved_nodes[i];
+            const int parent = moved_parents[i];
+            int degree = 0;
+            for (int edge_idx = m_hostDC.h_head[node];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                ++degree;
+                const int neighbor = m_hostDC.h_e[edge_idx];
+                if (neighbor != parent) {
+                    moved_nodes.push_back(neighbor);
+                    moved_parents.push_back(node);
+                }
+            }
+            if (degree == 1 &&
+                node >= 0 && node < static_cast<int>(m_numSequences)) {
+                moved_leaves.push_back(node);
+            }
+        }
         reusable_edges.clear();
+        std::vector<int> rewired_edges;
         auto stash_edge = [&](int edge_idx, const char* context) {
             if (edge_idx < 0) {
                 throw std::runtime_error(
@@ -1682,15 +1822,20 @@ public:
             reusable_edges.pop_back();
             return edge_idx;
         };
+        const auto attach_rewired_edge = [&] (
+            int from_node, int to_node, double edge_length) {
+            const int edge_idx = take_reusable_edge();
+            _attachDivideAndConquerDirectedEdge(
+                edge_idx, from_node, to_node, edge_length);
+            rewired_edges.push_back(edge_idx);
+        };
 
         if (grandparent >= 0) {
-            _attachDivideAndConquerDirectedEdge(
-                take_reusable_edge(),
+            attach_rewired_edge(
                 grandparent,
                 sibling,
                 parent_edge_length + sibling_edge_length);
-            _attachDivideAndConquerDirectedEdge(
-                take_reusable_edge(),
+            attach_rewired_edge(
                 sibling,
                 grandparent,
                 parent_edge_length + sibling_edge_length);
@@ -1698,33 +1843,27 @@ public:
             m_dcRootNode = sibling;
         }
 
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             regraft_parent,
             prune_parent,
             proximal_length);
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             prune_parent,
             regraft_parent,
             proximal_length);
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             prune_parent,
             regraft_child,
             distal_length);
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             regraft_child,
             prune_parent,
             distal_length);
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             prune_parent,
             prune_root,
             regraftLenTip);
-        _attachDivideAndConquerDirectedEdge(
-            take_reusable_edge(),
+        attach_rewired_edge(
             prune_root,
             prune_parent,
             regraftLenTip);
@@ -2193,6 +2332,7 @@ private:
     PlacementResult m_pendingResult    {};          // filled by findNextPlacement()
 
     uint64_t** m_fourBitSeqs = nullptr;
+    uint64_t** m_twoBitSeqs  = nullptr;
     uint64_t*  m_seqLengths  = nullptr;
 
     MashPlacement::Param* m_params = nullptr;
@@ -2385,6 +2525,29 @@ private:
             });
     }
 
+    void _compressSequencesTwoBit(const MashPlacement::Param& params)
+    {
+        m_twoBitSeqs = new uint64_t*[m_numSequences];
+        m_seqLengths = new uint64_t[m_numSequences];
+        tbb::parallel_for(
+            tbb::blocked_range<int>(0, static_cast<int>(m_numSequences)),
+            [&](tbb::blocked_range<int> r) {
+                for (int i = r.begin(); i < r.end(); ++i) {
+                    const size_t seq_len = m_rawSeqs[i].size();
+                    const size_t words = params.isProtein
+                        ? (seq_len + 7) / 8
+                        : (seq_len + 31) / 32;
+                    uint64_t* buffer = new uint64_t[words];
+                    twoBitCompressor(
+                        m_rawSeqs[i], seq_len, buffer, params.isProtein,
+                        params.useReducedProtein, params.useMurphy8);
+                    const int new_id = m_idMap[i];
+                    m_seqLengths[new_id] = seq_len;
+                    m_twoBitSeqs[new_id] = buffer;
+                }
+            });
+    }
+
     void _cleanup()
     {
         if (m_state >= State::GPUReady) {
@@ -2393,7 +2556,11 @@ private:
                 m_msaArrays.deallocateDeviceArrays();
                 m_kpArrays.deallocateDeviceArrays();
             } else if (m_activePipeline == ActivePipeline::DivideAndConquer) {
-                m_msaArraysDC.deallocateDeviceArraysDC();
+                if (m_params != nullptr && m_params->in == "r") {
+                    m_mashArraysDC.deallocateDeviceArraysDC();
+                } else {
+                    m_msaArraysDC.deallocateDeviceArraysDC();
+                }
                 m_kpArraysDC.deallocateDeviceArraysDC();
                 m_hostDC.deallocateHostArraysDC();
                 if (m_hostDC.clusterID != nullptr) {
@@ -2415,6 +2582,12 @@ private:
                 delete[] m_fourBitSeqs[i];
             delete[] m_fourBitSeqs;
             m_fourBitSeqs = nullptr;
+        }
+        if (m_twoBitSeqs) {
+            for (size_t i = 0; i < m_numSequences; ++i)
+                delete[] m_twoBitSeqs[i];
+            delete[] m_twoBitSeqs;
+            m_twoBitSeqs = nullptr;
         }
         delete[] m_seqLengths;
         m_seqLengths = nullptr;
@@ -2624,14 +2797,36 @@ private:
             node_idx < static_cast<int>(m_sortedNames.size())) {
             const std::string& name =
                 m_sortedNames[static_cast<size_t>(node_idx)];
+            int degree = 0;
+            for (int edge_idx = m_hostDC.h_head[node_idx];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                if (m_hostDC.h_e[edge_idx] >= 0) {
+                    ++degree;
+                }
+            }
+            const bool is_shadow_leaf = degree <= 1;
             const auto tip_it = m_dcBackboneTipStableLabels.find(name);
-            if (tip_it != m_dcBackboneTipStableLabels.end()) {
+            if (is_shadow_leaf &&
+                tip_it != m_dcBackboneTipStableLabels.end()) {
                 label = tip_it->second;
             } else if (name.rfind("__mlipper_id_", 0) == 0) {
                 label = std::stoi(name.substr(13));
             }
         }
         if (label < 0) {
+            const auto label_reserved_for_tip = [&](int candidate) {
+                return std::any_of(
+                    m_dcBackboneTipStableLabels.begin(),
+                    m_dcBackboneTipStableLabels.end(),
+                    [&](const auto& entry) {
+                        return entry.second == candidate;
+                    });
+            };
+            while (m_dcLabelToNode.count(m_dcNextLabel) != 0 ||
+                   label_reserved_for_tip(m_dcNextLabel)) {
+                ++m_dcNextLabel;
+            }
             label = m_dcNextLabel;
         }
         if (m_dcLabelToNode.count(label) != 0) {
@@ -3480,9 +3675,301 @@ private:
             "[DIPPER] _resolveDivideAndConquerClusterAnchorEdge: failed to resolve anchor edge.");
     }
 
+    void _updateDivideAndConquerClosestLeavesAfterSubtreeSpr(
+        int moved_root,
+        const std::vector<int>& moved_nodes,
+        const std::vector<int>& moved_leaves,
+        const std::vector<int>& rewired_edges) const
+    {
+        const int node_slots = static_cast<int>(m_numSequences * 2);
+        const int edge_slots = static_cast<int>(m_numSequences * 8);
+        _requireDivideAndConquerNodeIndex(
+            moved_root,
+            "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(moved root)");
+        std::vector<unsigned char> is_moved_leaf(
+            static_cast<size_t>(node_slots), 0);
+        std::vector<unsigned char> is_moved_node(
+            static_cast<size_t>(node_slots), 0);
+        for (int moved_node : moved_nodes) {
+            _requireDivideAndConquerNodeIndex(
+                moved_node,
+                "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(moved node)");
+            is_moved_node[static_cast<size_t>(moved_node)] = 1;
+        }
+        for (int moved_leaf : moved_leaves) {
+            _requireDivideAndConquerNodeIndex(
+                moved_leaf,
+                "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(moved leaf)");
+            is_moved_leaf[static_cast<size_t>(moved_leaf)] = 1;
+        }
+
+        std::vector<unsigned char> needs_recompute(
+            static_cast<size_t>(edge_slots), 0);
+        for (int edge_idx : rewired_edges) {
+            _requireDivideAndConquerClosestEdgeIndex(
+                edge_idx,
+                "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(rewired edge)");
+            needs_recompute[static_cast<size_t>(edge_idx)] = 1;
+        }
+
+        // Only the pruned query tip changes its distance to unchanged edges.
+        // Remove its stale contribution everywhere while preserving the
+        // sorted top-5 entries of every other leaf.
+        for (int edge_idx = 0; edge_idx < edge_slots; ++edge_idx) {
+            int write_rank = 0;
+            for (int rank = 0; rank < 5; ++rank) {
+                const size_t slot =
+                    static_cast<size_t>(edge_idx) * 5 + rank;
+                const int leaf_id = m_hostDC.h_closest_id[slot];
+                if (leaf_id >= 0 &&
+                    is_moved_leaf[static_cast<size_t>(leaf_id)]) {
+                    // The cache stores only five entries.  Once one of them
+                    // disappears, the previous sixth-nearest leaf is not
+                    // available, so this directed edge must be rebuilt.
+                    needs_recompute[static_cast<size_t>(edge_idx)] = 1;
+                }
+                if (leaf_id < 0 ||
+                    is_moved_leaf[static_cast<size_t>(leaf_id)]) {
+                    continue;
+                }
+                const size_t write_slot =
+                    static_cast<size_t>(edge_idx) * 5 + write_rank;
+                m_hostDC.h_closest_id[write_slot] = leaf_id;
+                m_hostDC.h_closest_dis[write_slot] =
+                    m_hostDC.h_closest_dis[slot];
+                ++write_rank;
+            }
+            while (write_rank < 5) {
+                const size_t slot =
+                    static_cast<size_t>(edge_idx) * 5 + write_rank;
+                m_hostDC.h_closest_id[slot] = -1;
+                m_hostDC.h_closest_dis[slot] = 2.0;
+                ++write_rank;
+            }
+        }
+
+        auto insert_closest = [&](int edge_idx, int leaf_id, double distance) {
+            for (int rank = 0; rank < 5; ++rank) {
+                const size_t slot =
+                    static_cast<size_t>(edge_idx) * 5 + rank;
+                if (m_hostDC.h_closest_id[slot] == leaf_id) {
+                    if (distance < m_hostDC.h_closest_dis[slot]) {
+                        m_hostDC.h_closest_dis[slot] = distance;
+                    }
+                    return;
+                }
+                if (distance < m_hostDC.h_closest_dis[slot]) {
+                    for (int shift = 4; shift > rank; --shift) {
+                        const size_t dst =
+                            static_cast<size_t>(edge_idx) * 5 + shift;
+                        const size_t src = dst - 1;
+                        m_hostDC.h_closest_id[dst] =
+                            m_hostDC.h_closest_id[src];
+                        m_hostDC.h_closest_dis[dst] =
+                            m_hostDC.h_closest_dis[src];
+                    }
+                    m_hostDC.h_closest_id[slot] = leaf_id;
+                    m_hostDC.h_closest_dis[slot] = distance;
+                    return;
+                }
+            }
+        };
+
+        // For edges inside the moved component, the direction facing back
+        // toward its root contains the outside tree and therefore changes.
+        std::vector<int> component_nodes{moved_root};
+        std::vector<int> component_parents{-1};
+        for (size_t i = 0; i < component_nodes.size(); ++i) {
+            const int node = component_nodes[i];
+            const int parent = component_parents[i];
+            for (int edge_idx = m_hostDC.h_head[node];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                const int neighbor = m_hostDC.h_e[edge_idx];
+                if (neighbor == parent) {
+                    continue;
+                }
+                if (is_moved_node[static_cast<size_t>(neighbor)]) {
+                    const int reverse = _findDivideAndConquerDirectedEdge(
+                        neighbor, node);
+                    if (reverse >= 0) {
+                        needs_recompute[static_cast<size_t>(reverse)] = 1;
+                    }
+                    component_nodes.push_back(neighbor);
+                    component_parents.push_back(node);
+                }
+            }
+        }
+
+        // Reinsert every moved leaf into unchanged outside-facing caches.
+        for (int moved_leaf : moved_leaves) {
+            std::vector<int> traversal_nodes{moved_leaf};
+            std::vector<int> traversal_parents{-1};
+            std::vector<double> traversal_distances{0.0};
+            for (size_t index = 0; index < traversal_nodes.size(); ++index) {
+                const int node = traversal_nodes[index];
+                const int parent = traversal_parents[index];
+                const double distance = traversal_distances[index];
+                for (int edge_idx = m_hostDC.h_head[node];
+                     edge_idx != -1;
+                     edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                    const int neighbor = m_hostDC.h_e[edge_idx];
+                    if (neighbor == parent) {
+                        continue;
+                    }
+                    if (!needs_recompute[static_cast<size_t>(edge_idx)]) {
+                        insert_closest(edge_idx, moved_leaf, distance);
+                    }
+                    traversal_nodes.push_back(neighbor);
+                    traversal_parents.push_back(node);
+                    traversal_distances.push_back(
+                        distance + m_hostDC.h_len[edge_idx]);
+                }
+            }
+        }
+
+        // Reused adjacency slots now represent different directed edges, so
+        // all five entries—not just the moved tip—must be recomputed.  Search
+        // only the source-side component and stop after the nearest five tips.
+        std::vector<int> visit_stamp(static_cast<size_t>(node_slots), 0);
+        int stamp = 0;
+        using QueueEntry = std::pair<double, int>;
+        for (int edge_idx = 0; edge_idx < edge_slots; ++edge_idx) {
+            if (!needs_recompute[static_cast<size_t>(edge_idx)]) {
+                continue;
+            }
+            for (int rank = 0; rank < 5; ++rank) {
+                const size_t slot =
+                    static_cast<size_t>(edge_idx) * 5 + rank;
+                m_hostDC.h_closest_id[slot] = -1;
+                m_hostDC.h_closest_dis[slot] = 2.0;
+            }
+            const int source = m_hostDC.h_belong[edge_idx];
+            const int excluded_neighbor = m_hostDC.h_e[edge_idx];
+            _requireDivideAndConquerNodeIndex(
+                source,
+                "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(source)");
+            _requireDivideAndConquerNodeIndex(
+                excluded_neighbor,
+                "_updateDivideAndConquerClosestLeavesAfterSubtreeSpr(neighbor)");
+            ++stamp;
+            std::priority_queue<
+                QueueEntry,
+                std::vector<QueueEntry>,
+                std::greater<QueueEntry>> pending;
+            pending.emplace(0.0, source);
+            int found = 0;
+            while (!pending.empty() && found < 5) {
+                const auto [distance, node] = pending.top();
+                pending.pop();
+                if (visit_stamp[static_cast<size_t>(node)] == stamp) {
+                    continue;
+                }
+                visit_stamp[static_cast<size_t>(node)] = stamp;
+                int degree = 0;
+                for (int adjacent = m_hostDC.h_head[node];
+                     adjacent != -1;
+                     adjacent = m_hostDC.h_nxt[adjacent]) {
+                    ++degree;
+                }
+                if (degree == 1 &&
+                    node >= 0 &&
+                    node < static_cast<int>(m_numSequences)) {
+                    if (distance >= 2.0) {
+                        break;
+                    }
+                    m_hostDC.h_closest_id[
+                        static_cast<size_t>(edge_idx) * 5 + found] = node;
+                    m_hostDC.h_closest_dis[
+                        static_cast<size_t>(edge_idx) * 5 + found] = distance;
+                    ++found;
+                }
+                for (int adjacent = m_hostDC.h_head[node];
+                     adjacent != -1;
+                     adjacent = m_hostDC.h_nxt[adjacent]) {
+                    const int neighbor = m_hostDC.h_e[adjacent];
+                    if ((node == source && neighbor == excluded_neighbor) ||
+                        visit_stamp[static_cast<size_t>(neighbor)] == stamp) {
+                        continue;
+                    }
+                    pending.emplace(
+                        distance + m_hostDC.h_len[adjacent],
+                        neighbor);
+                }
+            }
+        }
+
+        if (std::getenv(
+                "MLIPPER_VALIDATE_DIPPER_DC_SPR_CLOSEST_INCREMENTAL") !=
+            nullptr) {
+            std::vector<double> incremental_dis(
+                m_hostDC.h_closest_dis,
+                m_hostDC.h_closest_dis +
+                    static_cast<size_t>(edge_slots) * 5);
+            std::vector<int> incremental_id(
+                m_hostDC.h_closest_id,
+                m_hostDC.h_closest_id +
+                    static_cast<size_t>(edge_slots) * 5);
+            _recomputeDivideAndConquerClosestLeaves();
+            size_t mismatches = 0;
+            size_t reported_mismatches = 0;
+            for (int node = 0; node < node_slots; ++node) {
+                for (int edge_idx = m_hostDC.h_head[node];
+                     edge_idx != -1;
+                     edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                    for (int rank = 0; rank < 5; ++rank) {
+                        const size_t slot =
+                            static_cast<size_t>(edge_idx) * 5 + rank;
+                        if (incremental_id[slot] !=
+                                m_hostDC.h_closest_id[slot] ||
+                            std::abs(
+                                incremental_dis[slot] -
+                                m_hostDC.h_closest_dis[slot]) > 1e-10) {
+                            if (reported_mismatches < 12) {
+                                std::cerr
+                                    << "[DIPPER] closest mismatch edge="
+                                    << edge_idx << " source=" << node
+                                    << " neighbor=" << m_hostDC.h_e[edge_idx]
+                                    << " rank=" << rank
+                                    << " rebuilt="
+                                    << static_cast<int>(needs_recompute[
+                                           static_cast<size_t>(edge_idx)])
+                                    << " incremental=("
+                                    << incremental_id[slot] << ","
+                                    << incremental_dis[slot] << ") full=("
+                                    << m_hostDC.h_closest_id[slot] << ","
+                                    << m_hostDC.h_closest_dis[slot] << ")"
+                                    << " incremental_is_moved="
+                                    << (incremental_id[slot] >= 0
+                                        ? static_cast<int>(is_moved_leaf[
+                                              static_cast<size_t>(incremental_id[slot])])
+                                        : 0)
+                                    << " full_is_moved="
+                                    << (m_hostDC.h_closest_id[slot] >= 0
+                                        ? static_cast<int>(is_moved_leaf[
+                                              static_cast<size_t>(m_hostDC.h_closest_id[slot])])
+                                        : 0)
+                                    << " moved_count=" << moved_leaves.size()
+                                    << "\n";
+                                ++reported_mismatches;
+                            }
+                            ++mismatches;
+                        }
+                    }
+                }
+            }
+            if (mismatches != 0) {
+                throw std::runtime_error(
+                    "[DIPPER] incremental SPR closest-leaf update disagrees with full recomputation in " +
+                    std::to_string(mismatches) + " entries.");
+            }
+            std::cerr
+                << "[DIPPER] Incremental SPR closest-leaf validation passed.\n";
+        }
+    }
+
     void _recomputeDivideAndConquerClosestLeaves() const
     {
-        const size_t edge_slots = m_numSequences * 8;
         const size_t closest_edge_slots = m_numSequences * 8;
         for (size_t edge_idx = 0; edge_idx < closest_edge_slots; ++edge_idx) {
             for (int rank = 0; rank < 5; ++rank) {
@@ -3492,11 +3979,22 @@ private:
         }
 
         const int node_slots = static_cast<int>(m_numSequences * 2);
-        std::vector<int> edge_mask_index(edge_slots, -1);
-        std::vector<int> leaf_nodes;
-        leaf_nodes.reserve(m_numSequences);
+        int root = m_dcRootNode;
+        if (root < 0 || root >= node_slots || m_hostDC.h_head[root] == -1) {
+            root = -1;
+            for (int node = 0; node < node_slots; ++node) {
+                if (m_hostDC.h_head[node] != -1) {
+                    root = node;
+                    break;
+                }
+            }
+        }
+        if (root < 0) {
+            return;
+        }
+
+        std::vector<int> degree(static_cast<size_t>(node_slots), 0);
         for (int node_idx = 0; node_idx < node_slots; ++node_idx) {
-            int degree = 0;
             for (int edge_idx = m_hostDC.h_head[node_idx];
                  edge_idx != -1;
                  edge_idx = m_hostDC.h_nxt[edge_idx]) {
@@ -3505,33 +4003,190 @@ private:
                     throw std::runtime_error(
                         "[DIPPER] _recomputeDivideAndConquerClosestLeaves: active edge id exceeds closest-array capacity.");
                 }
-                ++degree;
-                edge_mask_index[static_cast<size_t>(edge_idx)] = edge_idx;
-            }
-            if (degree == 1) {
-                leaf_nodes.push_back(node_idx);
+                ++degree[static_cast<size_t>(node_idx)];
             }
         }
 
-        std::vector<int> id(node_slots, -1);
-        std::vector<int> from(node_slots, -1);
-        std::vector<double> dis(node_slots, 0.0);
-        for (int leaf_node : leaf_nodes) {
-            std::fill(id.begin(), id.end(), -1);
-            std::fill(from.begin(), from.end(), -1);
-            std::fill(dis.begin(), dis.end(), 0.0);
-            updateClosestNodesCpu(
-                m_hostDC.h_head,
-                m_hostDC.h_nxt,
-                m_hostDC.h_e,
-                m_hostDC.h_len,
+        std::vector<int> parent(static_cast<size_t>(node_slots), -2);
+        std::vector<int> parent_out_edge(static_cast<size_t>(node_slots), -1);
+        std::vector<int> parent_in_edge(static_cast<size_t>(node_slots), -1);
+        std::vector<int> order;
+        order.reserve(static_cast<size_t>(node_slots));
+        parent[static_cast<size_t>(root)] = -1;
+        order.push_back(root);
+        for (size_t i = 0; i < order.size(); ++i) {
+            const int node = order[i];
+            for (int edge_idx = m_hostDC.h_head[node];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                const int neighbor = m_hostDC.h_e[edge_idx];
+                if (neighbor == parent[static_cast<size_t>(node)]) {
+                    continue;
+                }
+                if (parent[static_cast<size_t>(neighbor)] != -2) {
+                    continue;
+                }
+                parent[static_cast<size_t>(neighbor)] = node;
+                parent_out_edge[static_cast<size_t>(neighbor)] = edge_idx;
+                parent_in_edge[static_cast<size_t>(neighbor)] =
+                    _findDivideAndConquerDirectedEdge(neighbor, node);
+                order.push_back(neighbor);
+            }
+        }
+
+        using ClosestEntry = std::pair<double, int>;
+        auto write_message = [&](int edge_idx,
+                                 std::vector<ClosestEntry> candidates) {
+            if (edge_idx < 0) {
+                return;
+            }
+            std::sort(candidates.begin(), candidates.end(),
+                [](const ClosestEntry& lhs, const ClosestEntry& rhs) {
+                    if (lhs.first != rhs.first) return lhs.first < rhs.first;
+                    return lhs.second < rhs.second;
+                });
+            int rank = 0;
+            int previous_id = -1;
+            for (const auto& candidate : candidates) {
+                if (candidate.first >= 2.0 || candidate.second == previous_id) {
+                    continue;
+                }
+                const size_t slot = static_cast<size_t>(edge_idx) * 5 + rank;
+                m_hostDC.h_closest_dis[slot] = candidate.first;
+                m_hostDC.h_closest_id[slot] = candidate.second;
+                previous_id = candidate.second;
+                if (++rank == 5) break;
+            }
+        };
+        auto append_message = [&](std::vector<ClosestEntry>& candidates,
+                                  int edge_idx,
+                                  double offset) {
+            if (edge_idx < 0) return;
+            for (int rank = 0; rank < 5; ++rank) {
+                const size_t slot = static_cast<size_t>(edge_idx) * 5 + rank;
+                if (m_hostDC.h_closest_id[slot] < 0) break;
+                candidates.emplace_back(
+                    m_hostDC.h_closest_dis[slot] + offset,
+                    m_hostDC.h_closest_id[slot]);
+            }
+        };
+
+        // Postorder: source-side messages from each child toward its parent.
+        for (auto it = order.rbegin(); it != order.rend(); ++it) {
+            const int node = *it;
+            if (node == root) continue;
+            std::vector<ClosestEntry> candidates;
+            if (degree[static_cast<size_t>(node)] == 1) {
+                candidates.emplace_back(0.0, node);
+            }
+            for (int edge_idx = m_hostDC.h_head[node];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                const int neighbor = m_hostDC.h_e[edge_idx];
+                if (neighbor == parent[static_cast<size_t>(node)]) continue;
+                append_message(candidates,
+                    parent_in_edge[static_cast<size_t>(neighbor)],
+                    m_hostDC.h_len[edge_idx]);
+            }
+            write_message(parent_in_edge[static_cast<size_t>(node)],
+                          std::move(candidates));
+        }
+
+        // Preorder: complement messages from each parent toward its child.
+        for (int node : order) {
+            for (int edge_idx = m_hostDC.h_head[node];
+                 edge_idx != -1;
+                 edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                const int child = m_hostDC.h_e[edge_idx];
+                if (parent[static_cast<size_t>(child)] != node) continue;
+                std::vector<ClosestEntry> candidates;
+                if (degree[static_cast<size_t>(node)] == 1) {
+                    candidates.emplace_back(0.0, node);
+                }
+                if (parent[static_cast<size_t>(node)] >= 0) {
+                    append_message(candidates,
+                        parent_out_edge[static_cast<size_t>(node)],
+                        m_hostDC.h_len[parent_in_edge[static_cast<size_t>(node)]]);
+                }
+                for (int sibling_edge = m_hostDC.h_head[node];
+                     sibling_edge != -1;
+                     sibling_edge = m_hostDC.h_nxt[sibling_edge]) {
+                    const int sibling = m_hostDC.h_e[sibling_edge];
+                    if (sibling == child ||
+                        sibling == parent[static_cast<size_t>(node)]) continue;
+                    append_message(candidates,
+                        parent_in_edge[static_cast<size_t>(sibling)],
+                        m_hostDC.h_len[sibling_edge]);
+                }
+                write_message(edge_idx, std::move(candidates));
+            }
+        }
+
+        if (std::getenv("MLIPPER_VALIDATE_DIPPER_DC_CLOSEST_LINEAR") != nullptr) {
+            std::vector<double> linear_dis(
                 m_hostDC.h_closest_dis,
+                m_hostDC.h_closest_dis + closest_edge_slots * 5);
+            std::vector<int> linear_id(
                 m_hostDC.h_closest_id,
-                leaf_node,
-                id.data(),
-                from.data(),
-                dis.data(),
-                edge_mask_index.data());
+                m_hostDC.h_closest_id + closest_edge_slots * 5);
+            for (size_t edge_idx = 0; edge_idx < closest_edge_slots; ++edge_idx) {
+                for (int rank = 0; rank < 5; ++rank) {
+                    m_hostDC.h_closest_dis[edge_idx * 5 + rank] = 2.0;
+                    m_hostDC.h_closest_id[edge_idx * 5 + rank] = -1;
+                }
+            }
+            std::vector<int> edge_mask_index(closest_edge_slots, -1);
+            std::vector<int> leaf_nodes;
+            for (int node = 0; node < node_slots; ++node) {
+                for (int edge_idx = m_hostDC.h_head[node];
+                     edge_idx != -1;
+                     edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                    edge_mask_index[static_cast<size_t>(edge_idx)] = edge_idx;
+                }
+                if (degree[static_cast<size_t>(node)] == 1) {
+                    leaf_nodes.push_back(node);
+                }
+            }
+            std::vector<int> bfs_id(static_cast<size_t>(node_slots), -1);
+            std::vector<int> bfs_from(static_cast<size_t>(node_slots), -1);
+            std::vector<double> bfs_dis(static_cast<size_t>(node_slots), 0.0);
+            for (int leaf : leaf_nodes) {
+                updateClosestNodesCpu(
+                    m_hostDC.h_head, m_hostDC.h_nxt, m_hostDC.h_e,
+                    m_hostDC.h_len, m_hostDC.h_closest_dis,
+                    m_hostDC.h_closest_id, leaf, bfs_id.data(),
+                    bfs_from.data(), bfs_dis.data(), edge_mask_index.data());
+            }
+            size_t mismatches = 0;
+            for (int node : order) {
+                for (int edge_idx = m_hostDC.h_head[node];
+                     edge_idx != -1;
+                     edge_idx = m_hostDC.h_nxt[edge_idx]) {
+                    for (int rank = 0; rank < 5; ++rank) {
+                        const size_t slot = static_cast<size_t>(edge_idx) * 5 + rank;
+                        if (linear_id[slot] != m_hostDC.h_closest_id[slot] ||
+                            std::abs(linear_dis[slot] - m_hostDC.h_closest_dis[slot]) > 1e-10) {
+                            if (mismatches < 12) {
+                                std::cerr << "[DIPPER] linear closest mismatch edge="
+                                          << edge_idx << " rank=" << rank
+                                          << " linear=(" << linear_id[slot] << ","
+                                          << linear_dis[slot] << ") legacy=("
+                                          << m_hostDC.h_closest_id[slot] << ","
+                                          << m_hostDC.h_closest_dis[slot] << ")\n";
+                            }
+                            ++mismatches;
+                        }
+                    }
+                }
+            }
+            if (mismatches != 0) {
+                throw std::runtime_error(
+                    "[DIPPER] linear closest-leaf recomputation disagrees with legacy in " +
+                    std::to_string(mismatches) + " entries.");
+            }
+            std::copy(linear_dis.begin(), linear_dis.end(), m_hostDC.h_closest_dis);
+            std::copy(linear_id.begin(), linear_id.end(), m_hostDC.h_closest_id);
+            std::cerr << "[DIPPER] Linear closest-leaf validation passed.\n";
         }
     }
 
@@ -3910,6 +4565,11 @@ private:
         m_dcPendingQueryInfo.sequence = m_rawSeqs[raw_it->second];
         m_dcPendingQueryInfo.splitLabelA = label_a;
         m_dcPendingQueryInfo.splitLabelB = label_b;
+        m_dcPendingQueryInfo.lenA = std::get<1>(*iter);
+        m_dcPendingQueryInfo.lenB = std::max(
+            0.0,
+            m_hostDC.h_len[candidate_edge_id] - std::get<1>(*iter));
+        m_dcPendingQueryInfo.lenTip = std::get<2>(*iter);
         m_dcPendingLeafId = query_idx;
         m_dcPendingEdgeId = candidate_edge_id;
         m_dcPendingFracLen = std::get<1>(*iter);

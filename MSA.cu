@@ -101,7 +101,7 @@ __device__ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
         for(int j=0;j<16&&i*16+j<seqLen;j++){
             int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-            if(et<4||ec<4) useful++;
+            if(et<4&&ec<4) useful++;
             if(et<4&&et==ec) match++;
         }
     }
@@ -130,7 +130,7 @@ __device__ void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, 
         } else {
             for(int j=0;j<16&&i*16+j<seqLen;j++){
                 int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-                if(et<4||ec<4) sharedUseful[tx]++;
+                if(et<4&&ec<4) sharedUseful[tx]++;
                 if(et<4&&et==ec) sharedMatch[tx]++;
             }
         }
@@ -515,4 +515,3 @@ void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int ro
         params.isProtein
     );
 }
-

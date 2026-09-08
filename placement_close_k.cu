@@ -1,6 +1,8 @@
 #include "mash_placement.cuh"
 
 #include <stdio.h>
+#include <algorithm>
+#include <cmath>
 #include <queue>
 #include <unordered_map>
 #include <thrust/sort.h>
@@ -1282,6 +1284,52 @@ MashPlacement::KPlacementDeviceArrays::getEdgeInfo(int eid, int seqIdx) const
     info.lenB            = h_origLen - frac;
     info.lenTip          = add;
     return info;
+}
+
+std::vector<std::pair<MashPlacement::KPlacementDeviceArrays::PlacementInfo, double>>
+MashPlacement::KPlacementDeviceArrays::getTopKEdgeInfo(int seqIdx, int k) const
+{
+    if (k <= 0 || seqIdx != m_pendingSeqIdx || m_hostAddLen.empty()) {
+        return {};
+    }
+    const int active_edge_slots = seqIdx * 4 - 4;
+    std::vector<int> h_belong(static_cast<size_t>(active_edge_slots));
+    std::vector<int> h_e(static_cast<size_t>(active_edge_slots));
+    cudaMemcpy(
+        h_belong.data(), d_belong,
+        static_cast<size_t>(active_edge_slots) * sizeof(int),
+        cudaMemcpyDeviceToHost);
+    cudaMemcpy(
+        h_e.data(), d_e,
+        static_cast<size_t>(active_edge_slots) * sizeof(int),
+        cudaMemcpyDeviceToHost);
+    std::vector<int> ranked_eids;
+    ranked_eids.reserve(static_cast<size_t>(active_edge_slots / 2));
+    for (int eid = 0; eid < active_edge_slots; ++eid) {
+        if (h_belong[static_cast<size_t>(eid)] >= 0 &&
+            h_e[static_cast<size_t>(eid)] >= 0 &&
+            h_belong[static_cast<size_t>(eid)] >= h_e[static_cast<size_t>(eid)] &&
+            std::isfinite(m_hostAddLen[static_cast<size_t>(eid)])) {
+            ranked_eids.push_back(eid);
+        }
+    }
+    std::stable_sort(
+        ranked_eids.begin(), ranked_eids.end(),
+        [&](int lhs, int rhs) {
+            return m_hostAddLen[static_cast<size_t>(lhs)] <
+                m_hostAddLen[static_cast<size_t>(rhs)];
+        });
+    if (ranked_eids.size() > static_cast<size_t>(k)) {
+        ranked_eids.resize(static_cast<size_t>(k));
+    }
+    std::vector<std::pair<PlacementInfo, double>> out;
+    out.reserve(ranked_eids.size());
+    for (int eid : ranked_eids) {
+        out.emplace_back(
+            getEdgeInfo(eid, seqIdx),
+            m_hostAddLen[static_cast<size_t>(eid)]);
+    }
+    return out;
 }
 
 int MashPlacement::KPlacementDeviceArrays::findEdgeBetween(int nodeA, int nodeB) const
