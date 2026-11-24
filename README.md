@@ -263,18 +263,68 @@ Example
 
 
 ### Protein sequence support <a name="protein"></a>
-DIPPER supports reconstruction of phylogenies from protein sequences (unaligned and aligned). Add `-p` to enable protein mode; use `-i r` or `-i m` for unaligned or aligned FASTA input, respectively, as shown below.
-Usage syntax (aligned FASTA using the JC model)
+DIPPER supports ultrafast reconstruction of phylogenies from protein sequences (both unaligned and aligned). Pass `-p` (or `--protein`) to enable protein mode.
+
+#### 1. Aligned protein sequences (`-i m`)
+For aligned protein sequences, DIPPER supports the following evolutionary distance metrics:
+* `-d 2` (**Default**): **Kimura protein empirical distance** based on Dayhoff's model.
+* `-d 1`: **Uncorrected $p$-distance**.
+
+*(Note: DNA-specific nucleotide models `-d 3` through `-d 6` such as Tajima-Nei, K2P, Tamura, and Jin-Nei are not applicable to proteins and will raise an error).*
+
+Usage syntax:
 ```bash
+# Default (Kimura protein distance)
+./dipper -p -i m -o t -I <path to aligned protein sequences FASTA file> -O <path to output file>
+
+# Explicitly specifying distance type (1: Uncorrected, 2: Kimura default)
 ./dipper -p -i m -o t -d 2 -I <path to aligned protein sequences FASTA file> -O <path to output file>
+
+# CPU execution with multi-threading (e.g. 16 threads)
+./dipper_cpu -p -i m -o t -d 2 -T 16 -I <path to aligned protein sequences FASTA file> -O <path to output file>
 ```
-Usage syntax (unaligned FASTA)
+
+##### Gappy Column Trimming (`--trim-gaps`)
+In aligned mode (`-i m`), MSA files often contain sparse columns that consist almost entirely of gaps. DIPPER includes an optimized pre-filtering feature:
+* `--trim-gaps <float>` (default: `0.99`): Automatically removes columns with gap proportions $\ge \text{threshold}$ (e.g., $\ge 99\%$ gaps) before compression and distance calculation. This accelerates tree building by 1.5x–3x on large, sparse alignments without loss of topological accuracy.
+* `--no-trim`: Disables gap trimming and retains all alignment columns.
+
 ```bash
+# Custom gap trimming threshold (e.g., trim columns with >= 95% gaps)
+./dipper -p -i m -o t --trim-gaps 0.95 -I <aligned.fa> -O <tree.nwk>
+
+# Disable gap trimming completely
+./dipper -p -i m -o t --no-trim -I <aligned.fa> -O <tree.nwk>
+```
+
+#### 2. Unaligned protein sequences (`-i r`)
+For unaligned protein sequences, DIPPER constructs MinHash sketches and computes Mash $k$-mer Jaccard distances directly from amino acid sequences.
+
+##### Amino Acid Alphabet Options (GPU & CPU)
+By default, DIPPER uses a **4-group 2-bit Dayhoff reduced alphabet** (`L`=LVIMC, `A`=AGSTP, `F`=FYW, `E`=EDNQKRH) for unaligned protein sequences. This maps conservative substitutions to the same token, reduces state space from $20^{15}$ to $4^{15}$, and aligns with DIPPER's default $k=15$.
+
+* **Default** (Reduced 4-group): 4-group Dayhoff alphabet with 2-bit encoding (supports $k \le 32$).
+* `--protein-full`: Full 20-amino-acid alphabet with 8-bit encoding. (Recommended with a smaller $k$-mer size, e.g. `-k 6` or `-k 7`).
+* `--protein-murphy8` (or `--murphy8`): 8-state Murphy reduced alphabet with 3-bit encoding (`L`=LVIMC, `A`=AG, `S`=ST, `F`=FYW, `E`=EDNQ, `K`=KRH, `P`=P, `X`=unknown, supports $k \le 21$).
+
+Usage syntax:
+```bash
+# Default (4-group reduced alphabet, k=15)
 ./dipper -p -i r -o t -I <path to unaligned protein sequences FASTA file> -O <path to output file>
+./dipper_cpu -p -i r -o t -T 16 -I <path to unaligned protein sequences FASTA file> -O <path to output file>
+
+# Using Murphy8 reduced alphabet
+./dipper -p -i r -o t --protein-murphy8 -I <unaligned.fa> -O <tree.nwk>
+./dipper_cpu -p -i r -o t --protein-murphy8 -T 16 -I <unaligned.fa> -O <tree.nwk>
+
+# Using full 20-amino-acid alphabet (with smaller k-mer size)
+./dipper -p -i r -o t --protein-full -k 7 -I <unaligned.fa> -O <tree.nwk>
+./dipper_cpu -p -i r -o t --protein-full -k 7 -T 16 -I <unaligned.fa> -O <tree.nwk>
 ```
-Example
+
+Example:
 ```bash
-./dipper -p -i m -o t -d 2 -m 1 -I ../dataset/t3.aligned.fa -O tree.nwk
+./dipper -p -i m -o t -m 1 -I ../dataset/t3.aligned.fa -O tree.nwk
 ```
 
 ### Reproduce DIPPER results <a name="reproduce"></a>

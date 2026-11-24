@@ -36,6 +36,10 @@
 #include "../src/fourBitCompressor.hpp"
 #endif
 
+#ifndef MSA_FILTER_HPP
+#include "msa_filter.hpp"
+#endif
+
 #ifndef MASHPL_CUH
 #include "../src/mash_placement.cuh"
 #endif
@@ -107,13 +111,18 @@ void parseArguments(int argc, char** argv)
 
         ("protein,p",
         "Input sequences are protein sequences (default: DNA/RNA sequences)")
-        
-        ("protein-reduced",
-        "Use reduced 4-group 2-bit protein alphabet for raw input (-i r): "
-        "L=LVIMC, A=AGSTP, F=FYW, E=EDNQKRH")
-        
+
+        ("protein-full",
+        "For unaligned protein sequences (-i r -p): use full 20-amino-acid alphabet with 8-bit encoding (default: 4-group reduced Dayhoff alphabet)")
+
         ("protein-murphy8",
-        "Use Murphy8 3-bit protein alphabet for raw input (-i r)")
+        "For unaligned protein sequences (-i r -p): use 8-state Murphy alphabet with 3-bit encoding")
+
+        ("murphy8",
+        "Alias for --protein-murphy8")
+
+        ("protein-reduced",
+        "For unaligned protein sequences (-i r -p): use 4-group reduced Dayhoff alphabet (default)")
 
         ("input-tree,t",       po::value<std::string>(),
         "Input backbone tree (Newick format), required with --add option")
@@ -123,6 +132,12 @@ void parseArguments(int argc, char** argv)
 
         ("range,r",        po::value<std::string>(),
         "Restrict processing to a subset of alignment coordinates. Provide as start,end (e.g., --range 0,100)")
+
+        ("trim-gaps", po::value<double>()->default_value(0.99),
+        "Trim aligned MSA columns with gap proportion >= threshold (default: 0.99). Set >1.0 to disable.")
+
+        ("no-trim",
+        "Disable gappy column trimming for aligned MSA input.")
 
         ("update-bl", "Update branch lengths of a tree with DIPPER-computed distances without changing topology")
 
@@ -287,16 +302,41 @@ int main(int argc, char** argv) {
     bool add = false;
     if (vm.count("add")) add = true;
 
-    bool isProtein = false;
-    if (vm.count("protein")) isProtein = true;
-    bool useReducedProtein = vm.count("protein-reduced") > 0;
-    bool useMurphy8 = vm.count("protein-murphy8") > 0;
-    if (useReducedProtein && useMurphy8) {
-        std::cerr << "ERROR: --protein-reduced and --protein-murphy8 are mutually exclusive.\n";
+    bool isProtein = (vm.count("protein") > 0);
+    bool useFullProtein = (vm.count("protein-full") > 0);
+    bool useMurphy8 = (vm.count("protein-murphy8") > 0 || vm.count("murphy8") > 0);
+    bool useReducedProteinFlag = (vm.count("protein-reduced") > 0);
+
+    if (useFullProtein && useMurphy8) {
+        std::cerr << "ERROR: --protein-full and --protein-murphy8 are mutually exclusive.\n";
         return 1;
     }
-    if (useReducedProtein) isProtein = true;
-    if (useMurphy8) isProtein = true;
+    if (useFullProtein || useMurphy8 || useReducedProteinFlag) {
+        isProtein = true;
+    }
+
+    bool useReducedProtein = false;
+    if (isProtein) {
+        if (useFullProtein) {
+            useReducedProtein = false;
+            useMurphy8 = false;
+        } else if (useMurphy8) {
+            useReducedProtein = false;
+        } else {
+            // Default for unaligned protein k-mer / mash mode is 4-group reduced Dayhoff alphabet
+            useReducedProtein = true;
+        }
+    }
+
+    if (isProtein && distanceType != 1 && distanceType != 2) {
+        std::cerr << "ERROR: Incompatible distance type for protein sequences (-p/--protein).\n"
+                  << "  Distance type specified: -d " << distanceType << "\n"
+                  << "  Protein sequences only support:\n"
+                  << "    -d 1 : Uncorrected p-distance\n"
+                  << "    -d 2 : Kimura protein empirical distance (default)\n"
+                  << "  Distance types 3-6 (Tajima-Nei, K2P, Tamura, Jin-Nei) are 4-state nucleotide models for DNA/RNA only.\n";
+        return 1;
+    }
 
     uint64_t clusterSize = 0;
     try {clusterSize = std::stoull(vm["max-cluster-size"].as<std::string>());}
@@ -360,7 +400,7 @@ int main(int argc, char** argv) {
     params.useMurphy8 = useMurphy8;
 
     if (in == "r" && isProtein && useReducedProtein && k > 32) {
-        std::cerr << "ERROR: --protein-reduced supports k-mer size up to 32.\n";
+        std::cerr << "ERROR: Reduced protein mode supports k-mer size up to 32.\n";
         return 1;
     }
     if (in == "r" && isProtein && useMurphy8 && k > 21) {
@@ -458,6 +498,10 @@ int main(int argc, char** argv) {
         }
         std::vector<std::string> seqs, names, namesDump;
         readSequences(vm, seqs, namesDump);
+        if (in == "m" && !vm.count("no-trim") && (params.range.first <= 0 && params.range.second == -1)) {
+            double trimGaps = vm["trim-gaps"].as<double>();
+            MsaFilter::trimGappyColumns(seqs, trimGaps, isProtein);
+        }
         std::cerr << "Read " << seqs.size() << " sequences from input file.\n";
         assert(seqs.size() > 0 && "No sequences found in the input file.");
         std::string newickTree;
@@ -535,6 +579,10 @@ int main(int argc, char** argv) {
 
         std::vector<std::string> seqs, namesDump, names;
         readSequences(vm, seqs, namesDump, namesInTree);
+        if (in == "m" && !vm.count("no-trim") && (params.range.first <= 0 && params.range.second == -1)) {
+            double trimGaps = vm["trim-gaps"].as<double>();
+            MsaFilter::trimGappyColumns(seqs, trimGaps, isProtein);
+        }
 
         size_t numSequences = seqs.size();
         names.resize(numSequences);
@@ -684,6 +732,10 @@ int main(int argc, char** argv) {
         }
         std::vector<std::string> seqs, names, namesDump;
         readSequences(vm, seqs, namesDump);
+        if (in == "m" && !vm.count("no-trim") && (params.range.first <= 0 && params.range.second == -1)) {
+            double trimGaps = vm["trim-gaps"].as<double>();
+            MsaFilter::trimGappyColumns(seqs, trimGaps, isProtein);
+        }
         std::cerr << "Read " << seqs.size() << " sequences from input file.\n";
         assert(seqs.size() > 0 && "No sequences found in the input file.");
 
@@ -775,6 +827,10 @@ int main(int argc, char** argv) {
         std::vector<std::string> seqs,names_, names;
 
         readSequences(vm, seqs, names_);
+        if (!vm.count("no-trim") && (params.range.first <= 0 && params.range.second == -1)) {
+            double trimGaps = vm["trim-gaps"].as<double>();
+            MsaFilter::trimGappyColumns(seqs, trimGaps, isProtein);
+        }
         size_t numSequences = seqs.size();
         names.resize(numSequences);
         std::vector<int> ids(numSequences);

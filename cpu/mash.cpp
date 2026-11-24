@@ -45,7 +45,10 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t **h_compress
     uint64_t *h_aggseqLengths = new uint64_t[numSequences];
     uint64_t flatStringLength = 0;
     auto wordsPerSeq = [&](uint64_t len) -> uint64_t {
-        return params.isProtein ? (len + 7) / 8 : (len + 31) / 32;
+        return (params.isProtein && !params.useReducedProtein && !params.useMurphy8)
+            ? (len + 7) / 8
+            : (params.isProtein && params.useMurphy8) ? (len + 20) / 21
+            : (len + 31) / 32;
     };
     for (size_t i = 0; i < numSequences; i++)
         flatStringLength += wordsPerSeq(h_seqLengths[i]);
@@ -87,7 +90,7 @@ void MashPlacement::MashDeviceArrays::allocateDeviceArrays(uint64_t **h_compress
     // generate prefix array (per-sequence word count)
     for (int i = 0; i < numSequences; i++)
     {
-        d_prefixCompressed[i] = params.isProtein ? (d_seqLengths[i] + 7) / 8 : (d_seqLengths[i] + 31) / 32;
+        d_prefixCompressed[i] = wordsPerSeq(d_seqLengths[i]);
     }
     exclusive_scan(d_prefixCompressed, numSequences);
 }
@@ -299,6 +302,36 @@ static void decompress_protein_kmer_cpu(
     }
 }
 
+/** Decode reduced 2-bit protein k-mer at sequence offset j (forward order). */
+static void decompress_protein_reduced_kmer_cpu(
+    uint64_t *compressedSeqs, uint64_t j, uint64_t kmerSize, char *kmer_fwd)
+{
+    static const char dec[4] = {'L', 'A', 'F', 'E'};
+    for (uint64_t p = 0; p < kmerSize; p++)
+    {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 32;
+        int sh = (int)((pos % 32) * 2);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0x3ULL;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
+/** Decode Murphy8 3-bit protein k-mer at sequence offset j (forward order). */
+static void decompress_protein_murphy8_kmer_cpu(
+    uint64_t *compressedSeqs, uint64_t j, uint64_t kmerSize, char *kmer_fwd)
+{
+    static const char dec[8] = {'L', 'A', 'S', 'F', 'E', 'K', 'P', 'X'};
+    for (uint64_t p = 0; p < kmerSize; p++)
+    {
+        uint64_t pos = j + p;
+        uint64_t wi = pos / 21;
+        int sh = (int)((pos % 21) * 3);
+        uint64_t val = (compressedSeqs[wi] >> sh) & 0x7ULL;
+        kmer_fwd[p] = dec[val];
+    }
+}
+
 /** Build MinHash sketch per sequence (TBB over seqs); sort, keep top sketchSize. */
 void sketchConstruction(
     uint64_t *d_compressedSeqs,
@@ -307,7 +340,9 @@ void sketchConstruction(
     size_t numSequences,
     uint64_t *d_hashList, // output: numSequences * 1000
     uint64_t kmerSize,    // in bases / residues
-    bool isProtein
+    bool isProtein,
+    bool useReducedProtein = false,
+    bool useMurphy8 = false
 )
 {
 
@@ -339,7 +374,21 @@ void sketchConstruction(
                     char kmer_fwd[32] = {0};
                     char kmer_rev[32] = {0};
                     uint8_t out[16];
-                    if (isProtein) {
+                    if (isProtein && useReducedProtein) {
+                        decompress_protein_reduced_kmer_cpu(compressedSeqs, j, kmerSize, kmer_fwd);
+                        MurmurHash3_x64_128_MASH_CPU(
+                            kmer_fwd,
+                            static_cast<int>(kmerSize),
+                            42,
+                            out);
+                    } else if (isProtein && useMurphy8) {
+                        decompress_protein_murphy8_kmer_cpu(compressedSeqs, j, kmerSize, kmer_fwd);
+                        MurmurHash3_x64_128_MASH_CPU(
+                            kmer_fwd,
+                            static_cast<int>(kmerSize),
+                            42,
+                            out);
+                    } else if (isProtein) {
                         decompress_protein_kmer_cpu(compressedSeqs, j, kmerSize, kmer_fwd);
                         MurmurHash3_x64_128_MASH_CPU(
                             kmer_fwd,
@@ -470,7 +519,9 @@ void MashPlacement::MashDeviceArrays::sketchConstructionOnGpu(
         numSequences,
         d_hashList,
         kmerSize,
-        params.isProtein);
+        params.isProtein,
+        params.useReducedProtein,
+        params.useMurphy8);
 
     // Rearrange hashes on CPU
     uint64_t *temp_hashList = new uint64_t[numSequences * sketchSize];

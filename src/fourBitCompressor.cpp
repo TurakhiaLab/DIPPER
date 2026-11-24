@@ -7,6 +7,8 @@
  * encoded as 4 (DNA/RNA) or 20 (protein).
  */
 
+#include <cctype>
+
 #ifndef FOURBITCOMPRESSOR_HPP
 #include "fourBitCompressor.hpp"
 #endif
@@ -35,7 +37,8 @@ void fourBitCompressor(std::string seq, size_t seqLen, uint64_t* compressedSeq, 
 
         for (auto j = start; j < end; j++) {
             uint64_t fourBitVal;
-            switch (seq[j + lowerLimit]) {
+            char c = static_cast<char>(std::toupper(static_cast<unsigned char>(seq[j + lowerLimit])));
+            switch (c) {
             case 'A': fourBitVal = 0;  break;
             case 'C': fourBitVal = 1;  break;
             case 'G': fourBitVal = 2;  break;

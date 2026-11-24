@@ -35,6 +35,8 @@ namespace MashPlacement
         uint64_t backboneSize;
         std::pair<int, int> range = {-1, -1};
         bool isProtein = false;
+        bool useReducedProtein = false;
+        bool useMurphy8 = false;
 
         Param(uint64_t t_kmerSize, uint64_t t_sketchSize, uint64_t t_threshold, uint64_t t_distanceType, std::string t_in, std::string t_out)
         {

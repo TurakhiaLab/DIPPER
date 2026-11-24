@@ -36,12 +36,12 @@ void MashPlacement::MSADeviceArrays::allocateDeviceArrays(uint64_t ** h_compress
     // std::cerr<<"????????\n";
     /* Flatten data */
     uint64_t flatStringLength=0;
-    for (size_t i =0; i<numSequences; i++) flatStringLength+= (h_seqLengths[i]+15)/16;
+    for (size_t i =0; i<numSequences; i++) flatStringLength+= params.isProtein ? (h_seqLengths[i]+7)/8 : (h_seqLengths[i]+15)/16;
     uint64_t * h_flattenCompressSeqs = new uint64_t[flatStringLength];
     flatStringLength=0;
     for (size_t i =0; i<numSequences; i++) 
     {
-        uint64_t flatStringLengthLocal = (h_seqLengths[i]+15)/16;
+        uint64_t flatStringLengthLocal = params.isProtein ? (h_seqLengths[i]+7)/8 : (h_seqLengths[i]+15)/16;
         flatStringLength+=flatStringLengthLocal;
         for (size_t j=0; j<flatStringLengthLocal;j++)  
         {
@@ -119,15 +119,23 @@ void calculateParams(int tarRowId, int curRowId, int seqLen, uint64_t * compress
 }
 
 
-void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match){
-    int compLen=(seqLen+15)/16;
+void calculateParamsParallel(int tarRowId, int curRowId, int seqLen, uint64_t * compressedSeqs, int & useful, int & match, bool isProtein=false){
+    int compLen = isProtein ? (seqLen+7)/8 : (seqLen+15)/16;
     long long px=1ll*curRowId*compLen, py=1ll*tarRowId*compLen;
     for (int i = 0; i < compLen; ++i) {
         long long vt=compressedSeqs[px+i], vc=compressedSeqs[py+i];
-        for(int j=0;j<16&&i*16+j<seqLen;j++){
-            int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
-            if(et<4||ec<4) useful++;
-            if(et<4&&et==ec) match++;
+        if (isProtein) {
+            for(int j=0;j<8&&i*8+j<seqLen;j++){
+                int et=(vt>>(j*8))&255, ec=(vc>>(j*8))&255;
+                if(et<20||ec<20) useful++;
+                if(et<20&&et==ec) match++;
+            }
+        } else {
+            for(int j=0;j<16&&i*16+j<seqLen;j++){
+                int et=(vt>>(j*4))&15, ec=(vc>>(j*4))&15;
+                if(et<4||ec<4) useful++;
+                if(et<4&&et==ec) match++;
+            }
         }
     }
 }
@@ -261,7 +269,8 @@ void MSADistConstruction(
     double * dist,
     int seqLen,
     int numSequences,
-    int distanceType
+    int distanceType,
+    bool isProtein = false
 ){
     int threadNum = 1024;
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR) {
@@ -269,10 +278,21 @@ void MSADistConstruction(
         for (int blockID = range.begin(); blockID < range.end(); ++blockID) {
         // for (int blockID = 0; blockID < rowId; ++blockID) {
             int useful=0, match=0;
-            calculateParamsParallel(rowId, blockID, seqLen, compressedSeqs, useful, match);
-            double uncor=1-double(match)/useful;
-            if(distanceType==DIST_UNCORRECTED) dist[blockID]=uncor;
-            else dist[blockID]=-0.75*log(1.0-uncor/0.75);
+            calculateParamsParallel(rowId, blockID, seqLen, compressedSeqs, useful, match, isProtein);
+            double uncor = (useful > 0) ? (1.0 - double(match) / useful) : 1.0;
+            if (distanceType == DIST_UNCORRECTED) {
+                dist[blockID] = uncor;
+            } else {
+                if (isProtein) {
+                    double denom = 1.0 - uncor;
+                    if (denom <= 1e-6) denom = 1e-6;
+                    dist[blockID] = 2.0 * (1.0 / sqrt(denom)) - 1.0;
+                } else {
+                    double arg = 1.0 - uncor / 0.75;
+                    if (arg <= 1e-6) arg = 1e-6;
+                    dist[blockID] = -0.75 * log(arg);
+                }
+            }
         }
         });
     }
@@ -282,7 +302,10 @@ void MSADistConstruction(
             int frac[4]={},pr[4]={},tot=0,match=0;
             double fr[4]={};
             calculateParamsParallel_TJ(rowId, blockID, seqLen, compressedSeqs, frac, tot, match, pr);
-            // calculateParams_TJ(rowId, idx, seqLen, compressedSeqs, frac, tot, match, pr);
+            if (tot == 0) {
+                dist[blockID] = 1.0;
+                continue;
+            }
             for(int i=0;i<4;i++) fr[i]=double(frac[i])/tot/2.0;
             double h=0;
             h+=0.5*pr[0]*fr[0]*fr[2];
@@ -291,7 +314,9 @@ void MSADistConstruction(
             h+=0.5*pr[3]*fr[1]*fr[3];
             double D=double(tot-match)/tot;
             double b=0.5*(1.0-fr[0]*fr[0]-fr[2]*fr[2]+D*D/h);
-            dist[blockID]=-b*log(1.0-D/b);
+            double arg = (b > 1e-9) ? (1.0 - D / b) : 1e-6;
+            if (arg <= 1e-6) arg = 1e-6;
+            dist[blockID] = -b * log(arg);
         }
         });
     }
@@ -299,11 +324,25 @@ void MSADistConstruction(
         tbb::parallel_for(tbb::blocked_range<int>(0, rowId), [&](const tbb::blocked_range<int>& range) {
         for (int blockID = range.begin(); blockID < range.end(); ++blockID) {
             int p=0,q=0,tot=0;
-            // calculateParams_K2P(rowId, idx, seqLen, compressedSeqs, p, q, tot);
             calculateParamsParallel_K2P(rowId, blockID, seqLen, compressedSeqs, p, q, tot);
+            if (tot == 0) {
+                dist[blockID] = 1.0;
+                continue;
+            }
             double pp=double(p)/tot,qq=double(q)/tot;
-            if(distanceType==DIST_KIMURA2P) dist[blockID]=-0.5*log((1-2*pp-qq)*sqrt(1-2*qq));
-            else dist[blockID]=0.5*(1.0/(1-2*pp-qq)+0.5/(1-qq*2)-1.5);
+            if(distanceType==DIST_KIMURA2P) {
+                double a1 = 1.0 - 2.0*pp - qq;
+                double a2 = 1.0 - 2.0*qq;
+                if (a1 <= 1e-6) a1 = 1e-6;
+                if (a2 <= 1e-6) a2 = 1e-6;
+                dist[blockID] = -0.5 * log(a1 * sqrt(a2));
+            } else {
+                double d1 = 1.0 - 2.0*pp - qq;
+                double d2 = 1.0 - 2.0*qq;
+                if (d1 <= 1e-6) d1 = 1e-6;
+                if (d2 <= 1e-6) d2 = 1e-6;
+                dist[blockID] = 0.5 * (1.0 / d1 + 0.5 / d2 - 1.5);
+            }
         }
         });
     }
@@ -312,8 +351,17 @@ void MSADistConstruction(
         for (int blockID = range.begin(); blockID < range.end(); ++blockID) {
             int p=0,q=0,tot=0,gc1=0,gc2=0;
             calculateParamsParallel_TAMURA(rowId, blockID, seqLen, compressedSeqs, p, q, tot, gc1, gc2);
+            if (tot == 0) {
+                dist[blockID] = 1.0;
+                continue;
+            }
             double pp=double(p)/tot,qq=double(q)/tot, c=double(gc1)/tot+double(gc2)/tot-2*double(gc1)*double(gc2)/tot/tot;
-            dist[blockID]=-c*log(1-pp/c-qq)-0.5*(1-c)*log(1-2*qq);
+            if (c <= 1e-9) c = 1e-9;
+            double a1 = 1.0 - pp/c - qq;
+            double a2 = 1.0 - 2.0*qq;
+            if (a1 <= 1e-6) a1 = 1e-6;
+            if (a2 <= 1e-6) a2 = 1e-6;
+            dist[blockID] = -c * log(a1) - 0.5 * (1.0 - c) * log(a2);
         }
         });
     }
@@ -328,15 +376,14 @@ void MSADistConstruction(
 
 /** Launch MSADistConstruction for row rowId. */
 void MashPlacement::MSADeviceArrays::distConstructionOnGpu(Param& params, int rowId, double* d_mashDist) const{
-    // int threadNum = 1024, blockNum = 1024; // dont change threadNUM, interally it is used to calculate the distance
-    // printf("rowId: %d params.distanceType %d \n", rowId, params.distanceType);
     MSADistConstruction (
         rowId, 
         d_compressedSeqs, 
         d_mashDist, 
         seqLen,
         numSequences,
-        params.distanceType
+        params.distanceType,
+        params.isProtein
     );
 }
 

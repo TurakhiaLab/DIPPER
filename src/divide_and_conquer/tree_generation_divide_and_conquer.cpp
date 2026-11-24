@@ -49,7 +49,11 @@ void parseArguments(int argc, char** argv)
         // ("batch-size,b", po::value<std::string>(), "Batch size for GPU processing (Default = 100000)")
         ("print-binary-newick",
          "Print fully resolved binary Newick with explicit :0 branches; default collapses near-zero internal edges")
-        ("protein", "Input sequences are protein (for -i r raw sequences; default DNA/RNA)")
+        ("protein,p", "Input sequences are protein (for -i r raw sequences; default DNA/RNA)")
+        ("protein-full", "For unaligned protein sequences (-i r -p): use full 20-amino-acid alphabet with 8-bit encoding (default: 4-group reduced Dayhoff alphabet)")
+        ("protein-murphy8", "For unaligned protein sequences (-i r -p): use 8-state Murphy alphabet with 3-bit encoding")
+        ("murphy8", "Alias for --protein-murphy8")
+        ("protein-reduced", "For unaligned protein sequences (-i r -p): use 4-group reduced Dayhoff alphabet (default)")
         ("help,h", "Print help messages");
 
 }
@@ -218,7 +222,7 @@ int main(int argc, char** argv) {
     try {threshold= (uint64_t)std::stoi(vm["threshold"].as<std::string>());}
     catch(std::exception &e){}
 
-    uint64_t distanceType = 1;
+    uint64_t distanceType = 2;
     try {distanceType= (uint64_t)std::stoi(vm["distance-type"].as<std::string>());}
     catch(std::exception &e){}
 
@@ -244,10 +248,55 @@ int main(int argc, char** argv) {
 
     int defau_thre = 10000; // Default threshold between conventional NJ and placement
 
-    bool isProtein = vm.count("protein") > 0;
+    bool isProtein = (vm.count("protein") > 0);
+    bool useFullProtein = (vm.count("protein-full") > 0);
+    bool useMurphy8 = (vm.count("protein-murphy8") > 0 || vm.count("murphy8") > 0);
+    bool useReducedProteinFlag = (vm.count("protein-reduced") > 0);
+
+    if (useFullProtein && useMurphy8) {
+        std::cerr << "ERROR: --protein-full and --protein-murphy8 are mutually exclusive.\n";
+        return 1;
+    }
+    if (useFullProtein || useMurphy8 || useReducedProteinFlag) {
+        isProtein = true;
+    }
+
+    bool useReducedProtein = false;
+    if (isProtein) {
+        if (useFullProtein) {
+            useReducedProtein = false;
+            useMurphy8 = false;
+        } else if (useMurphy8) {
+            useReducedProtein = false;
+        } else {
+            // Default for unaligned protein k-mer / mash mode is 4-group reduced Dayhoff alphabet
+            useReducedProtein = true;
+        }
+    }
+
+    if (isProtein && distanceType != 1 && distanceType != 2) {
+        std::cerr << "ERROR: Incompatible distance type for protein sequences (-p/--protein).\n"
+                  << "  Distance type specified: -d " << distanceType << "\n"
+                  << "  Protein sequences only support:\n"
+                  << "    -d 1 : Uncorrected p-distance\n"
+                  << "    -d 2 : Kimura protein empirical distance (default)\n"
+                  << "  Distance types 3-6 (Tajima-Nei, K2P, Tamura, Jin-Nei) are 4-state nucleotide models for DNA/RNA only.\n";
+        return 1;
+    }
+
+    if (in == "r" && isProtein && useReducedProtein && k > 32) {
+        std::cerr << "ERROR: Reduced protein mode supports k-mer size up to 32.\n";
+        return 1;
+    }
+    if (in == "r" && isProtein && useMurphy8 && k > 21) {
+        std::cerr << "ERROR: --protein-murphy8 supports k-mer size up to 21.\n";
+        return 1;
+    }
 
     MashPlacement::Param params(k, sketchSize, threshold, distanceType, in, out);
     params.isProtein = isProtein;
+    params.useReducedProtein = useReducedProtein;
+    params.useMurphy8 = useMurphy8;
 
     size_t totalNumSequences = 0;
     size_t backboneSize = 0;
@@ -442,9 +491,12 @@ int main(int argc, char** argv) {
         for (int idx_= range.begin(); idx_ < range.end(); ++idx_) 
         {   
             int i = idx_;
-            uint64_t twoBitCompressedSize = isProtein ? (seqs[i].size()+7)/8 : (seqs[i].size()+31)/32;
+            uint64_t twoBitCompressedSize = (isProtein && !useReducedProtein && !useMurphy8)
+                ? (seqs[i].size()+7)/8
+                : (isProtein && useMurphy8) ? (seqs[i].size()+20)/21
+                : (seqs[i].size()+31)/32;
             uint64_t * twoBitCompressed = new uint64_t[twoBitCompressedSize];
-            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein);
+            twoBitCompressor(seqs[i], seqs[i].size(), twoBitCompressed, isProtein, useReducedProtein, useMurphy8);
 
             seqLengths[ids[i]] = seqs[i].size();
             twoBitCompressedSeqs[ids[i]] = twoBitCompressed;

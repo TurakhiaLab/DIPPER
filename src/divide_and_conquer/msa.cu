@@ -685,9 +685,14 @@ __global__ void MSADistConstructionDC(
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
         int useful=0, match=0;
         calculateParamsDC(rowId, idx, seqLen, compressedSeqs, useful, match);
-        double uncor=1-double(match)/useful;
-        if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
-        else dist[idx]=-0.75*log(1.0-uncor/0.75);
+        double uncor = (useful > 0) ? (1.0 - double(match) / useful) : 1.0;
+        if (distanceType == DIST_UNCORRECTED) {
+            dist[idx] = uncor;
+        } else {
+            double arg = 1.0 - uncor / 0.75;
+            if (arg <= 1e-6) arg = 1e-6;
+            dist[idx] = -0.75 * log(arg);
+        }
         // printf("%d %d %d %d\n",rowId, idx, match, useful);
     }
     else if(distanceType==DIST_TAJIMANEI){
@@ -744,9 +749,14 @@ __global__ void MSADistConstructionRangeDC(
             int useful=0, match=0;
             calculateParamsDCParallel(rowId, idx, seqLen, compressedSeqs, useful, match);
             if (tx == 0) {
-                double uncor=1-double(match)/useful;
-                if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
-                else dist[idx]=-0.75*log(1.0-uncor/0.75);
+                double uncor = (useful > 0) ? (1.0 - double(match) / useful) : 1.0;
+                if (distanceType == DIST_UNCORRECTED) {
+                    dist[idx] = uncor;
+                } else {
+                    double arg = 1.0 - uncor / 0.75;
+                    if (arg <= 1e-6) arg = 1e-6;
+                    dist[idx] = -0.75 * log(arg);
+                }
             }
             // printf("%d %d %d %d\n",rowId, idx, match, useful);
         }
@@ -810,9 +820,14 @@ __global__ void MSADistConstructionRangeForClusteringDC(
             int useful=0, match=0;
             calculateParamsBatchDCParallel(rowId, idx, seqLen, compressedSeqs, compressedSeqsConst,useful, match);
             if (tx == 0) {
-                double uncor=1-double(match)/useful;
-                if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
-                else dist[idx]=-0.75*log(1.0-uncor/0.75);
+                double uncor = (useful > 0) ? (1.0 - double(match) / useful) : 1.0;
+                if (distanceType == DIST_UNCORRECTED) {
+                    dist[idx] = uncor;
+                } else {
+                    double arg = 1.0 - uncor / 0.75;
+                    if (arg <= 1e-6) arg = 1e-6;
+                    dist[idx] = -0.75 * log(arg);
+                }
             }// printf("%d %d %d %d\n",rowId, idx, match, useful);
         }
         else if(distanceType==DIST_TAJIMANEI){
@@ -881,9 +896,14 @@ __global__ void MSADistConstructionSpecialIDDC(
     if(distanceType==DIST_UNCORRECTED||distanceType==DIST_JUKESCANTOR){
         int useful=0, match=0;
         calculateParamsBatchDC(rowId, idx_const, seqLen, compressedSeqs, compressedSeqsConst,useful, match);
-        double uncor=1-double(match)/useful;
-        if(distanceType==DIST_UNCORRECTED) dist[idx]=uncor;
-        else dist[idx]=-0.75*log(1.0-uncor/0.75);
+        double uncor = (useful > 0) ? (1.0 - double(match) / useful) : 1.0;
+        if (distanceType == DIST_UNCORRECTED) {
+            dist[idx] = uncor;
+        } else {
+            double arg = 1.0 - uncor / 0.75;
+            if (arg <= 1e-6) arg = 1e-6;
+            dist[idx] = -0.75 * log(arg);
+        }
         // printf("%d %d %d %d\n",rowId, idx, match, useful);
     }
     else if(distanceType==DIST_TAJIMANEI){

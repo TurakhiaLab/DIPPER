@@ -12,7 +12,8 @@
 
 /** Encode one residue for protein MASH (same numeric mapping as fourBitCompressor, protein). */
 static uint64_t encodeProteinResidue(char c) {
-    switch (c) {
+    char u = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    switch (u) {
     case 'A': return 0;
     case 'C': return 1;
     case 'G': return 2;
@@ -132,7 +133,8 @@ void twoBitCompressor(
         uint64_t shift = 0;
         for (auto j = start; j < end; j++) {
             uint64_t twoBitVal;
-            switch (seq[j]) {
+            char c = static_cast<char>(std::toupper(static_cast<unsigned char>(seq[j])));
+            switch (c) {
             case 'A':
                 twoBitVal = 0;
                 break;
